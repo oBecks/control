@@ -310,9 +310,17 @@ def main(argv: list[str] | None = None) -> None:
 
     # Quiet modes: no Window, no tray, no single-instance mutex, so they run alongside the app.
     if args.mcp:
-        from ..assistant import server
+        try:
+            from ..assistant import server
 
-        server.run(args.port)
+            server.run(args.port)
+        except Exception:
+            # To Claude's log, not a dialog: a windowed exe would otherwise pop one up every time
+            # Claude starts it.
+            import traceback
+
+            traceback.print_exc()
+            sys.exit(1)
         return
     if args.disconnect_claude:  # the uninstaller
         from ..assistant import claude

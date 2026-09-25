@@ -12,6 +12,7 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "mcp>=2.2",
+    "httpx>=0.27",  # the MCP server's Engine client; mcp itself depends on httpx2, not httpx
 ]
 
 [project.optional-dependencies]
