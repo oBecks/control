@@ -284,8 +284,9 @@ def _page_background() -> str:
 
 
 def _log_to_file() -> None:
-    """A windowed exe has no console: keep the Engine's output in the data folder instead."""
-    if sys.stdout is not None and sys.stderr is not None:
+    """A windowed exe has no console: keep the Engine's output in the data folder instead. That
+    includes Control.exe started by the MCP server, whose output goes nowhere."""
+    if not getattr(sys, "frozen", False) and sys.stdout is not None and sys.stderr is not None:
         return
     path = default_db_path().parent / "control.log"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -303,7 +304,21 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="Control")
     parser.add_argument("--hidden", action="store_true", help="start in the tray (as at sign-in)")
     parser.add_argument("--port", type=int, default=PORT)
+    parser.add_argument("--mcp", action="store_true", help="be the Assistant's MCP server on stdin/stdout (ADR 0005)")
+    parser.add_argument("--disconnect-claude", action="store_true", help="remove Control from Claude's config")
     args = parser.parse_args(argv)
+
+    # Quiet modes: no Window, no tray, no single-instance mutex, so they run alongside the app.
+    if args.mcp:
+        from ..assistant import server
+
+        server.run(args.port)
+        return
+    if args.disconnect_claude:  # the uninstaller
+        from ..assistant import claude
+
+        claude.disconnect()
+        return
 
     if getattr(sys, "frozen", False):
         # PyInstaller unpacks the built UI next to the program.

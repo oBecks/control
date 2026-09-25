@@ -3,6 +3,7 @@
 	import Segmented from '$lib/ui/Segmented.svelte';
 	import PhoneAccessSettings from '$lib/access/PhoneAccessSettings.svelte';
 	import DesktopSettings from '$lib/desktop/DesktopSettings.svelte';
+	import AssistantSettings from '$lib/assistant/AssistantSettings.svelte';
 </script>
 
 <svelte:head><title>Settings · Control</title></svelte:head>
@@ -26,6 +27,7 @@
 		/>
 	</section>
 	<PhoneAccessSettings />
+	<AssistantSettings />
 	<DesktopSettings />
 	<p class="later">Hubs & Bridges, rooms and more come later.</p>
 </main>
