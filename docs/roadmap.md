@@ -16,8 +16,8 @@ Yeelight lights (bulbs, strips), Tuya / Smart Life Wi-Fi plugs (after a Link), a
 ## Next steps (in the order suggested to the user)
 
 1. **Desktop app**: one Python program: Engine + pywebview window + tray icon, starts with Windows (see design decisions in CONTEXT.md / ADR 0001).
-2. **Scenes**: chip row on top of Home.
-3. **MCP server**: a thin Client of the Engine API (control + read state).
+2. **MCP server**: a thin Client of the Engine API (control + read state).
+3. **Scenes**: chip row on top of Home.
 4. Later: a proper Android install (needs HTTPS on the LAN: a local certificate authority, see ADR 0003), running the Engine on an always-on box (Raspberry Pi etc.) so phones work while the PC is off, Rooms, Hubs & Bridges in Settings, automations, Bluetooth, more brands, public release.
 
 ## Open items to raise with the user
