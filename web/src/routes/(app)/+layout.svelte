@@ -51,7 +51,10 @@
 				<div class="down">
 					<h1>Can't reach Control</h1>
 					{#if onThisComputer}
-						<p>Start it on this computer with <code>control serve</code>. This page reconnects by itself.</p>
+						<p>
+							Open Control from the Start menu (or, from source, run <code>control serve</code>). This page reconnects
+							by itself.
+						</p>
 					{:else}
 						<p>
 							Check that the computer running Control is on, and that this phone is on the home Wi-Fi. This page
