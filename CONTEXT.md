@@ -1,6 +1,6 @@
 # Control
 
-A home app that discovers smart things on the local network and lets anyone control them from one auto-organised interface, from a desktop window, a browser on the same wifi, or an AI assistant.
+A home app that discovers smart things on the local network and lets anyone control them from one auto-organised interface, from the Desktop App's Window, a browser on the same wifi, or an AI assistant.
 
 ## Language
 
@@ -119,7 +119,15 @@ The always-running core that owns every Device, its state, and all control. Ever
 _Avoid_: Server, backend, daemon, hub
 
 **Client**:
-Anything that talks to the Engine: the desktop window, the web UI, the MCP server. Clients hold no device logic.
+Anything that talks to the Engine: the Window, the web UI in a browser, the MCP server. Clients hold no device logic.
+
+**Desktop App**:
+The program a user downloads and installs on their PC. It runs the Engine, shows the Window, and keeps a tray icon so the Engine stays running (and phones keep working) after the Window is closed. It starts with Windows.
+_Avoid_: Launcher, tray app, desktop client
+
+**Window**:
+The Desktop App's own app window: a Client showing the same UI a browser gets. Closing it hides it; only quitting from the tray stops the Engine.
+_Avoid_: Desktop window, main window
 
 **Approved Browser**:
 A browser on another device (e.g. a phone) that the user has allowed, once, from the machine running the Engine or from another Approved Browser, by matching the short code it shows. Unapproved browsers can't see or control anything. The user can revoke an Approved Browser at any time.
