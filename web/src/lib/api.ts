@@ -145,7 +145,8 @@ export const api = {
 
 	// The Desktop App
 	desktop: () => call<DesktopApp>('GET', '/desktop'),
-	setStartWithWindows: (on: boolean) => call<DesktopApp>('PUT', '/desktop/start-with-windows', { on })
+	setStartWithWindows: (on: boolean) => call<DesktopApp>('PUT', '/desktop/start-with-windows', { on }),
+	dismissCloseNote: () => call<void>('DELETE', '/desktop/close-note')
 };
 
 /** local: the computer running the Engine. approved: an Approved Browser. */
@@ -189,6 +190,8 @@ export interface DesktopApp {
 	start_with_windows: boolean | null;
 	/** A newer release; `url` is its installer. */
 	update: { version: string; url: string } | null;
+	/** Say once that closing the Window kept Control running (when Windows notifications are off). */
+	close_note: boolean;
 	/** Only on the computer running the Engine. */
 	can_change: boolean;
 }

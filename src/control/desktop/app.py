@@ -27,6 +27,8 @@ ICON = Path(__file__).with_name("control.ico")
 MUTEX = "ControlDesktopApp"  # also the installer's AppMutex: it won't install over a running app
 SHOW_EVENT = "ControlDesktopShow"  # a second launch sets it to bring the Window forward
 CLOSE_HINT_SHOWN = "desktop_close_hint_shown"  # setting: bool
+# The UI listens for it and checks whether to show the "still running" note.
+SHOWN_EVENT = "window.dispatchEvent(new Event('control:window-shown'))"
 STATUS_EVERY = 5  # seconds between tray status refreshes
 
 _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True) if sys.platform == "win32" else None
@@ -168,7 +170,7 @@ class DesktopApp:
                 return
             args.Cancel = True
             form.Hide()
-            self._hint_once()
+            self._tell_still_running()
 
         window.native.FormClosing += closing
 
@@ -176,13 +178,21 @@ class DesktopApp:
         self.window.show()
         if self._minimized:
             self.window.restore()
+        self.window.run_js(SHOWN_EVENT)
 
-    def _hint_once(self) -> None:
+    def _tell_still_running(self) -> None:
+        """Once, on the first close: a notification from the tray icon, or, with Windows notifications
+        off, a note in the Window the next time it opens."""
+        from ..api.desktop import CLOSE_NOTE
+
         r = Registry()
         try:
             if r.setting(CLOSE_HINT_SHOWN, False):
                 return
             r.set_setting(CLOSE_HINT_SHOWN, True)
+            if not _notifications_on():
+                r.set_setting(CLOSE_NOTE, True)
+                return
         finally:
             r.close()
         self.tray.notify("Phones keep working. Quit from this icon to stop it.", "Control is still running here")
@@ -245,6 +255,18 @@ class DesktopApp:
     def quit(self) -> None:
         self.quitting = True
         self.window.destroy()
+
+
+def _notifications_on() -> bool:
+    """Windows Settings → System → Notifications."""
+    try:
+        import winreg
+
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            r"Software\Microsoft\Windows\CurrentVersion\PushNotifications") as key:
+            return winreg.QueryValueEx(key, "ToastEnabled")[0] != 0
+    except OSError:
+        return True  # never switched off
 
 
 def _page_background() -> str:

@@ -80,3 +80,20 @@ def test_phone_access_names_the_program_windows_asks_about(pc, monkeypatch):
 
 def test_sign_in_starts_the_app_hidden():
     assert autostart.command().endswith("--hidden")
+
+
+def test_the_still_running_note_shows_once_on_this_computer(pc, in_app):
+    from control.engine.registry import Registry
+
+    assert pc.get("/api/desktop").json()["close_note"] is False
+    r = Registry()
+    r.set_setting(desktop_api.CLOSE_NOTE, True)  # the first close, with Windows notifications off
+    r.close()
+    turn_on(pc)
+    p = phone()
+    approve(pc, p)
+    assert p.get("/api/desktop").json()["close_note"] is False
+    assert p.delete("/api/desktop/close-note").status_code == 403
+    assert pc.get("/api/desktop").json()["close_note"] is True
+    assert pc.delete("/api/desktop/close-note").status_code == 204
+    assert pc.get("/api/desktop").json()["close_note"] is False

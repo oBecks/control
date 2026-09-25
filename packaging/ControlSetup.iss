@@ -19,7 +19,8 @@ AppPublisherURL=https://github.com/oBecks/control
 AppSupportURL=https://github.com/oBecks/control/issues
 AppUpdatesURL=https://github.com/oBecks/control/releases
 PrivilegesRequired=lowest
-DefaultDirName={autopf}\Control
+; Per user (%LOCALAPPDATA%\Programs), whatever the account's rights.
+DefaultDirName={userpf}\Control
 DisableDirPage=yes
 DisableProgramGroupPage=yes
 DisableReadyPage=yes
@@ -52,7 +53,7 @@ Type: filesandordirs; Name: "{app}\_internal"
 Source: "..\dist\Control\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\Control"; Filename: "{app}\Control.exe"
+Name: "{userprograms}\Control"; Filename: "{app}\Control.exe"
 
 [Registry]
 ; The same value Settings → Start with Windows writes (src/control/desktop/autostart.py).

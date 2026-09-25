@@ -5,6 +5,7 @@
 	import { home } from '$lib/home.svelte';
 	import AccessRequestBanner from '$lib/access/AccessRequestBanner.svelte';
 	import WaitingScreen from '$lib/access/WaitingScreen.svelte';
+	import StillRunningNote from '$lib/desktop/StillRunningNote.svelte';
 
 	let { children } = $props();
 
@@ -59,6 +60,7 @@
 					{/if}
 				</div>
 			{:else}
+				{#if onThisComputer}<StillRunningNote />{/if}
 				{#if home.accessRequests.length}
 					<div class="asks">
 						{#each home.accessRequests as request (request.ref)}
