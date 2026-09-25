@@ -57,6 +57,11 @@ def _write(path: Path, config: dict) -> None:
     tmp.replace(path)
 
 
+def _servers(config: dict) -> dict:
+    servers = config.get("mcpServers")
+    return servers if isinstance(servers, dict) else {}
+
+
 def entry() -> dict:
     cmd = command()
     return {"command": cmd[0], "args": cmd[1:]}
@@ -70,7 +75,7 @@ def status() -> str:
     found = []
     for d in dirs:
         try:
-            found.append((_read(d / CONFIG).get("mcpServers") or {}).get(NAME))
+            found.append(_servers(_read(d / CONFIG)).get(NAME))
         except ValueError:
             found.append(None)
     if all(e == entry() for e in found):
@@ -92,13 +97,15 @@ def connect() -> None:
 
 
 def disconnect() -> None:
+    """Remove this Control's entry. One pointing at another copy of Control is that copy's, so
+    uninstalling an old copy doesn't disconnect the new one."""
     for d in config_dirs():
         path = d / CONFIG
         try:
             config = _read(path)
         except ValueError:
             continue  # not ours to fix
-        servers = config.get("mcpServers")
-        if isinstance(servers, dict) and NAME in servers:
+        servers = _servers(config)
+        if servers.get(NAME) == entry():
             del servers[NAME]
             _write(path, config)

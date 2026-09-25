@@ -77,6 +77,8 @@ def test_an_ambiguous_name_lists_the_matches():
     with pytest.raises(ToolError, match=r"several Devices: Desk lamp \(a\), Desk strip \(b\)"):
         server.find(devices, "desk")
     assert server.find(devices, "Desk lamp")["uid"] == "a"
+    with pytest.raises(ToolError, match="Say which Device"):
+        server.find(devices[:1], "  ")
 
 
 def test_set_light_colour(home):
@@ -99,7 +101,9 @@ def test_ac_state_is_labelled_assumed(home):
 
 def test_a_power_toggle_never_claims_on_or_off(home):
     srv, _, tx = home
-    out = ok(srv, "set_power", device="Living room TV", on=False)
+    assert "only has a Power Toggle" in error(srv, "set_power", device="Living room TV", on=False)
+    assert tx.sent == []  # "turn it off" mustn't switch it on
+    out = ok(srv, "press_button", device="Living room TV", button="Power")
     assert out["power"] == "unknown" and "Power Toggle" in out["why_unknown"]
     assert len(tx.sent) == 1
 
@@ -120,9 +124,10 @@ def test_read_tools_are_marked_read_only(home):
         async with Client(srv) as c:
             return (await c.list_tools()).tools
 
-    hints = {t.name: t.annotations.read_only_hint for t in anyio.run(go)}
-    assert hints == {"list_devices": True, "get_device": True, "set_power": False, "set_light": False,
-                     "set_climate": False, "press_button": False}
+    tools = {t.name: t.annotations for t in anyio.run(go)}
+    assert {n for n, a in tools.items() if a.read_only_hint} == {"list_devices", "get_device"}
+    # Pressing a button again (e.g. a Power Toggle) undoes it.
+    assert {n for n, a in tools.items() if a.idempotent_hint} == {"set_power", "set_light", "set_climate"}
 
 
 def test_starts_control_when_no_engine_answers():
@@ -195,10 +200,17 @@ def test_the_store_install_is_connected_too(claude_desktop, tmp_path):
     assert "control" in json.loads((store / claude.CONFIG).read_text(encoding="utf-8"))["mcpServers"]
 
 
-def test_another_controls_entry_is_outdated(claude_desktop):
-    claude_desktop.write_text(json.dumps({"mcpServers": {"control": {"command": "D:\\old\\Control.exe"}}}),
-                              encoding="utf-8")
+def test_another_controls_entry_is_outdated_and_not_ours_to_remove(claude_desktop):
+    theirs = {"mcpServers": {"control": {"command": "D:\\old\\Control.exe"}}}
+    claude_desktop.write_text(json.dumps(theirs), encoding="utf-8")
     assert claude.status() == "outdated"
+    claude.disconnect()  # e.g. uninstalling this copy
+    assert json.loads(claude_desktop.read_text(encoding="utf-8")) == theirs
+
+
+def test_odd_mcp_servers_value_reads_as_off(claude_desktop):
+    claude_desktop.write_text(json.dumps({"mcpServers": "?"}), encoding="utf-8")
+    assert claude.status() == "off"
 
 
 def test_without_claude_desktop(tmp_path, monkeypatch):
@@ -215,6 +227,16 @@ def test_connect_from_settings(client, claude_desktop):  # noqa: F811
     assert body["claude_desktop"] == "connected"
     assert "claude mcp add --scope user control --" in body["claude_code_command"]
     assert client.delete("/api/assistant/claude").json()["claude_desktop"] == "off"
+
+
+def test_connect_errors_reach_the_user(client, claude_desktop):  # noqa: F811
+    claude_desktop.write_text("{not json", encoding="utf-8")
+    resp = client.put("/api/assistant/claude")
+    assert resp.status_code == 422 and "isn't valid JSON" in resp.json()["detail"]
+    claude_desktop.unlink()
+    claude_desktop.parent.rmdir()
+    resp = client.put("/api/assistant/claude")
+    assert resp.status_code == 404 and "isn't installed" in resp.json()["detail"]
 
 
 def test_phones_cant_connect_claude(client, claude_desktop):  # noqa: F811

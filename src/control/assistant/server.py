@@ -44,6 +44,7 @@ HUB = "transmitter"  # Hubs never appear on Home, so the Assistant doesn't see t
 
 READ = ToolAnnotations(read_only_hint=True, open_world_hint=False)
 SET = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
+# Pressing a button: pressing it again can undo it (a Power Toggle).
 PRESS = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False)
 
 
@@ -121,6 +122,8 @@ def start_control(port: int) -> None:
 def find(devices: list[dict], ref: str) -> dict:
     """A Device by uid or name: exact name first (any case), then a unique part of a name."""
     ref = ref.strip()
+    if not ref:
+        raise ToolError("Say which Device, by name or uid.")
     devices = [d for d in devices if d["category"] != HUB]
     for d in devices:
         if d["uid"] == ref:
@@ -251,9 +254,16 @@ def create_server(engine: Engine) -> MCPServer:
 
     @server.tool(title="Turn a Device on or off", annotations=SET)
     def set_power(device: str, on: bool) -> dict:
-        """Turn a Device on or off. For a Device with only a Power Toggle this presses Power, which
-        switches it whichever way it wasn't."""
-        return change(controllable(lookup(device)), {"on": on})
+        """Turn a Device on or off. Refused for a Device with only a Power Toggle, since Control can't
+        know which way Power would switch it; press_button "Power" toggles it."""
+        d = controllable(lookup(device))
+        if d["control"] == "remote":
+            features = engine.call("GET", f"/devices/{d['uid']}/state")["features"]
+            if not features["discrete_power"]:
+                raise ToolError(f"'{d['name']}' only has a Power Toggle, so Control can't turn it "
+                                f"{'on' if on else 'off'} for sure: Power switches it whichever way it wasn't. "
+                                "If the user knows it's the other way now, use press_button with \"Power\".")
+        return change(d, {"on": on})
 
     @server.tool(title="Set a light", annotations=SET)
     def set_light(device: str, brightness: int | None = None, color: str | None = None,
