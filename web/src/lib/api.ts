@@ -47,7 +47,9 @@ export interface ScanResult {
 export class ApiError extends Error {
 	constructor(
 		public status: number,
-		message: string
+		message: string,
+		/** Why access was refused: approval_required, phone_access_off… */
+		public code?: string
 	) {
 		super(message);
 	}
@@ -69,11 +71,11 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 		throw new ApiError(0, "Can't reach the Control Engine");
 	}
 	if (!res.ok) {
-		const detail = await res.json().then(
-			(j) => j.detail,
-			() => res.statusText
+		const { detail, code } = await res.json().then(
+			(j) => j,
+			() => ({ detail: res.statusText })
 		);
-		throw new ApiError(res.status, typeof detail === 'string' ? detail : JSON.stringify(detail));
+		throw new ApiError(res.status, typeof detail === 'string' ? detail : JSON.stringify(detail), code);
 	}
 	return res.status === 204 ? (undefined as T) : res.json();
 }
@@ -126,8 +128,52 @@ export const api = {
 		call<{ status: 'pending' } | { status: 'linked'; devices: { uid: string; name: string; category: string }[] }>(
 			'GET',
 			`/links/tuya/${enc(token)}`
-		)
+		),
+
+	// Phone access & Approved Browsers
+	access: () => call<{ access: Access; browser_id: string | null }>('GET', '/access/me'),
+	askAccess: () => call<{ claim: string; code: string }>('POST', '/access/requests'),
+	claimAccess: (claim: string) =>
+		call<{ status: 'pending' | 'approved' | 'denied' | 'expired' }>('GET', `/access/claims/${enc(claim)}`),
+	accessRequests: () => call<AccessRequest[]>('GET', '/access/requests'),
+	decideAccess: (ref: string, approve: boolean) =>
+		call<void>('POST', `/access/requests/${enc(ref)}/${approve ? 'approve' : 'deny'}`),
+	approvedBrowsers: () => call<ApprovedBrowser[]>('GET', '/access/browsers'),
+	revokeBrowser: (id: string) => call<void>('DELETE', `/access/browsers/${enc(id)}`),
+	phoneAccess: () => call<PhoneAccess>('GET', '/access/phone'),
+	setPhoneAccess: (on: boolean) => call<PhoneAccess>('PUT', '/access/phone', { on })
 };
+
+/** local: the computer running the Engine. approved: an Approved Browser. */
+export type Access = 'local' | 'approved' | 'none';
+
+export interface AccessRequest {
+	ref: string;
+	code: string;
+	/** e.g. "iPhone · Safari" */
+	name: string;
+	created: number;
+}
+
+export interface ApprovedBrowser {
+	id: string;
+	name: string;
+	approved_at: number;
+	last_seen: number;
+	/** The browser asking. */
+	current: boolean;
+}
+
+export interface PhoneAccess {
+	on: boolean;
+	/** What phones open, while the Engine listens on the home network. */
+	url: string | null;
+	error: string | null;
+	/** Why phones may still fail to connect, e.g. Windows treats the network as Public. */
+	warning: string | null;
+	/** Only on the computer running the Engine. */
+	can_change: boolean;
+}
 
 export type RemoteKind = 'tv' | 'fan' | 'other';
 export type LibraryDomain = 'climate' | 'media_player' | 'fan';

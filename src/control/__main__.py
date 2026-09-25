@@ -1,5 +1,6 @@
 import argparse
 import json
+import logging
 import sys
 from dataclasses import asdict
 
@@ -186,6 +187,18 @@ def _tuya_link(registry: Registry, args) -> None:
     )
 
 
+class QuietReads(logging.Filter):
+    """Access log: keep changes and errors, drop successful reads. The UI polls every few seconds,
+    so logging every read would bury what matters."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            _client, method, _path, _http, status = record.args
+            return not (method in ("GET", "HEAD") and int(status) < 400)
+        except (TypeError, ValueError):
+            return True
+
+
 def main() -> None:
     # Device names can be any language; the Windows console code page can't print all of them.
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -243,14 +256,26 @@ def main() -> None:
     tuya.add_argument("--user-code", help="Smart Life User Code (prompted if omitted)")
     tuya.add_argument("--no-open", action="store_true", help="don't open the QR image")
 
-    serve = sub.add_parser("serve", help="run the Engine API")
+    serve = sub.add_parser("serve", help="run the Engine and the web UI")
     serve.add_argument("--port", type=int, default=8321)
 
     args = parser.parse_args()
     if args.command == "serve":
         import uvicorn
 
-        print(f"Engine API on http://127.0.0.1:{args.port}  (docs: /docs)")
+        from .api import access, lan
+
+        logging.getLogger("uvicorn.access").addFilter(QuietReads())
+        lan.listener.port = args.port
+        print(f"Control on http://localhost:{args.port}  (API docs: /docs)")
+        r = Registry()
+        try:
+            phone_access = r.setting(access.PHONE_ACCESS, False)
+        finally:
+            r.close()
+        if phone_access:
+            lan.listener.start()
+            print(f"Phones: {lan.listener.url}" if lan.listener.url else f"Phone access failed: {lan.listener.error}")
         uvicorn.run("control.api.app:app", host="127.0.0.1", port=args.port)
         return
     registry = Registry()

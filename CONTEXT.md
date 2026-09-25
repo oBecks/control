@@ -122,4 +122,5 @@ _Avoid_: Server, backend, daemon, hub
 Anything that talks to the Engine: the desktop window, the web UI, the MCP server. Clients hold no device logic.
 
 **Approved Browser**:
-A browser on another device (e.g. a phone) that the user has allowed, once, from the desktop app to use the web UI. Unapproved browsers can't see or control anything.
+A browser on another device (e.g. a phone) that the user has allowed, once, from the machine running the Engine or from another Approved Browser, by matching the short code it shows. Unapproved browsers can't see or control anything. The user can revoke an Approved Browser at any time.
+_Avoid_: Paired device, trusted device, logged-in user

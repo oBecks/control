@@ -28,6 +28,18 @@ class Theme {
 		const root = document.documentElement;
 		if (this.preference === 'system') root.removeAttribute('data-theme');
 		else root.dataset.theme = this.preference;
+		// The phone's status bar follows the theme too (app.html has one theme-color per scheme).
+		for (const meta of document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')) {
+			const scheme = meta.dataset.scheme ?? meta.media.match(/light|dark/)?.[0];
+			if (!scheme) continue;
+			meta.dataset.scheme = scheme;
+			meta.media =
+				this.preference === 'system'
+					? `(prefers-color-scheme: ${scheme})`
+					: scheme === this.preference
+						? 'all'
+						: 'not all';
+		}
 	}
 }
 

@@ -3,6 +3,8 @@
 	import { page } from '$app/state';
 	import { House, Radar, Settings } from '@lucide/svelte';
 	import { home } from '$lib/home.svelte';
+	import AccessRequestBanner from '$lib/access/AccessRequestBanner.svelte';
+	import WaitingScreen from '$lib/access/WaitingScreen.svelte';
 
 	let { children } = $props();
 
@@ -13,55 +15,80 @@
 	];
 
 	$effect(() => home.start());
+
+	const onThisComputer = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
 </script>
 
-<div class="shell">
-	<aside class="sidebar">
-		<span class="brand">Control</span>
-		<nav aria-label="Main">
+{#if home.lock === 'approval_required'}
+	<WaitingScreen />
+{:else if home.lock === 'phone_access_off'}
+	<div class="down">
+		<h1>Phone access is off</h1>
+		<p>Turn it on in Control's Settings on the computer running Control. This page reconnects by itself.</p>
+	</div>
+{:else}
+	<div class="shell">
+		<aside class="sidebar">
+			<span class="brand">Control</span>
+			<nav aria-label="Main">
+				{#each NAV as n (n.href)}
+					<a
+						href={n.href}
+						class:active={page.url.pathname === n.href}
+						aria-current={page.url.pathname === n.href ? 'page' : undefined}
+					>
+						<n.icon size={18} strokeWidth={2.2} />
+						{n.label}
+						{#if n.href === '/add' && home.newCount}<span class="count">{home.newCount}</span>{/if}
+					</a>
+				{/each}
+			</nav>
+		</aside>
+
+		<div class="content">
+			{#if home.engineDown}
+				<div class="down">
+					<h1>Can't reach Control</h1>
+					{#if onThisComputer}
+						<p>Start it on this computer with <code>control serve</code>. This page reconnects by itself.</p>
+					{:else}
+						<p>
+							Check that the computer running Control is on, and that this phone is on the home Wi-Fi. This page
+							reconnects by itself.
+						</p>
+					{/if}
+				</div>
+			{:else}
+				{#if home.accessRequests.length}
+					<div class="asks">
+						{#each home.accessRequests as request (request.ref)}
+							<AccessRequestBanner {request} ondecide={(approve) => home.decide(request.ref, approve)} />
+						{/each}
+					</div>
+				{/if}
+				{@render children()}
+			{/if}
+		</div>
+
+		<nav class="tabbar" aria-label="Main">
 			{#each NAV as n (n.href)}
 				<a
 					href={n.href}
 					class:active={page.url.pathname === n.href}
 					aria-current={page.url.pathname === n.href ? 'page' : undefined}
 				>
-					<n.icon size={18} strokeWidth={2.2} />
-					{n.label}
-					{#if n.href === '/add' && home.newCount}<span class="count">{home.newCount}</span>{/if}
+					<n.icon size={22} strokeWidth={2.1} />
+					<small>{n.short ?? n.label}</small>
+					{#if n.href === '/add' && home.newCount}<span class="dot" aria-label="{home.newCount} new"></span>{/if}
 				</a>
 			{/each}
 		</nav>
-	</aside>
 
-	<div class="content">
-		{#if home.engineDown}
-			<div class="down">
-				<h1>Can't reach the Control Engine</h1>
-				<p>Start it on this computer with <code>control serve</code>. This page reconnects by itself.</p>
-			</div>
-		{:else}
-			{@render children()}
+		{#if home.toast}
+			<div class="toast" role="status">{home.toast}</div>
 		{/if}
 	</div>
-
-	<nav class="tabbar" aria-label="Main">
-		{#each NAV as n (n.href)}
-			<a
-				href={n.href}
-				class:active={page.url.pathname === n.href}
-				aria-current={page.url.pathname === n.href ? 'page' : undefined}
-			>
-				<n.icon size={22} strokeWidth={2.1} />
-				<small>{n.short ?? n.label}</small>
-				{#if n.href === '/add' && home.newCount}<span class="dot" aria-label="{home.newCount} new"></span>{/if}
-			</a>
-		{/each}
-	</nav>
-
-	{#if home.toast}
-		<div class="toast" role="status">{home.toast}</div>
-	{/if}
-</div>
+{/if}
 
 <style>
 	.shell {
@@ -172,6 +199,19 @@
 		color: var(--on-accent);
 		font-size: var(--fs-xs);
 		font-weight: var(--fw-bold);
+	}
+
+	.asks {
+		display: flex;
+		flex-direction: column;
+		gap: var(--s-2);
+		margin-block-end: var(--s-4);
+	}
+	@media (min-width: 960px) {
+		.asks {
+			margin: 0;
+			padding: var(--s-6) var(--s-8) 0;
+		}
 	}
 
 	.down {

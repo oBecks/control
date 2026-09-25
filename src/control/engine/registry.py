@@ -1,6 +1,7 @@
 """The Registry remembers every Found Device across Scans, keyed by its stable uid,
 so a device keeps its name (and later its Room, Link secrets...) when its IP changes."""
 
+import hashlib
 import json
 import os
 import sqlite3
@@ -49,7 +50,23 @@ CREATE TABLE IF NOT EXISTS remote_devices (
     assumed_state    TEXT,
     created          REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS settings (
+    key    TEXT PRIMARY KEY,
+    value  TEXT NOT NULL       -- JSON
+);
+-- Browsers on other devices the user let in (ADR 0003). Only a hash of each token is kept.
+CREATE TABLE IF NOT EXISTS approved_browsers (
+    id           TEXT PRIMARY KEY,
+    token_hash   TEXT NOT NULL UNIQUE,
+    name         TEXT NOT NULL,
+    approved_at  REAL NOT NULL,
+    last_seen    REAL NOT NULL
+);
 """
+
+
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
 def default_db_path() -> Path:
@@ -89,6 +106,14 @@ class RemoteDevice:
     source: str
     signals: dict
     assumed_state: dict | None
+
+
+@dataclass
+class ApprovedBrowser:
+    id: str
+    name: str
+    approved_at: float
+    last_seen: float
 
 
 @dataclass
@@ -280,7 +305,54 @@ class Registry:
         with self._db:
             self._db.execute("DELETE FROM remote_devices WHERE uid = ?", (uid,))
 
+    # --- Settings ------------------------------------------------------------
+
+    def setting(self, key: str, default=None):
+        row = self._db.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        return json.loads(row["value"]) if row else default
+
+    def set_setting(self, key: str, value) -> None:
+        with self._db:
+            self._db.execute(
+                "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, json.dumps(value)),
+            )
+
+    # --- Approved Browsers ---------------------------------------------------
+
+    def approve_browser(self, token: str, name: str) -> str:
+        browser_id = uuid.uuid4().hex[:12]
+        now = time.time()
+        with self._db:
+            self._db.execute(
+                "INSERT INTO approved_browsers (id, token_hash, name, approved_at, last_seen) VALUES (?, ?, ?, ?, ?)",
+                (browser_id, _hash_token(token), name, now, now),
+            )
+        return browser_id
+
+    def browser_for_token(self, token: str) -> ApprovedBrowser | None:
+        row = self._db.execute(
+            "SELECT * FROM approved_browsers WHERE token_hash = ?", (_hash_token(token),)
+        ).fetchone()
+        return self._to_browser(row) if row else None
+
+    def approved_browsers(self) -> list[ApprovedBrowser]:
+        rows = self._db.execute("SELECT * FROM approved_browsers ORDER BY last_seen DESC").fetchall()
+        return [self._to_browser(r) for r in rows]
+
+    def browser_seen(self, browser_id: str) -> None:
+        with self._db:
+            self._db.execute("UPDATE approved_browsers SET last_seen = ? WHERE id = ?", (time.time(), browser_id))
+
+    def revoke_browser(self, browser_id: str) -> None:
+        with self._db:
+            if self._db.execute("DELETE FROM approved_browsers WHERE id = ?", (browser_id,)).rowcount == 0:
+                raise LookupError(f"no approved browser '{browser_id}'")
+
     # --- Internals ---------------------------------------------------------
+
+    def _to_browser(self, r: sqlite3.Row) -> ApprovedBrowser:
+        return ApprovedBrowser(id=r["id"], name=r["name"], approved_at=r["approved_at"], last_seen=r["last_seen"])
 
     def _to_remote(self, r: sqlite3.Row) -> RemoteDevice:
         return RemoteDevice(
