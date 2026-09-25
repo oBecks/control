@@ -1,0 +1,27 @@
+[project]
+name = "control"
+version = "0.1.0"
+description = "Discover and control smart things on your local network."
+requires-python = ">=3.11"
+dependencies = [
+    "yeelight>=0.7.16",
+    "broadlink>=0.19.0",
+    "tinytuya>=1.20.0",
+    "tuya-device-sharing-sdk>=0.2.15",
+    "qrcode[pil]>=7.4",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "httpx"]
+
+[project.scripts]
+control = "control.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

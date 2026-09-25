@@ -1,0 +1,4 @@
+# Keep LF everywhere: Prettier (and the Linux CI) expect it, and Windows checkouts would otherwise get CRLF.
+* text=auto eol=lf
+*.png binary
+*.ico binary

@@ -1,0 +1,454 @@
+"""The Engine's local HTTP API. Every Client (desktop window, web UI, MCP server) goes through
+it, and none of them hold device logic.
+
+Binds to 127.0.0.1 for now. Opening it to the LAN comes with Approved Browsers (see CONTEXT.md).
+"""
+
+from dataclasses import asdict
+from typing import Iterator, Literal
+
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
+
+import base64
+
+from ..engine import code_set_finder, remote_buttons, signal_library
+from ..engine.connect import (
+    connect_buttons,
+    connect_climate,
+    connect_light,
+    connect_plug,
+    connect_transmitter,
+    control_kind,
+    only_transmitter,
+)
+from ..engine.errors import DeviceUnreachable
+from ..engine.found_device import Category
+from ..engine.links import tuya_link
+from ..engine.registry import KnownDevice, Registry, RemoteDevice
+from ..engine.scan import DEFAULT_TIMEOUT, scan_and_remember
+
+app = FastAPI(title="Control Engine", version="0.1.0")
+
+
+@app.exception_handler(LookupError)
+def _not_found(_: Request, exc: LookupError):
+    return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+
+@app.exception_handler(ValueError)
+def _invalid(_: Request, exc: ValueError):
+    return JSONResponse(status_code=422, content={"detail": str(exc)})
+
+
+@app.exception_handler(DeviceUnreachable)
+def _unreachable(_: Request, exc: DeviceUnreachable):
+    return JSONResponse(status_code=503, content={"detail": str(exc)})
+
+
+def registry() -> Iterator[Registry]:
+    r = Registry()
+    try:
+        yield r
+    finally:
+        r.close()
+
+
+# --- Device views ----------------------------------------------------------
+
+
+class DeviceOut(BaseModel):
+    uid: str
+    name: str
+    category: Category
+    kind: Literal["network", "remote"]
+    control: Literal["light", "plug", "climate", "remote"] | None = Field(
+        description="which control surface to show; null if the app can't control it yet"
+    )
+    brand: str
+    model: str
+    ip: str | None
+    readiness: str
+    online: bool
+    is_new: bool
+    note: str = Field("", description="setup hint, e.g. how to unlock a device")
+    source: str | None = Field(None, description="remote devices: where the Signals came from")
+    via: str | None = Field(None, description="remote devices: uid of the Hub that sends their Signals")
+
+
+def _network_out(r: Registry, d: KnownDevice) -> DeviceOut:
+    return DeviceOut(
+        uid=d.uid, name=d.name, category=d.category, kind="network", control=control_kind(r, d),
+        brand=d.brand, model=d.model, ip=d.ip, readiness=d.readiness.value, online=d.online, is_new=d.is_new,
+        note=d.note,
+    )
+
+
+def _remote_control(d: RemoteDevice) -> str | None:
+    if d.signals.get("format") == "buttons":
+        return "remote" if d.signals["buttons"] else None  # nothing to press until a button is learned
+    return "climate"
+
+
+def _remote_out(d: RemoteDevice) -> DeviceOut:
+    return DeviceOut(
+        uid=d.uid, name=d.name, category=d.category, kind="remote", control=_remote_control(d),
+        brand="", model="", ip=None, readiness="ready", online=True, is_new=False, source=d.source,
+        via=d.transmitter_uid,
+    )
+
+
+def _device_out(r: Registry, uid: str) -> DeviceOut:
+    if uid.startswith("remote:"):
+        return _remote_out(r.resolve_remote(uid))
+    d = r.get(uid)
+    if d is None:
+        raise LookupError(f"no device '{uid}'")
+    return _network_out(r, d)
+
+
+@app.get("/api/devices", response_model=list[DeviceOut])
+def list_devices(r: Registry = Depends(registry)):
+    return [_network_out(r, d) for d in r.all()] + [_remote_out(d) for d in r.remotes()]
+
+
+@app.post("/api/devices/seen", status_code=204)
+def mark_all_seen(r: Registry = Depends(registry)):
+    """Clear every New flag (the user has looked at Add Devices)."""
+    r.mark_seen()
+
+
+@app.get("/api/devices/{uid}", response_model=DeviceOut)
+def get_device(uid: str, r: Registry = Depends(registry)):
+    return _device_out(r, uid)
+
+
+class DevicePatch(BaseModel):
+    name: str | None = Field(None, description="empty string resets to the brand's name")
+    seen: bool | None = Field(None, description="true clears the New flag")
+
+
+@app.patch("/api/devices/{uid}", response_model=DeviceOut)
+def patch_device(uid: str, patch: DevicePatch, r: Registry = Depends(registry)):
+    out = _device_out(r, uid)  # 404s early
+    if patch.name is not None:
+        if out.kind == "remote":
+            if not patch.name:
+                raise ValueError("remote devices need a name")
+            r.rename_remote(uid, patch.name)
+        else:
+            r.rename(uid, patch.name)
+    if patch.seen and out.kind == "network":
+        r.mark_seen([uid])
+    return _device_out(r, uid)
+
+
+@app.delete("/api/devices/{uid}", status_code=204)
+def forget_device(uid: str, r: Registry = Depends(registry)):
+    _device_out(r, uid)
+    (r.forget_remote if uid.startswith("remote:") else r.forget)(uid)
+
+
+# --- Scan ------------------------------------------------------------------
+
+
+class ScanOut(BaseModel):
+    added: list[str]
+    moved: dict[str, tuple[str, str]]
+    missing: list[str]
+    errors: dict[str, str]
+    devices: list[DeviceOut]
+
+
+@app.post("/api/scan", response_model=ScanOut)
+def scan(timeout: float = DEFAULT_TIMEOUT, r: Registry = Depends(registry)):
+    result, report = scan_and_remember(r, timeout)
+    return ScanOut(
+        added=report.added, moved=report.moved, missing=report.missing, errors=result.errors,
+        devices=list_devices(r),
+    )
+
+
+# --- Live state & control --------------------------------------------------
+
+
+class StateIn(BaseModel):
+    """Desired state; send only what should change. Which fields apply depends on `control`.
+    Changing any setting also turns the device on, like a physical remote."""
+
+    on: bool | None = None
+    brightness: int | None = Field(None, ge=1, le=100, description="light")
+    rgb: tuple[int, int, int] | None = Field(None, description="light")
+    kelvin: int | None = Field(None, description="light")
+    mode: str | None = Field(None, description="climate")
+    target_temp: float | None = Field(None, description="climate")
+    fan: str | None = Field(None, description="climate")
+    swing: str | None = Field(None, description="climate")
+    press: str | None = Field(None, description="remote: name of a button to press")
+
+
+def _read_state(r: Registry, out: DeviceOut, desired: StateIn | None) -> dict:
+    if out.control == "light":
+        _, light = connect_light(r, out.uid)
+        if desired:
+            _apply_light(light, desired)
+        return {"control": "light", "features": asdict(light.features), "state": asdict(light.get_state())}
+    if out.control == "plug":
+        _, plug = connect_plug(r, out.uid)
+        if desired and desired.on is not None:
+            plug.turn_on() if desired.on else plug.turn_off()
+        return {"control": "plug", "features": {}, "state": asdict(plug.get_state())}
+    if out.control == "climate":
+        remote, ac = connect_climate(r, out.uid)
+        if desired:
+            ac.apply(on=desired.on, mode=desired.mode, target_temp=desired.target_temp,
+                     fan=desired.fan, swing=desired.swing)
+            r.set_assumed_state(remote.uid, ac.state_dict())
+        return {"control": "climate", "features": asdict(ac.features), "state": ac.state_dict(), "assumed": True}
+    if out.control == "remote":
+        remote, pad = connect_buttons(r, out.uid)
+        if desired:
+            if desired.press:
+                pad.press(desired.press)
+            elif desired.on is not None:
+                pad.set_power(desired.on)
+            if pad.on is not None:
+                r.set_assumed_state(remote.uid, {"on": pad.on})
+        # on is null for a Power Toggle: the app never claims whether it's on.
+        return {"control": "remote", "features": asdict(pad.features), "state": {"on": pad.on}, "assumed": True}
+    raise LookupError(f"'{out.name}' can't be controlled yet")
+
+
+def _apply_light(light, s: StateIn) -> None:
+    if s.on is False:
+        light.turn_off()
+        return
+    if s.on or any(v is not None for v in (s.brightness, s.rgb, s.kelvin)):
+        light.turn_on()
+    if s.brightness is not None:
+        light.set_brightness(s.brightness)
+    if s.rgb is not None:
+        light.set_rgb(*s.rgb)
+    if s.kelvin is not None:
+        light.set_kelvin(s.kelvin)
+
+
+@app.get("/api/devices/{uid}/state")
+def get_state(uid: str, r: Registry = Depends(registry)):
+    """Live state read from the device (for remote devices: the Assumed State)."""
+    return _read_state(r, _device_out(r, uid), None)
+
+
+@app.post("/api/devices/{uid}/state")
+def set_state(uid: str, desired: StateIn, r: Registry = Depends(registry)):
+    return _read_state(r, _device_out(r, uid), desired)
+
+
+# --- Remote Devices & Signal Library ---------------------------------------
+
+
+@app.get("/api/signal-library/{domain}")
+def search_code_sets(domain: str, brand: str):
+    """domain: climate | media_player | fan"""
+    return [asdict(s) for s in signal_library.search(domain, brand)]
+
+
+class RemoteIn(BaseModel):
+    name: str
+    code_set: int
+    via: str | None = Field(None, description="transmitter uid; default: the only one")
+    probe_temp: int | None = Field(
+        None, description="if this code set was found by a probe: the temperature it sent, so the Assumed State matches"
+    )
+
+
+@app.post("/api/remote-devices", response_model=DeviceOut, status_code=201)
+def add_remote(body: RemoteIn, r: Registry = Depends(registry)):
+    if not body.name.strip():
+        raise ValueError("give the device a name")
+    via = r.resolve(body.via) if body.via else only_transmitter(r)
+    signals = signal_library.load_climate(body.code_set)
+    uid = r.add_remote(body.name.strip(), Category.CLIMATE, via.uid, f"smartir:climate:{body.code_set}", signals)
+    if body.probe_temp is not None:
+        r.set_assumed_state(uid, asdict(code_set_finder.probe_state(signals, body.probe_temp)))
+    return _device_out(r, uid)
+
+
+class ProbeIn(BaseModel):
+    code_sets: list[int] = Field(min_length=1, max_length=15)
+    via: str | None = None
+
+
+@app.post("/api/remote-devices/probe")
+def probe_code_sets(body: ProbeIn, r: Registry = Depends(registry)):
+    """Code Set Finder: send "on" from each code set with its own temperature. The temperature the AC
+    then shows identifies the working code set. Codes in `skipped` need another round."""
+    via = r.resolve(body.via) if body.via else only_transmitter(r)
+    _, transmitter = connect_transmitter(r, via.uid)
+    sets = {c: signal_library.load_climate(c) for c in body.code_sets}
+    assignment, skipped = code_set_finder.plan(sets)
+    code_set_finder.run(transmitter, sets, assignment)
+    return {"assignment": {str(c): t for c, t in assignment.items()}, "skipped": skipped}
+
+
+class TestIn(BaseModel):
+    code_set: int
+    temp: int
+    via: str | None = None
+
+
+@app.post("/api/remote-devices/test")
+def test_code_set(body: TestIn, r: Registry = Depends(registry)):
+    """Send one code set's "on" at `temp`, to confirm a Code Set Finder answer."""
+    via = r.resolve(body.via) if body.via else only_transmitter(r)
+    _, transmitter = connect_transmitter(r, via.uid)
+    signals = signal_library.load_climate(body.code_set)
+    code_set_finder.run(transmitter, {body.code_set: signals}, {body.code_set: body.temp})
+    return {"sent": True}
+
+
+class CodeSetIn(BaseModel):
+    code_set: int
+
+
+@app.put("/api/remote-devices/{uid}/code-set", response_model=DeviceOut)
+def switch_code_set(uid: str, body: CodeSetIn, r: Registry = Depends(registry)):
+    remote = r.resolve_remote(uid)
+    r.set_remote_signals(remote.uid, f"smartir:climate:{body.code_set}", signal_library.load_climate(body.code_set))
+    return _device_out(r, uid)
+
+
+# --- Button Remote Devices (TVs, fans, other) & Learning ---------------------
+
+
+class ButtonRemoteIn(BaseModel):
+    name: str
+    kind: Literal["tv", "fan", "other"]
+    via: str | None = Field(None, description="transmitter uid; default: the only one")
+    code_set: int | None = Field(None, description="start from a Signal Library code set instead of empty")
+
+
+@app.post("/api/remote-devices/buttons", response_model=DeviceOut, status_code=201)
+def add_button_remote(body: ButtonRemoteIn, r: Registry = Depends(registry)):
+    if not body.name.strip():
+        raise ValueError("give the device a name")
+    via = r.resolve(body.via) if body.via else only_transmitter(r)
+    if body.code_set is not None:
+        domain = "media_player" if body.kind == "tv" else "fan"
+        signals = remote_buttons.from_code_set(domain, signal_library.load(domain, body.code_set))
+        source = f"smartir:{domain}:{body.code_set}"
+    else:
+        signals, source = remote_buttons.empty(body.kind), "learned"
+    uid = r.add_remote(body.name.strip(), remote_buttons.CATEGORY[body.kind], via.uid, source, signals)
+    return _device_out(r, uid)
+
+
+@app.get("/api/remote-devices/suggested-buttons/{kind}")
+def suggested_buttons(kind: Literal["tv", "fan", "other"]):
+    """The buttons Learning asks for, in order (each can be skipped)."""
+    return [{"name": n, "label": l} for n, l in remote_buttons.SUGGESTED[kind]]
+
+
+class SignalIn(BaseModel):
+    signal: str = Field(description="base64")
+
+
+@app.put("/api/remote-devices/{uid}/buttons/{button}", response_model=DeviceOut)
+def save_button(uid: str, button: str, body: SignalIn, r: Registry = Depends(registry)):
+    base64.b64decode(body.signal + "=" * (-len(body.signal) % 4), validate=True)
+    r.set_remote_button(uid, button, body.signal)
+    return _device_out(r, uid)
+
+
+@app.delete("/api/remote-devices/{uid}/buttons/{button}", response_model=DeviceOut)
+def delete_button(uid: str, button: str, r: Registry = Depends(registry)):
+    r.set_remote_button(uid, button, None)
+    return _device_out(r, uid)
+
+
+@app.post("/api/hubs/{uid}/learn")
+def learn(uid: str, timeout: float = 20, r: Registry = Depends(registry)):
+    """Learning: blocks until a button is pressed on a remote pointed at the Hub, or `timeout`."""
+    _, transmitter = connect_transmitter(r, uid)
+    signal = transmitter.learn(min(timeout, 30))
+    if signal is None:
+        raise HTTPException(408, "No signal received. Point the remote at the Broadlink and press the button.")
+    return {"signal": base64.b64encode(signal).decode()}
+
+
+@app.post("/api/hubs/{uid}/send")
+def send_signal(uid: str, body: SignalIn, r: Registry = Depends(registry)):
+    """Send a raw Signal, e.g. to test a just-learned button before saving it."""
+    _, transmitter = connect_transmitter(r, uid)
+    transmitter.send(base64.b64decode(body.signal + "=" * (-len(body.signal) % 4)))
+    return {"sent": True}
+
+
+class TryButtonIn(BaseModel):
+    domain: Literal["media_player", "fan"]
+    code_set: int
+    button: str | None = Field(None, description="default: the most visible button (TV Off/Power, a fan speed…)")
+    via: str | None = None
+
+
+# Tried in order: the most visible reaction first, so the user can tell whether the code set matches.
+# TVs: the user turns the TV on first, so a matching Off (or Power) switches it off.
+_TRY_ORDER = {
+    "media_player": ["power_off", "power", "power_on", "mute", "volume_up"],
+    "fan": ["speed:", "oscillate", "power_off"],
+}
+
+
+@app.post("/api/signal-library/try-button")
+def try_library_button(body: TryButtonIn, r: Registry = Depends(registry)):
+    """Press one button from a library code set, to check whether it matches the device."""
+    via = r.resolve(body.via) if body.via else only_transmitter(r)
+    _, transmitter = connect_transmitter(r, via.uid)
+    buttons = remote_buttons.from_code_set(body.domain, signal_library.load(body.domain, body.code_set))["buttons"]
+    name = body.button or next(
+        (b for pref in _TRY_ORDER[body.domain] for b in buttons if b == pref or (pref.endswith(":") and b.startswith(pref))),
+        None,
+    )
+    if name is None or name not in buttons:
+        raise ValueError(f"code set {body.code_set} has no usable test signal")
+    sig = buttons[name]
+    transmitter.send(base64.b64decode(sig + "=" * (-len(sig) % 4)))
+    return {"sent": True, "button": name, "label": remote_buttons.label(name)}
+
+
+# --- Tuya Link -------------------------------------------------------------
+
+# token -> user code, for logins in progress (memory only; a restart just means scanning again).
+_pending_tuya: dict[str, str] = {}
+
+
+class TuyaStartIn(BaseModel):
+    user_code: str
+
+
+@app.post("/api/links/tuya")
+def tuya_start(body: TuyaStartIn):
+    try:
+        token, qr_content = tuya_link.start(body.user_code)
+    except tuya_link.LinkError as exc:
+        raise HTTPException(422, str(exc))
+    _pending_tuya[token] = body.user_code
+    return {"token": token, "qr_content": qr_content}
+
+
+@app.get("/api/links/tuya/{token}")
+def tuya_poll(token: str, r: Registry = Depends(registry)):
+    """Poll until status is "linked". The Client renders `qr_content` as a QR code meanwhile."""
+    user_code = _pending_tuya.get(token)
+    if user_code is None:
+        raise LookupError("unknown or finished login; start again")
+    info = tuya_link.check_login(token, user_code)
+    if info is None:
+        return {"status": "pending"}
+    linked = tuya_link.fetch_devices(info, user_code)
+    for d in linked:
+        r.save_link(d.uid, d.name, d.category, {"local_key": d.local_key},
+                    {"tuya_category": d.tuya_category, "product_name": d.product_name, **d.extra})
+    del _pending_tuya[token]
+    return {"status": "linked", "devices": [{"uid": d.uid, "name": d.name, "category": d.category} for d in linked]}
