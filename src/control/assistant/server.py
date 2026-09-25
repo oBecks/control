@@ -265,6 +265,8 @@ def create_server(engine: Engine) -> MCPServer:
         d = controllable(lookup(device))
         if d["control"] == "remote":
             features = engine.call("GET", f"/devices/{d['uid']}/state")["features"]
+            if not features["can_power"]:
+                raise ToolError(f"'{d['name']}' has no Power button yet. It can be taught in Control (Add devices).")
             if not features["discrete_power"]:
                 raise ToolError(f"'{d['name']}' only has a Power Toggle, so Control can't turn it "
                                 f"{'on' if on else 'off'} for sure: Power switches it whichever way it wasn't. "
@@ -279,6 +281,8 @@ def create_server(engine: Engine) -> MCPServer:
         d = controllable(lookup(device))
         if d["control"] != "light":
             raise ToolError(f"'{d['name']}' isn't a light.")
+        if color is not None and kelvin is not None:
+            raise ToolError("Give either a color or a white temperature (kelvin), not both.")
         body: dict = {"brightness": brightness, "kelvin": kelvin}
         if color is not None:
             body["rgb"] = parse_color(color)

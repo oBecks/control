@@ -87,6 +87,7 @@ def test_set_light_colour(home):
     assert light.calls == ["on", ("brightness", 40), ("rgb", (255, 136, 0))]
     assert out["power"] == "on" and out["brightness"] == 40
     assert "isn't a colour" in error(srv, "set_light", device="Yeelight color", color="orange")
+    assert "not both" in error(srv, "set_light", device="Yeelight color", color="#ffffff", kelvin=3000)
 
 
 def test_ac_state_is_labelled_assumed(home):
@@ -119,6 +120,17 @@ def test_separate_on_and_off_not_yet_used_is_unknown_but_not_a_toggle(home, clie
     out = ok(srv, "set_power", device="Bedroom TV", on=False)
     assert out["power"] == "off" and out["assumed"].startswith("Assumed State")
     assert len(tx.sent) == 1
+
+
+def test_no_power_button_is_said_plainly(home):
+    srv, _, tx = home
+    r = Registry()
+    r.add_remote("Soundbar", Category.MEDIA, "broadlink:aa", "learned",
+                 {"format": "buttons", "kind": "other", "buttons": {"mute": "AAAA"}})
+    r.close()
+    assert ok(srv, "get_device", device="Soundbar")["why_unknown"].startswith("No Power button")
+    assert "has no Power button" in error(srv, "set_power", device="Soundbar", on=True)
+    assert tx.sent == []
 
 
 def test_press_a_button_by_label(home):
