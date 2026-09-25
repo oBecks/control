@@ -51,7 +51,7 @@ def client(tmp_path, monkeypatch):
     ])
     r.add_remote("AC", Category.CLIMATE, "broadlink:aa", "smartir:climate:1", SIGNALS)
     r.close()
-    return TestClient(api.app)
+    return TestClient(api.app, base_url="http://localhost", client=("127.0.0.1", 50000))  # the PC itself
 
 
 def by_uid(devices):

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { theme, type ThemePreference } from '$lib/theme.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
+	import PhoneAccessSettings from '$lib/access/PhoneAccessSettings.svelte';
 </script>
 
 <svelte:head><title>Settings · Control</title></svelte:head>
@@ -23,6 +24,7 @@
 			}}
 		/>
 	</section>
+	<PhoneAccessSettings />
 	<p class="later">Hubs & Bridges, rooms and more come later.</p>
 </main>
 

@@ -1,8 +1,13 @@
 // Home's live view of the Engine: devices, their states, optimistic changes, polling.
-import { api, ApiError, type Device, type DeviceState, type ScanResult } from './api';
+import { api, ApiError, type AccessRequest, type Device, type DeviceState, type ScanResult } from './api';
 import type { StateChange } from './types';
 
 const POLL_MS = 8000;
+/** Phones asking for access are polled faster, since someone is standing there waiting. */
+const REQUESTS_POLL_MS = 3000;
+
+/** Why this browser can't use the Engine right now (ADR 0003). */
+export type Lock = 'approval_required' | 'phone_access_off';
 
 class Home {
 	devices = $state<Device[]>([]);
@@ -11,12 +16,15 @@ class Home {
 	unreachable = $state<Record<string, boolean>>({});
 	loaded = $state(false);
 	engineDown = $state(false);
+	lock = $state<Lock | null>(null);
+	/** Phones waiting for someone to approve their code. */
+	accessRequests = $state<AccessRequest[]>([]);
 	scanning = $state(false);
 	toast = $state<string | null>(null);
 
 	/** Devices with a change in flight: polling must not overwrite their optimistic state. */
 	#pending = new Set<string>();
-	#timer: ReturnType<typeof setInterval> | undefined;
+	#timers: ReturnType<typeof setInterval>[] = [];
 
 	/** Controllable devices only; Transmitters and not-yet-ready devices live in Add Devices. */
 	controllable = $derived(this.devices.filter((d) => d.control !== null));
@@ -27,14 +35,16 @@ class Home {
 	}
 
 	start() {
+		const visible = () => document.visibilityState === 'visible';
 		this.refresh();
-		this.#timer = setInterval(() => {
-			if (document.visibilityState === 'visible') this.refresh();
-		}, POLL_MS);
-		const onVisible = () => document.visibilityState === 'visible' && this.refresh();
+		this.#timers = [
+			setInterval(() => visible() && this.refresh(), POLL_MS),
+			setInterval(() => visible() && !this.lock && !this.engineDown && this.#readRequests(), REQUESTS_POLL_MS)
+		];
+		const onVisible = () => visible() && this.refresh();
 		document.addEventListener('visibilitychange', onVisible);
 		return () => {
-			clearInterval(this.#timer);
+			this.#timers.forEach(clearInterval);
 			document.removeEventListener('visibilitychange', onVisible);
 		};
 	}
@@ -43,14 +53,35 @@ class Home {
 		try {
 			this.devices = await api.devices();
 			this.engineDown = false;
+			this.lock = null;
 		} catch (e) {
 			this.engineDown = e instanceof ApiError && e.status === 0;
+			this.lock = lockOf(e);
 			return;
 		} finally {
 			this.loaded = true;
 		}
 		// Offline devices are asked too: a Scan can miss a reply, and a direct answer brings them back.
-		await Promise.all(this.controllable.map((d) => this.#readState(d.uid)));
+		await Promise.all([...this.controllable.map((d) => this.#readState(d.uid)), this.#readRequests()]);
+	}
+
+	async #readRequests() {
+		try {
+			this.accessRequests = await api.accessRequests();
+		} catch (e) {
+			this.lock = lockOf(e) ?? this.lock;
+		}
+	}
+
+	/** Approve or deny a phone's code. */
+	async decide(ref: string, approve: boolean) {
+		this.accessRequests = this.accessRequests.filter((a) => a.ref !== ref);
+		try {
+			await api.decideAccess(ref, approve);
+			if (approve) this.notify('Approved. The phone opens Control by itself.');
+		} catch (e) {
+			this.notify(e instanceof Error ? e.message : String(e));
+		}
 	}
 
 	async #readState(uid: string) {
@@ -139,6 +170,11 @@ class Home {
 			if (this.toast === message) this.toast = null;
 		}, 4000);
 	}
+}
+
+function lockOf(e: unknown): Lock | null {
+	const code = e instanceof ApiError ? e.code : undefined;
+	return code === 'approval_required' || code === 'phone_access_off' ? code : null;
 }
 
 /** The Engine's rule, mirrored for instant feedback: changing a setting also turns a device on. */

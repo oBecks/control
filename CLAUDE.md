@@ -16,8 +16,9 @@ Windows app that scans the home wifi for smart devices and controls them from on
 
 ## Running
 
-- Engine: `.venv/Scripts/control serve` (127.0.0.1:8321, run in background). It has no auto-reload: restart it after every Python change.
-- UI: `preview_start` with name `web` (`.claude/launch.json`) → http://localhost:5173, which proxies `/api` to the Engine.
+- Engine: `.venv/Scripts/control serve` (127.0.0.1:8321, run in background). It has no auto-reload: restart it after every Python change. It also serves the last `npm run build` of the UI at http://localhost:8321 (what phones get).
+- UI while developing: `preview_start` with name `web` (`.claude/launch.json`) → http://localhost:5173 with hot reload, which proxies `/api` to the Engine.
+- Phone access: the PC's own LAN address (shown in Settings) acts like a phone, since only 127.0.0.1 is trusted. Use it to test the approval flow without a phone.
 - **Done** means both are green: `npm run check` in `web/` and `.venv/Scripts/python -m pytest -q`.
 
 ## Gotchas

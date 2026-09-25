@@ -1,17 +1,20 @@
 """The Engine's local HTTP API. Every Client (desktop window, web UI, MCP server) goes through
 it, and none of them hold device logic.
 
-Binds to 127.0.0.1 for now. Opening it to the LAN comes with Approved Browsers (see CONTEXT.md).
+It also serves the built web UI. Listens on 127.0.0.1, and on the LAN only while Phone access is on;
+`access.gate` decides who may use it (ADR 0003).
 """
 
+import base64
+import mimetypes
+import os
 from dataclasses import asdict
-from typing import Iterator, Literal
+from pathlib import Path
+from typing import Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
-
-import base64
 
 from ..engine import code_set_finder, remote_buttons, signal_library
 from ..engine.connect import (
@@ -28,8 +31,12 @@ from ..engine.found_device import Category
 from ..engine.links import tuya_link
 from ..engine.registry import KnownDevice, Registry, RemoteDevice
 from ..engine.scan import DEFAULT_TIMEOUT, scan_and_remember
+from . import access
+from .deps import registry
 
 app = FastAPI(title="Control Engine", version="0.1.0")
+app.middleware("http")(access.gate)
+app.include_router(access.router)
 
 
 @app.exception_handler(LookupError)
@@ -45,14 +52,6 @@ def _invalid(_: Request, exc: ValueError):
 @app.exception_handler(DeviceUnreachable)
 def _unreachable(_: Request, exc: DeviceUnreachable):
     return JSONResponse(status_code=503, content={"detail": str(exc)})
-
-
-def registry() -> Iterator[Registry]:
-    r = Registry()
-    try:
-        yield r
-    finally:
-        r.close()
 
 
 # --- Device views ----------------------------------------------------------
@@ -452,3 +451,30 @@ def tuya_poll(token: str, r: Registry = Depends(registry)):
                     {"tuya_category": d.tuya_category, "product_name": d.product_name, **d.extra})
     del _pending_tuya[token]
     return {"status": "linked", "devices": [{"uid": d.uid, "name": d.name, "category": d.category} for d in linked]}
+
+
+# --- Web UI ------------------------------------------------------------------
+
+# `npm run build` in web/ writes here. Every path that isn't a file gets the SPA shell.
+UI_DIR = Path(os.environ.get("CONTROL_UI_DIR") or Path(__file__).resolve().parents[3] / "web" / "build")
+
+# Windows' registry can map .js to text/plain, which browsers refuse to run as a module.
+for _type, _ext in (("text/javascript", ".js"), ("text/css", ".css"), ("application/manifest+json", ".webmanifest")):
+    mimetypes.add_type(_type, _ext)
+
+
+@app.get("/{path:path}", include_in_schema=False)
+def web_ui(path: str):
+    if path == "api" or path.startswith("api/"):
+        raise LookupError(f"no API route '/{path}'")
+    root = UI_DIR.resolve()
+    file = (root / path).resolve()
+    if path and file.is_file() and file.is_relative_to(root):
+        immutable = path.startswith("_app/immutable/")
+        return FileResponse(file, headers={"cache-control": "public, max-age=31536000, immutable"} if immutable else None)
+    if Path(path).suffix:
+        raise LookupError(f"no file '/{path}'")  # a missing file, not a page of the app
+    index = root / "index.html"
+    if not index.is_file():
+        return HTMLResponse("<p>The web UI isn't built yet. Run <code>npm run build</code> in <code>web/</code>.</p>", 503)
+    return FileResponse(index, headers={"cache-control": "no-cache"})
