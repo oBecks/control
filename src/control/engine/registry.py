@@ -10,6 +10,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import vault
 from .found_device import Category, FoundDevice, Readiness
 
 _SCHEMA = """
@@ -31,12 +32,11 @@ CREATE TABLE IF NOT EXISTS devices (
     online      INTEGER NOT NULL DEFAULT 1   -- seen in the latest Scan that covered its brand
 );
 -- What a Link taught us about a device. Survives rescans (which only know what's on the wire).
--- TODO: secret holds Local Keys in plain text; move to Windows DPAPI/keyring before public release.
 CREATE TABLE IF NOT EXISTS links (
     uid        TEXT PRIMARY KEY,
     name       TEXT NOT NULL,
     category   TEXT NOT NULL,
-    secret     TEXT NOT NULL,     -- JSON, e.g. {"local_key": ...}
+    secret     TEXT NOT NULL,     -- JSON, e.g. {"local_key": ...}, sealed by vault (DPAPI on Windows)
     info       TEXT NOT NULL DEFAULT '{}',
     linked_at  REAL NOT NULL
 );
@@ -131,6 +131,7 @@ class Registry:
         self._db = sqlite3.connect(path, check_same_thread=False)
         self._db.row_factory = sqlite3.Row
         self._db.executescript(_SCHEMA)
+        self._seal_plain_secrets()
 
     def close(self) -> None:
         self._db.close()
@@ -225,7 +226,7 @@ class Registry:
                 """INSERT INTO links (uid, name, category, secret, info, linked_at) VALUES (?, ?, ?, ?, ?, ?)
                    ON CONFLICT(uid) DO UPDATE SET name=excluded.name, category=excluded.category,
                        secret=excluded.secret, info=excluded.info, linked_at=excluded.linked_at""",
-                (uid, name, category.value, json.dumps(secret), json.dumps(info or {}, default=str), time.time()),
+                (uid, name, category.value, vault.seal(json.dumps(secret)), json.dumps(info or {}, default=str), time.time()),
             )
             self._apply_links()
 
@@ -234,7 +235,18 @@ class Registry:
         if row is None:
             return None
         return {"name": row["name"], "category": Category(row["category"]),
-                "secret": json.loads(row["secret"]), "info": json.loads(row["info"])}
+                "secret": json.loads(vault.unseal(row["secret"])), "info": json.loads(row["info"])}
+
+    def _seal_plain_secrets(self) -> None:
+        """Databases from before sealing hold plain Link secrets: seal them once."""
+        rows = self._db.execute("SELECT uid, secret FROM links").fetchall()
+        with self._db:
+            for r in rows:
+                if vault.is_sealed(r["secret"]):
+                    continue
+                sealed = vault.seal(r["secret"])
+                if sealed != r["secret"]:  # no store on this platform
+                    self._db.execute("UPDATE links SET secret = ? WHERE uid = ?", (sealed, r["uid"]))
 
     def _apply_links(self) -> None:
         self._db.execute(
