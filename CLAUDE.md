@@ -11,6 +11,7 @@ Windows app that scans the home wifi for smart devices and controls them from on
 ## Layout
 
 - `src/control/engine/`: adapters per brand, `registry.py` (SQLite at `%LOCALAPPDATA%\Control\control.db`), scanners, Signal Library, Code Set Finder, button remotes.
+- `src/control/desktop/`: the Desktop App (Engine + Window + tray, ADR 0004). `packaging/`: Control.exe and ControlSetup.exe.
 - `src/control/api/app.py`: FastAPI; every Client goes through it. `src/control/__main__.py`: the `control` CLI.
 - `web/src/lib/`: UI components, `home.svelte.ts` (live store), `api.ts` (client). Routes in `web/src/routes/(app)/`, style guide at `/styleguide`.
 
@@ -18,6 +19,8 @@ Windows app that scans the home wifi for smart devices and controls them from on
 
 - Engine: `.venv/Scripts/control serve` (127.0.0.1:8321, run in background). It has no auto-reload: restart it after every Python change. It also serves the last `npm run build` of the UI at http://localhost:8321 (what phones get).
 - UI while developing: `preview_start` with name `web` (`.claude/launch.json`) → http://localhost:5173 with hot reload, which proxies `/api` to the Engine.
+- Desktop App from source: `.venv/Scripts/python -m control.desktop` (needs `pip install -e ".[desktop]"`). With `control serve` already on 8321 it only opens a Window on it; pass `--port 8322` to test it running its own Engine. Only one copy runs per user: a second launch just brings the first one's Window forward. Its log goes to `%LOCALAPPDATA%\Control\control.log` when it has no console.
+- Packaging: `.venv/Scripts/python packaging/build.py` (after `npm run build`; `--exe-only` skips Inno Setup) writes `dist/Control/Control.exe` and `dist/ControlSetup.exe`. Releases: bump `__version__` in `src/control/__init__.py`, push a matching `vX.Y.Z` tag.
 - Phone access: the PC's own LAN address (shown in Settings) acts like a phone, since only 127.0.0.1 is trusted. Use it to test the approval flow without a phone.
 - **Done** means both are green: `npm run check` in `web/` and `.venv/Scripts/python -m pytest -q`.
 

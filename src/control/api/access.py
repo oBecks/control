@@ -3,6 +3,7 @@ an Approved Browser: it asks with a short code, and the user approves the code h
 Approved Browser. The browser then holds a long random token in a cookie; the Registry keeps its hash."""
 
 import secrets
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -227,6 +228,7 @@ class PhoneAccessOut(BaseModel):
     error: str | None
     warning: str | None  # e.g. Windows blocks phones on a Public network; for this machine only
     can_change: bool  # only on the machine running the Engine
+    program: str  # what Windows' "Allow access?" prompt calls Control
 
 
 class PhoneAccessIn(BaseModel):
@@ -236,7 +238,8 @@ class PhoneAccessIn(BaseModel):
 def _phone_status(request: Request, r: Registry) -> PhoneAccessOut:
     local = request.state.local
     return PhoneAccessOut(on=r.setting(PHONE_ACCESS, False), url=lan.listener.url, error=lan.listener.error,
-                          warning=lan.listener.warning if local else None, can_change=local)
+                          warning=lan.listener.warning if local else None, can_change=local,
+                          program="Control" if getattr(sys, "frozen", False) else "Python")
 
 
 @router.get("/phone", response_model=PhoneAccessOut)

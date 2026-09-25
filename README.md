@@ -23,18 +23,28 @@ Everything stays on your home network, and you can delete the app for each brand
 
 Your AC doesn't need to be smart. With a Broadlink hub, Control finds the right remote codes for your AC by testing a few models at once. For a TV or fan, press each button on the old remote once and Control learns it.
 
-## Try it
+## Install
+
+Download `ControlSetup.exe` from the [latest release](https://github.com/oBecks/control/releases/latest) and run it. No admin rights needed.
+
+Control isn't signed yet, so Windows may say "Windows protected your PC". Click **More info**, then **Run anyway**.
+
+Control opens in its own window and keeps running in the tray when you close it, so your phone keeps working. It starts with Windows (switch that off in Settings). To quit, right-click the tray icon and choose **Quit Control**.
+
+Go to **Add devices** and hit **Scan**. That's it.
+
+## Run from source
 
 You need Windows, Python 3.11+ and Node.js 24.
 
 ```bash
 git clone https://github.com/oBecks/control.git && cd control
-python -m venv .venv && .venv/Scripts/pip install -e .
+python -m venv .venv && .venv/Scripts/pip install -e ".[desktop]"
 npm --prefix web install && npm --prefix web run build
-.venv/Scripts/control serve
+.venv/Scripts/python -m control.desktop
 ```
 
-Open http://localhost:8321, go to **Add devices** and hit **Scan**. That's it.
+Or run just the Engine with `.venv/Scripts/control serve` and open http://localhost:8321.
 
 ## On your phone
 
@@ -44,13 +54,12 @@ It works anywhere on your home Wi-Fi, as long as the PC is on.
 
 ## Coming next
 
-- **Desktop app.** Starts with Windows, lives in the tray, one installer. *In progress.*
 - **Scenes.** "Movie night" in one tap. *In progress.*
 - **AI assistant.** Ask Claude to turn off the lights, through an MCP server. *In progress.*
 - Rooms, more brands and Bluetooth. *Planned.*
 
 ## Good to know
 
-The Tuya plug is the only device that needs a one-time sign-in, to fetch its key. Control is a personal project and isn't ready for a public release yet. The [roadmap](docs/roadmap.md) lists what's missing.
+The Tuya plug is the only device that needs a one-time sign-in, to fetch its key. Control is a personal project in its early days. The [roadmap](docs/roadmap.md) lists what's missing.
 
 Want to dig in? Start with the [glossary](CONTEXT.md), the [design decisions](docs/adr/) and the [design system](docs/design-system.md).
