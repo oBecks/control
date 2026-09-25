@@ -121,6 +121,10 @@ _Avoid_: Server, backend, daemon, hub
 **Client**:
 Anything that talks to the Engine: the Window, the web UI in a browser, the MCP server. Clients hold no device logic.
 
+**Assistant**:
+An AI the user talks to (e.g. Claude) that reads and controls Devices through Control, by way of the MCP server. It can do what Home does, not set things up.
+_Avoid_: AI agent, bot, Claude integration
+
 **Desktop App**:
 The program a user downloads and installs on their PC. It runs the Engine, shows the Window, and keeps a tray icon so the Engine stays running (and phones keep working) after the Window is closed. It starts with Windows.
 _Avoid_: Launcher, tray app, desktop client
