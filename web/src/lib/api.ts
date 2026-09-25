@@ -146,7 +146,12 @@ export const api = {
 	// The Desktop App
 	desktop: () => call<DesktopApp>('GET', '/desktop'),
 	setStartWithWindows: (on: boolean) => call<DesktopApp>('PUT', '/desktop/start-with-windows', { on }),
-	dismissCloseNote: () => call<void>('DELETE', '/desktop/close-note')
+	dismissCloseNote: () => call<void>('DELETE', '/desktop/close-note'),
+
+	// The Assistant (ADR 0005)
+	assistant: () => call<Assistant>('GET', '/assistant'),
+	connectClaude: () => call<Assistant>('PUT', '/assistant/claude'),
+	disconnectClaude: () => call<Assistant>('DELETE', '/assistant/claude')
 };
 
 /** local: the computer running the Engine. approved: an Approved Browser. */
@@ -192,6 +197,15 @@ export interface DesktopApp {
 	update: { version: string; url: string } | null;
 	/** Say once that closing the Window kept Control running (when Windows notifications are off). */
 	close_note: boolean;
+	/** Only on the computer running the Engine. */
+	can_change: boolean;
+}
+
+export interface Assistant {
+	/** missing: not installed on this PC. outdated: connected to another copy of Control. */
+	claude_desktop: 'missing' | 'connected' | 'outdated' | 'off';
+	/** Adds Control to Claude Code. */
+	claude_code_command: string;
 	/** Only on the computer running the Engine. */
 	can_change: boolean;
 }

@@ -52,10 +52,15 @@ Turn on **Settings → Phone access**, scan the QR code with your phone, and app
 
 It works anywhere on your home Wi-Fi, as long as the PC is on.
 
+## Ask Claude
+
+Open **Settings → Assistant** and click **Connect Claude**, then quit and reopen Claude Desktop. Now you can ask it to "dim the living room lights" or "set the AC to 23". Claude asks before it changes anything. It sees and controls your devices, but setting them up stays in Control.
+
+For Claude Code, run the command shown there. Any other MCP client can start the same local server: `Control.exe --mcp` (stdio). If Control isn't running, the server starts it in the tray. Nothing leaves your home network.
+
 ## Coming next
 
 - **Scenes.** "Movie night" in one tap. *In progress.*
-- **AI assistant.** Ask Claude to turn off the lights, through an MCP server. *In progress.*
 - Rooms, more brands and Bluetooth. *Planned.*
 
 ## Good to know

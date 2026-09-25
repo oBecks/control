@@ -62,6 +62,10 @@ Root: HKCU; Subkey: "{#RunKey}"; ValueType: string; ValueName: "Control"; ValueD
 [Run]
 Filename: "{app}\Control.exe"; Description: "Open Control"; Flags: nowait postinstall skipifsilent
 
+[UninstallRun]
+; Settings → Assistant → Connect Claude may have pointed Claude at this Control.exe (ADR 0005).
+Filename: "{app}\Control.exe"; Parameters: "--disconnect-claude"; Flags: runhidden waituntilterminated; RunOnceId: "DisconnectClaude"
+
 [Code]
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
