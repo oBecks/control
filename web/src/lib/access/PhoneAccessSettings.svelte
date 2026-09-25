@@ -91,6 +91,9 @@
 		{#if status.error}
 			<p class="error" role="alert">{status.error}</p>
 		{:else if status.on && status.url}
+			{#if status.warning}
+				<p class="warning" role="alert">{status.warning}</p>
+			{/if}
 			<div class="join">
 				{#if status.can_change && qr}
 					<!-- eslint-disable-next-line svelte/no-at-html-tags -- SVG generated locally by the qrcode library -->
@@ -160,6 +163,13 @@
 	.error {
 		color: var(--danger);
 		font-weight: var(--fw-medium);
+	}
+	.warning {
+		padding: var(--s-3) var(--s-4);
+		border-radius: var(--r-md);
+		border: 1px solid color-mix(in oklab, var(--danger) 45%, var(--border));
+		background: color-mix(in oklab, var(--danger) 10%, var(--surface));
+		font-size: var(--fs-sm);
 	}
 	.join {
 		display: flex;

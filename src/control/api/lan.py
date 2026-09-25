@@ -3,6 +3,8 @@ user has Phone access turned on. The main listener always stays on 127.0.0.1, so
 to allow Control on the network once the user opts in."""
 
 import socket
+import subprocess
+import sys
 import threading
 import time
 
@@ -22,6 +24,29 @@ def lan_ip() -> str | None:
     return None if ip.startswith("127.") else ip
 
 
+PUBLIC_NETWORK_WARNING = (
+    "Windows treats this network as Public, which blocks phones. In Windows Settings → Network & internet, "
+    "open this network's properties and choose Private network."
+)
+_CATEGORY_TTL = 15  # seconds; Settings polls often and the lookup takes ~0.6 s
+
+
+def network_category(ip: str) -> str | None:
+    """Windows' firewall profile for the network `ip` is on: "Public", "Private", "DomainAuthenticated",
+    or None if unknown (and on other systems)."""
+    if sys.platform != "win32":
+        return None
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             f"(Get-NetIPAddress -IPAddress '{ip}' | Get-NetConnectionProfile).NetworkCategory"],
+            capture_output=True, text=True, timeout=10, creationflags=subprocess.CREATE_NO_WINDOW,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out or None
+
+
 class LanListener:
     def __init__(self):
         # Set by `control serve`. None means there is no real server to open (e.g. tests), so start()
@@ -32,6 +57,7 @@ class LanListener:
         self._server: uvicorn.Server | None = None
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
+        self._category: tuple[float, str | None] | None = None  # (checked at, category)
 
     @property
     def running(self) -> bool:
@@ -40,6 +66,15 @@ class LanListener:
     @property
     def url(self) -> str | None:
         return f"http://{self.ip}:{self.port}" if self.running else None
+
+    @property
+    def warning(self) -> str | None:
+        """Why phones may fail to connect although the listener runs."""
+        if not (self.running and self.ip):
+            return None
+        if self._category is None or time.monotonic() - self._category[0] > _CATEGORY_TTL:
+            self._category = (time.monotonic(), network_category(self.ip))
+        return PUBLIC_NETWORK_WARNING if self._category[1] == "Public" else None
 
     def start(self) -> None:
         with self._lock:
@@ -56,7 +91,8 @@ class LanListener:
                 return
             from .app import app  # the same app as on 127.0.0.1
 
-            config = uvicorn.Config(app, host=ip, port=self.port, lifespan="off", log_level="warning")
+            # No log settings of its own: uvicorn's loggers are shared, and the main listener configures them.
+            config = uvicorn.Config(app, host=ip, port=self.port, lifespan="off", log_config=None, log_level=None)
             server = uvicorn.Server(config)
             # Its own thread and event loop: uvicorn only installs signal handlers on the main thread,
             # so Ctrl+C still stops the main listener, and this daemon thread goes with it.
@@ -66,6 +102,7 @@ class LanListener:
             while thread.is_alive() and not server.started and time.monotonic() < deadline:
                 time.sleep(0.05)
             self.ip, self._server, self._thread = ip, server, thread
+            self._category = None
             if not server.started:
                 self.error = f"Couldn't open {ip}:{self.port}. Is another program using that port?"
                 self._shut_down()

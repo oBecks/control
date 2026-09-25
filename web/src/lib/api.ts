@@ -169,6 +169,8 @@ export interface PhoneAccess {
 	/** What phones open, while the Engine listens on the home network. */
 	url: string | null;
 	error: string | null;
+	/** Why phones may still fail to connect, e.g. Windows treats the network as Public. */
+	warning: string | null;
 	/** Only on the computer running the Engine. */
 	can_change: boolean;
 }

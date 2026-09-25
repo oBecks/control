@@ -1,5 +1,6 @@
 import argparse
 import json
+import logging
 import sys
 from dataclasses import asdict
 
@@ -186,6 +187,18 @@ def _tuya_link(registry: Registry, args) -> None:
     )
 
 
+class QuietReads(logging.Filter):
+    """Access log: keep changes and errors, drop successful reads. The UI polls every few seconds,
+    so logging every read would bury what matters."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            _client, method, _path, _http, status = record.args
+            return not (method in ("GET", "HEAD") and int(status) < 400)
+        except (TypeError, ValueError):
+            return True
+
+
 def main() -> None:
     # Device names can be any language; the Windows console code page can't print all of them.
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -252,6 +265,7 @@ def main() -> None:
 
         from .api import access, lan
 
+        logging.getLogger("uvicorn.access").addFilter(QuietReads())
         lan.listener.port = args.port
         print(f"Control on http://localhost:{args.port}  (API docs: /docs)")
         r = Registry()

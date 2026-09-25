@@ -151,3 +151,17 @@ def test_other_hosts_and_origins_are_refused(pc):
 ])
 def test_browser_name(ua, name):
     assert access.browser_name(ua) == name
+
+
+def test_settings_warn_when_windows_treats_the_network_as_public(pc, monkeypatch):
+    from control.api import lan
+
+    turn_on(pc)
+    monkeypatch.setattr(lan.LanListener, "running", property(lambda self: True))
+    monkeypatch.setattr(lan.listener, "ip", "10.0.0.5")
+    monkeypatch.setattr(lan.listener, "_category", None)
+    monkeypatch.setattr(lan, "network_category", lambda ip: "Public")
+    assert pc.get("/api/access/phone").json()["warning"] == lan.PUBLIC_NETWORK_WARNING
+    monkeypatch.setattr(lan.listener, "_category", None)
+    monkeypatch.setattr(lan, "network_category", lambda ip: "Private")
+    assert pc.get("/api/access/phone").json()["warning"] is None

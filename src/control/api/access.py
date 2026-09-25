@@ -225,6 +225,7 @@ class PhoneAccessOut(BaseModel):
     on: bool
     url: str | None  # what phones open, while the LAN listener runs
     error: str | None
+    warning: str | None  # e.g. Windows blocks phones on a Public network; for this machine only
     can_change: bool  # only on the machine running the Engine
 
 
@@ -233,8 +234,9 @@ class PhoneAccessIn(BaseModel):
 
 
 def _phone_status(request: Request, r: Registry) -> PhoneAccessOut:
+    local = request.state.local
     return PhoneAccessOut(on=r.setting(PHONE_ACCESS, False), url=lan.listener.url, error=lan.listener.error,
-                          can_change=request.state.local)
+                          warning=lan.listener.warning if local else None, can_change=local)
 
 
 @router.get("/phone", response_model=PhoneAccessOut)
