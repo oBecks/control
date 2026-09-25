@@ -64,24 +64,40 @@ A flag on a Device the user hasn't looked at since a Scan first found it.
 
 **Category**:
 The kind of Device (Light, Climate, Media, Plug…), detected automatically and used as the default grouping. Fans belong to Climate.
-_Avoid_: Type, class, group
+_Avoid_: Type, class
 
 **Room**:
 An optional, user-made grouping of Devices by physical location. Never auto-detected.
 _Avoid_: Zone, area, space
 
+**Group**:
+A named set of Devices controlled as if it were one Device (e.g. "Living room lights"): one Tile, one set of Device Controls showing only what every member supports. Tapping it turns everything off if any member is on, otherwise everything on. Members are any Devices with power, except Remote Devices that only have a Power Toggle, since "all off" can't be guaranteed for them.
+_Avoid_: Light group, zone, Room, Scene
+
 **Scene**:
-A named, one-tap set of target states across several Devices (e.g. "Movie night"). No triggers or schedules. Those would be automations, which v1 doesn't have.
+A named, one-tap set of target states across several Devices (e.g. "Movie night"). A Scene never fires by itself; an Automation can run one.
 _Avoid_: Preset, routine, macro
+
+**Automation**:
+A user-made rule that the Engine runs on its own: when something happens (a time, sunrise, a Device changing state, the PC waking…), do something (control Devices or Groups, run a Scene). Runs only while the Engine is running. Made in the app or by describing it to the Assistant, never by writing code.
+_Avoid_: Routine, rule, script, trigger
+
+**Person**:
+Someone who lives in the home, known to Control by the phone(s) the user marked as theirs. A Person is home while one of their phones is on the home network, which lets Automations react to someone arriving or the last person leaving. Not an account and not an Approved Browser.
+_Avoid_: User, member, resident
 
 ### Screens
 
 **Home**:
-The main screen: Scenes on top, then every controllable Device as a Tile, grouped by Category (or by Room once Rooms exist). Hubs never appear here.
-_Avoid_: Dashboard, main page
+The main screen: Scenes and Groups on top, then every controllable Device as a Tile (including Devices that are also in a Group), grouped by Category (or by Room once Rooms exist). Always auto-sorted, so a new Device shows up without anyone placing it. Hubs never appear here.
+_Avoid_: Main page
+
+**Dashboard**:
+A named screen the user arranges by hand, holding only the Tiles (and other items) they placed on it, e.g. "Phone remote". Each browser can pick one to open to instead of Home. A Dashboard is one layout that reflows on narrow screens, not separate phone and desktop layouts.
+_Avoid_: Custom home, board, panel, page
 
 **Tile**:
-A Device's compact presence on Home. Tapping it toggles on/off, and its chevron opens Device Controls. When on, it takes the Device's real colour.
+A Device's or Group's compact presence on Home or a Dashboard. Tapping it toggles on/off, and its chevron opens Device Controls. When on, it takes the Device's real colour.
 _Avoid_: Card, widget, button
 
 **Device Controls**:
