@@ -22,6 +22,6 @@ Yeelight lights (bulbs, strips), Tuya / Smart Life Wi-Fi plugs (after a Link), a
 
 ## Open items to raise with the user
 
-- Git repo exists locally (branch `main`), but there's **no GitHub remote yet**, so the Action hasn't run. Once the user creates the GitHub repo: `git remote add origin <url>` and `git push -u origin main`, then check the first Action run.
+- Public repo: https://github.com/oBecks/control. Check that the first `Check` Action run passed (`gh run list`); fix anything that only fails on Linux CI.
 - **Before any public release**: the Tuya Link borrows Home Assistant's app identity ([ADR 0002](adr/0002-tuya-link-borrows-home-assistant-identity.md)), and Local Keys are stored unencrypted (TODO in `registry.py`: move to Windows DPAPI/keyring).
 - Philips remotes (RC5/RC6) flip a toggle bit per press. If a learned Philips button only works every other time, that's the cause.
