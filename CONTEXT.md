@@ -86,6 +86,10 @@ _Avoid_: Routine, rule, script, trigger
 Someone who lives in the home, known to Control by the phone(s) the user marked as theirs. A Person is home while one of their phones is on the home network, which lets Automations react to someone arriving or the last person leaving. Not an account and not an Approved Browser.
 _Avoid_: User, member, resident
 
+**Hotkey**:
+Keys pressed on the PC running Control that do one thing: toggle or set a Device or Group, press a remote button, or run an Automation or Scene. It can be a combination (Ctrl+Alt+L), a sequence (Ctrl+Alt+L, then 1), a double or long press, or a key held to keep dimming. Works in any app and any keyboard layout, including media keys and Bluetooth buttons that act as keys. Control takes the keys unless the Hotkey lets them through.
+_Avoid_: Shortcut, key binding, macro
+
 ### Screens
 
 **Home**:
