@@ -2,11 +2,14 @@
 user has Phone access turned on. The main listener always stays on 127.0.0.1, so Windows only asks
 to allow Control on the network once the user opts in."""
 
+import json
 import socket
 import subprocess
 import sys
 import threading
 import time
+from dataclasses import dataclass
+from pathlib import Path
 
 import uvicorn
 
@@ -28,23 +31,58 @@ PUBLIC_NETWORK_WARNING = (
     "Windows treats this network as Public, which blocks phones. In Windows Settings → Network & internet, "
     "open this network's properties and choose Private network."
 )
-_CATEGORY_TTL = 15  # seconds; Settings polls often and the lookup takes ~0.6 s
+_CHECK_TTL = 15  # seconds; Settings polls often and the lookup takes a few seconds
 
 
-def network_category(ip: str) -> str | None:
-    """Windows' firewall profile for the network `ip` is on: "Public", "Private", "DomainAuthenticated",
-    or None if unknown (and on other systems)."""
+def firewall_program() -> str:
+    """The program Windows Firewall rules are about: Control.exe, or Python when run from source."""
+    if getattr(sys, "frozen", False):
+        return sys.executable
+    # A venv's python.exe only launches the base interpreter, which is what opens the port.
+    return getattr(sys, "_base_executable", sys.executable)
+
+
+def firewall_warning(program: str) -> str:
+    file = Path(program).name
+    name = "Control" if getattr(sys, "frozen", False) else "Python"
+    return (f"Windows Firewall is blocking {name}, so phones can't connect. In Windows Security → Firewall & "
+            f"network protection → Allow an app through firewall, click Change settings, tick Private for "
+            f"{name} ({file.lower()}), and click OK.")
+
+
+@dataclass(frozen=True)
+class NetworkCheck:
+    category: str | None  # Windows' firewall profile: "Public", "Private", "DomainAuthenticated"; None if unknown
+    blocked: bool  # a Windows Firewall rule blocks `program` from this network
+
+
+_CHECK_SCRIPT = """
+$c = "$((Get-NetIPAddress -IPAddress '{ip}' | Get-NetConnectionProfile).NetworkCategory)"
+$p = if ($c -eq 'DomainAuthenticated') {{ 'Domain' }} else {{ $c }}
+$b = @(Get-NetFirewallApplicationFilter -Program '{program}' -ErrorAction SilentlyContinue | Get-NetFirewallRule |
+  Where-Object {{ $_.Enabled -eq 'True' -and $_.Direction -eq 'Inbound' -and $_.Action -eq 'Block' -and
+                 ("$($_.Profile)" -eq 'Any' -or "$($_.Profile)" -match $p) }}).Count
+@{{ category = $c; blocked = ($b -gt 0) }} | ConvertTo-Json -Compress
+"""
+
+
+def network_check(ip: str, program: str) -> NetworkCheck:
+    """What Windows does to phones reaching `program` at `ip`. Nothing known on other systems.
+
+    A missed or cancelled "Allow access?" prompt leaves Block rules behind, and Windows never asks
+    again, not even after a reinstall; the user has to allow the program by hand."""
     if sys.platform != "win32":
-        return None
+        return NetworkCheck(None, False)
+    script = _CHECK_SCRIPT.format(ip=ip, program=program.replace("'", "''"))
     try:
         out = subprocess.run(
-            ["powershell", "-NoProfile", "-Command",
-             f"(Get-NetIPAddress -IPAddress '{ip}' | Get-NetConnectionProfile).NetworkCategory"],
-            capture_output=True, text=True, timeout=10, creationflags=subprocess.CREATE_NO_WINDOW,
+            ["powershell", "-NoProfile", "-Command", script],
+            capture_output=True, text=True, timeout=15, creationflags=subprocess.CREATE_NO_WINDOW,
         ).stdout.strip()
-    except (OSError, subprocess.SubprocessError):
-        return None
-    return out or None
+        found = json.loads(out)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return NetworkCheck(None, False)
+    return NetworkCheck(found.get("category") or None, bool(found.get("blocked")))
 
 
 class LanListener:
@@ -57,7 +95,8 @@ class LanListener:
         self._server: uvicorn.Server | None = None
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
-        self._category: tuple[float, str | None] | None = None  # (checked at, category)
+        self._check: tuple[float, NetworkCheck] | None = None  # (checked at, result)
+        self._checking = False
 
     @property
     def running(self) -> bool:
@@ -72,9 +111,22 @@ class LanListener:
         """Why phones may fail to connect although the listener runs."""
         if not (self.running and self.ip):
             return None
-        if self._category is None or time.monotonic() - self._category[0] > _CATEGORY_TTL:
-            self._category = (time.monotonic(), network_category(self.ip))
-        return PUBLIC_NETWORK_WARNING if self._category[1] == "Public" else None
+        # The check takes seconds, so it runs in the background and Settings gets the last result.
+        if not self._checking and (self._check is None or time.monotonic() - self._check[0] > _CHECK_TTL):
+            self._checking = True
+            threading.Thread(target=self._run_check, args=(self.ip,), name="network-check", daemon=True).start()
+        if self._check is None:
+            return None
+        check = self._check[1]
+        if check.blocked:
+            return firewall_warning(firewall_program())
+        return PUBLIC_NETWORK_WARNING if check.category == "Public" else None
+
+    def _run_check(self, ip: str) -> None:
+        try:
+            self._check = (time.monotonic(), network_check(ip, firewall_program()))
+        finally:
+            self._checking = False
 
     def start(self) -> None:
         with self._lock:
@@ -102,7 +154,7 @@ class LanListener:
             while thread.is_alive() and not server.started and time.monotonic() < deadline:
                 time.sleep(0.05)
             self.ip, self._server, self._thread = ip, server, thread
-            self._category = None
+            self._check = None
             if not server.started:
                 self.error = f"Couldn't open {ip}:{self.port}. Is another program using that port?"
                 self._shut_down()

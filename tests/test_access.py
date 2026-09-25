@@ -1,3 +1,5 @@
+import time
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -153,15 +155,31 @@ def test_browser_name(ua, name):
     assert access.browser_name(ua) == name
 
 
+def listening(monkeypatch, category, blocked=False):
+    """Phone access on, with Windows reporting `category` and whether its firewall blocks Control."""
+    from control.api import lan
+
+    monkeypatch.setattr(lan.LanListener, "running", property(lambda self: True))
+    monkeypatch.setattr(lan.listener, "ip", "10.0.0.5")
+    monkeypatch.setattr(lan.listener, "_check", (time.monotonic(), lan.NetworkCheck(category, blocked)))
+
+
 def test_settings_warn_when_windows_treats_the_network_as_public(pc, monkeypatch):
     from control.api import lan
 
     turn_on(pc)
-    monkeypatch.setattr(lan.LanListener, "running", property(lambda self: True))
-    monkeypatch.setattr(lan.listener, "ip", "10.0.0.5")
-    monkeypatch.setattr(lan.listener, "_category", None)
-    monkeypatch.setattr(lan, "network_category", lambda ip: "Public")
+    listening(monkeypatch, "Public")
     assert pc.get("/api/access/phone").json()["warning"] == lan.PUBLIC_NETWORK_WARNING
-    monkeypatch.setattr(lan.listener, "_category", None)
-    monkeypatch.setattr(lan, "network_category", lambda ip: "Private")
+    listening(monkeypatch, "Private")
     assert pc.get("/api/access/phone").json()["warning"] is None
+
+
+def test_settings_warn_when_windows_firewall_blocks_control(pc, monkeypatch):
+    from control.api import lan
+
+    turn_on(pc)
+    monkeypatch.setattr("sys.frozen", True, raising=False)  # Control.exe
+    monkeypatch.setattr(lan, "firewall_program", lambda: "C:/Users/me/AppData/Local/Programs/Control/Control.exe")
+    listening(monkeypatch, "Private", blocked=True)
+    warning = pc.get("/api/access/phone").json()["warning"]
+    assert warning.startswith("Windows Firewall is blocking Control") and "Control (control.exe)" in warning
