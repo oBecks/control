@@ -13,6 +13,19 @@ Everything stays on your home network, and you can delete the app for each brand
 
 </div>
 
+<p align="center">
+  <img src="docs/screenshots/home-desktop-dark.png" alt="Home on the desktop: lights, climate, media and plugs as Tiles, with the AC's controls open in the side panel" width="68%" />
+  &nbsp;
+  <img src="docs/screenshots/home-phone.png" alt="Home on a phone" width="26%" />
+</p>
+<p align="center">
+  <img src="docs/screenshots/home-desktop-light.png" alt="The light theme, with a bulb's brightness and white temperature" width="68%" />
+  &nbsp;
+  <img src="docs/screenshots/controls-phone.png" alt="The AC's controls as a bottom sheet on a phone" width="26%" />
+</p>
+
+Tiles take on each device's real colour when it's on. Tap one to switch it, or open its controls. An AC or TV behind an infrared hub shows ≈, because Control only knows what it last sent.
+
 ## What it controls
 
 | | |
@@ -56,7 +69,9 @@ It works anywhere on your home Wi-Fi, as long as the PC is on.
 
 Open **Settings → Assistant** and click **Connect Claude**, then quit and reopen Claude Desktop. Now you can ask it to "dim the living room lights" or "set the AC to 23". Claude asks before it changes anything. It sees and controls your devices, but setting them up stays in Control.
 
-For Claude Code, run the command shown there. Any other MCP client can start the same local server: `Control.exe --mcp` (stdio). If Control isn't running, the server starts it in the tray. Nothing leaves your home network.
+Claude Code in the Claude app uses the same connection. Any other MCP client can start the same local server: `Control.exe --mcp` (stdio). If Control isn't running, the server starts it in the tray. Nothing leaves your home network.
+
+It works in Claude on the PC running Control, not on claude.ai, the Claude phone app or cloud sessions: those can't reach your home network.
 
 ## Coming next
 
