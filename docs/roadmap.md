@@ -16,7 +16,7 @@ Yeelight lights (bulbs, strips), Tuya / Smart Life Wi-Fi plugs (after a Link), a
 
 ## Next steps (in the order suggested to the user)
 
-1. **MCP server** (designed, not built): the Assistant reads and controls Devices through `Control.exe --mcp`, a local stdio Client of the Engine API; Settings → Assistant → Connect Claude writes Claude Desktop's config. All decisions in [ADR 0005](adr/0005-assistant-through-a-local-mcp-server.md). Verify first that the windowed Control.exe can do stdio.
+1. **MCP server** (designed, not built): the Assistant reads and controls Devices through `Control.exe --mcp`, a local stdio Client of the Engine API; Settings → Assistant → Connect Claude writes Claude Desktop's config. All decisions in [ADR 0005](adr/0005-assistant-through-a-local-mcp-server.md). The windowed Control.exe does stdio when launched with pipes (tested); `--mcp` must switch stdin/stdout to UTF-8.
 2. **Scenes**: chip row on top of Home.
 3. **Before promoting Control widely**: code signing (SmartScreen), and the Tuya Link's borrowed identity (ADR 0002).
 4. Later: a proper Android install (needs HTTPS on the LAN: a local certificate authority, see ADR 0003), running the Engine on an always-on box (Raspberry Pi etc.) so phones work while the PC is off, Rooms, Hubs & Bridges in Settings, automations, Bluetooth, more brands, public release.

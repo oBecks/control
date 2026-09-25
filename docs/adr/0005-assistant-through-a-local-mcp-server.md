@@ -23,11 +23,11 @@ The user's Assistant (e.g. Claude) reads and controls Devices through a local MC
 - **Remote connector** (claude.ai, Claude on the phone): needs a public HTTPS address and a relay into every home, plus accounts. That ends "everything stays on your network"; it would need its own ADR.
 - **Claude Desktop extension (`.mcpb`)**: Anthropic's directory no longer accepts them (only plugins can list a local server), nothing shows one can launch an already-installed exe, and a sideloaded bundle reportedly shows "not verified by Anthropic". A plain stdio entry is documented for both Claude Desktop and Claude Code.
 - **Python or `uv` bundle**: the docs contradict each other on whether Claude supplies Python, and it would duplicate what Control.exe already contains.
-- **A separate `control-mcp.exe`**: cleaner console stdio, but a second program to build and, later, sign. The fallback if the windowed `Control.exe` can't do stdio.
+- **A separate `control-mcp.exe`**: a console program for stdio, but a second program to build and, later, sign; not needed, since the windowed `Control.exe` does stdio fine.
 - **The Assistant doing setup too**: those flows need a person at the device or are security decisions.
 
 ## Consequences
 
 - Control writes into another app's settings file. It must keep everything else in it intact, and find it for both the regular and the Microsoft Store install of Claude Desktop.
-- `Control.exe` is a windowed program; stdin/stdout must work when Claude launches it. Verify this first, and fall back to a console `control-mcp.exe` if they don't.
+- `Control.exe` is a windowed program, yet stdin/stdout work when another program launches it with pipes, as Claude does (tested with a PyInstaller windowed build, with and without `CREATE_NO_WINDOW`). `--mcp` must switch both streams to UTF-8: Windows otherwise decodes them in the system code page and garbles non-English Device names.
 - Other MCP clients can use the same command (`Control.exe --mcp`); the README documents it.
