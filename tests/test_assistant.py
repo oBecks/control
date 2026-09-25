@@ -108,6 +108,19 @@ def test_a_power_toggle_never_claims_on_or_off(home):
     assert len(tx.sent) == 1
 
 
+def test_separate_on_and_off_not_yet_used_is_unknown_but_not_a_toggle(home, client):  # noqa: F811
+    srv, _, tx = home
+    r = Registry()
+    r.add_remote("Bedroom TV", Category.MEDIA, "broadlink:aa", "learned",
+                 {"format": "buttons", "kind": "tv", "buttons": {"power_on": "AAAA", "power_off": "AAAB"}})
+    r.close()
+    out = ok(srv, "get_device", device="Bedroom TV")
+    assert out["power"] == "unknown" and "hasn't turned it on or off yet" in out["why_unknown"]
+    out = ok(srv, "set_power", device="Bedroom TV", on=False)
+    assert out["power"] == "off" and out["assumed"].startswith("Assumed State")
+    assert len(tx.sent) == 1
+
+
 def test_press_a_button_by_label(home):
     srv, _, tx = home
     assert ok(srv, "get_device", device="Living room TV")["buttons"] == ["Power", "Volume +", "HDMI 1"]

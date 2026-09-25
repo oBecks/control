@@ -39,6 +39,8 @@ itself; point the user there."""
 
 ASSUMED = "Assumed State: what Control last sent. It may differ if someone used the physical remote."
 TOGGLE_ONLY = "Only a Power Toggle: Control can press Power but never knows whether the Device is on."
+NOT_SET_YET = "Control hasn't turned it on or off yet, so it doesn't know. set_power sets it for sure."
+NO_POWER = "No Power button has been set up for it yet."
 OFFLINE = "Offline: Control didn't see it in its last scan, so it may not answer."
 HUB = "transmitter"  # Hubs never appear on Home, so the Assistant doesn't see them either
 
@@ -180,8 +182,12 @@ def describe(d: dict, reading: dict) -> dict:
     elif control == "remote":
         if s["on"] is None:
             out["power"] = "unknown"
-            if f["can_power"]:
+            if f["discrete_power"]:
+                out["why_unknown"] = NOT_SET_YET
+            elif f["can_power"]:
                 out["why_unknown"] = TOGGLE_ONLY
+            else:
+                out["why_unknown"] = NO_POWER
         else:
             out["power"] = "on" if s["on"] else "off"
             out["assumed"] = ASSUMED
