@@ -90,6 +90,16 @@ def test_asking_again_replaces_the_earlier_code(pc):
     assert [a["code"] for a in pc.get("/api/access/requests").json()] == [second["code"]]
 
 
+def test_safari_and_the_home_screen_app_on_one_iphone_each_get_a_code(pc):
+    # Same address, separate browsers: neither request may cancel the other.
+    turn_on(pc)
+    safari, app = phone(ua=IPHONE_SAFARI), phone(ua=IPHONE_APP)
+    safari.post("/api/access/requests")
+    app.post("/api/access/requests")
+    names = sorted(a["name"] for a in pc.get("/api/access/requests").json())
+    assert names == ["iPhone · Home Screen app", "iPhone · Safari"]
+
+
 def test_an_approved_phone_can_approve_others_but_not_change_phone_access(pc):
     turn_on(pc)
     first = phone()

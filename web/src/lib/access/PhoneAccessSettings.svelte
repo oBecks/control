@@ -13,6 +13,8 @@
 	let browsers = $state<ApprovedBrowser[]>([]);
 	let busy = $state(false);
 	let qr = $state('');
+	/** Browsers whose Revoke is in flight. */
+	let revoking = $state<Record<string, boolean>>({});
 
 	async function load() {
 		try {
@@ -47,12 +49,15 @@
 	}
 
 	async function revoke(b: ApprovedBrowser) {
+		revoking[b.id] = true;
 		try {
 			await api.revokeBrowser(b.id);
 			browsers = browsers.filter((x) => x.id !== b.id);
 			if (b.current) home.refresh();
 		} catch (e) {
 			home.notify(e instanceof Error ? e.message : String(e));
+		} finally {
+			delete revoking[b.id];
 		}
 	}
 
@@ -121,7 +126,7 @@
 						{#if b.current}<span class="this">This phone</span>{/if}
 						<small>Last used {ago(b.last_seen)}</small>
 					</span>
-					<Button size="sm" variant="ghost" onclick={() => revoke(b)}>Revoke</Button>
+					<Button size="sm" variant="ghost" disabled={revoking[b.id]} onclick={() => revoke(b)}>Revoke</Button>
 				</li>
 			{/each}
 		</ul>

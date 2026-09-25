@@ -17,6 +17,9 @@ from . import lan
 from .deps import registry
 
 COOKIE = "control_browser"
+# Tells one waiting browser from another. Not the IP: an iPhone's Safari and its Home Screen app
+# share an address but are separate browsers, each with its own code.
+ASKER_COOKIE = "control_asker"
 PHONE_ACCESS = "phone_access"  # setting: bool
 REQUEST_TTL = 10 * 60
 MAX_PENDING = 10
@@ -89,7 +92,7 @@ class _Ask:
     claim: str  # secret: only the asking browser knows it, and trades it for the token
     code: str
     name: str
-    client: str
+    asker: str
     created: float
     status: str = "pending"  # pending | approved | denied
 
@@ -136,20 +139,21 @@ def me(request: Request):
 
 
 @router.post("/requests")
-def ask(request: Request):
+def ask(request: Request, response: Response):
     """An unapproved browser asks for access; it shows `code` and polls `/claims/{claim}`."""
     if _trusted(request):
         raise HTTPException(409, "This browser already has access")
-    client = request.client.host if request.client else ""
+    asker = request.cookies.get(ASKER_COOKIE) or secrets.token_urlsafe(24)
     with _lock:
         _prune()
-        for ref in [ref for ref, a in _asks.items() if a.client == client and a.status == "pending"]:
-            del _asks[ref]  # asking again replaces this device's earlier code
+        for ref in [ref for ref, a in _asks.items() if a.asker == asker and a.status == "pending"]:
+            del _asks[ref]  # asking again replaces this browser's earlier code
         if sum(a.status == "pending" for a in _asks.values()) >= MAX_PENDING:
             raise HTTPException(429, "Too many devices are waiting. Approve or deny them first.")
         a = _Ask(ref=secrets.token_hex(6), claim=secrets.token_urlsafe(24), code=f"{secrets.randbelow(10**6):06d}",
-                 name=browser_name(request.headers.get("user-agent", "")), client=client, created=time.time())
+                 name=browser_name(request.headers.get("user-agent", "")), asker=asker, created=time.time())
         _asks[a.ref] = a
+    response.set_cookie(ASKER_COOKIE, asker, httponly=True, samesite="strict", path="/api/access")
     return {"claim": a.claim, "code": a.code}
 
 

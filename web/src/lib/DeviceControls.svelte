@@ -44,9 +44,11 @@
 		saving = false;
 	}
 
-	// Switching to another device abandons an unsaved rename.
+	// Switching to another device abandons an unsaved rename. Tracking the uid, not `device`: polling
+	// hands over a fresh object for the same device every few seconds, which must not end the edit.
+	const uid = $derived(device.uid);
 	$effect(() => {
-		const _uid = device.uid; // re-run on device change
+		void uid;
 		editing = false;
 	});
 

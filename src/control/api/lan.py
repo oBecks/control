@@ -45,6 +45,10 @@ class LanListener:
         with self._lock:
             if self.port is None or self.running:
                 return
+            if self._thread and self._thread.is_alive():
+                # A listener that was told to stop is still shutting down; a second one would clash with it.
+                self.error = "Phone access is still stopping. Try again in a moment."
+                return
             self.error = None
             ip = lan_ip()
             if ip is None:
@@ -61,20 +65,26 @@ class LanListener:
             deadline = time.monotonic() + 5
             while thread.is_alive() and not server.started and time.monotonic() < deadline:
                 time.sleep(0.05)
-            if not server.started:
-                server.should_exit = True
-                self.error = f"Couldn't open {ip}:{self.port}. Is another program using that port?"
-                return
             self.ip, self._server, self._thread = ip, server, thread
+            if not server.started:
+                self.error = f"Couldn't open {ip}:{self.port}. Is another program using that port?"
+                self._shut_down()
 
     def stop(self) -> None:
         with self._lock:
-            if self._server:
-                self._server.should_exit = True
-            if self._thread:
-                self._thread.join(timeout=5)
-            self._server = self._thread = None
             self.error = None
+            self._shut_down()
+
+    def _shut_down(self) -> None:
+        """Ask the listener to exit. Its references are kept until the thread has really ended, so a
+        slow shutdown (or a slow start that came up late) can't leave an untracked server behind."""
+        if self._server:
+            self._server.should_exit = True
+        if self._thread:
+            self._thread.join(timeout=5)
+            if self._thread.is_alive():
+                return
+        self._server = self._thread = None
 
 
 listener = LanListener()
