@@ -2,7 +2,7 @@ import logging
 
 import pytest
 
-from control.__main__ import QuietReads
+from control.api.serve import QuietReads
 
 
 def access_record(method, status):

@@ -86,6 +86,12 @@
 				value={status.on ? 'on' : 'off'}
 				onchange={(v) => !busy && setOn(v === 'on')}
 			/>
+			{#if !status.on}
+				<p class="hint">
+					Turning it on makes Windows ask whether to allow {status.program} on networks. Allow
+					<strong>Private networks</strong>, or phones can't connect.
+				</p>
+			{/if}
 		{/if}
 
 		{#if status.error}
@@ -107,8 +113,8 @@
 			</div>
 			{#if status.can_change}
 				<p class="hint">
-					If Windows asks whether to allow Python on networks, allow <strong>Private networks</strong>, or phones can't
-					connect.
+					If Windows asks whether to allow {status.program} on networks, allow <strong>Private networks</strong>, or
+					phones can't connect.
 				</p>
 			{/if}
 		{:else if status.on}

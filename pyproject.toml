@@ -1,6 +1,6 @@
 [project]
 name = "control"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Discover and control smart things on your local network."
 requires-python = ">=3.11"
 dependencies = [
@@ -15,6 +15,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest", "httpx"]
+# The Desktop App (ADR 0004): Window, tray icon, and the tools that package it.
+desktop = ["pywebview>=6", "pystray>=0.19"]
+build = ["pyinstaller>=6"]
 
 [project.scripts]
 control = "control.__main__:main"
@@ -23,5 +26,11 @@ control = "control.__main__:main"
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools.dynamic]
+version = { attr = "control.__version__" }
+
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"control.desktop" = ["control.ico"]

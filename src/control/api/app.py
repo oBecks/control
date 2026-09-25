@@ -16,6 +16,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
+from .. import __version__
 from ..engine import code_set_finder, remote_buttons, signal_library
 from ..engine.connect import (
     connect_buttons,
@@ -31,12 +32,13 @@ from ..engine.found_device import Category
 from ..engine.links import tuya_link
 from ..engine.registry import KnownDevice, Registry, RemoteDevice
 from ..engine.scan import DEFAULT_TIMEOUT, scan_and_remember
-from . import access
+from . import access, desktop
 from .deps import registry
 
-app = FastAPI(title="Control Engine", version="0.1.0")
+app = FastAPI(title="Control Engine", version=__version__)
 app.middleware("http")(access.gate)
 app.include_router(access.router)
+app.include_router(desktop.router)
 
 
 @app.exception_handler(LookupError)

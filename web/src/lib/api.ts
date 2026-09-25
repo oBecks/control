@@ -141,7 +141,11 @@ export const api = {
 	approvedBrowsers: () => call<ApprovedBrowser[]>('GET', '/access/browsers'),
 	revokeBrowser: (id: string) => call<void>('DELETE', `/access/browsers/${enc(id)}`),
 	phoneAccess: () => call<PhoneAccess>('GET', '/access/phone'),
-	setPhoneAccess: (on: boolean) => call<PhoneAccess>('PUT', '/access/phone', { on })
+	setPhoneAccess: (on: boolean) => call<PhoneAccess>('PUT', '/access/phone', { on }),
+
+	// The Desktop App
+	desktop: () => call<DesktopApp>('GET', '/desktop'),
+	setStartWithWindows: (on: boolean) => call<DesktopApp>('PUT', '/desktop/start-with-windows', { on })
 };
 
 /** local: the computer running the Engine. approved: an Approved Browser. */
@@ -171,6 +175,20 @@ export interface PhoneAccess {
 	error: string | null;
 	/** Why phones may still fail to connect, e.g. Windows treats the network as Public. */
 	warning: string | null;
+	/** Only on the computer running the Engine. */
+	can_change: boolean;
+	/** What Windows' "Allow access?" prompt calls Control: "Control", or "Python" when run from source. */
+	program: string;
+}
+
+export interface DesktopApp {
+	version: string;
+	/** The Engine runs inside the Desktop App (not `control serve`). */
+	app: boolean;
+	/** null outside the Desktop App. */
+	start_with_windows: boolean | null;
+	/** A newer release; `url` is its installer. */
+	update: { version: string; url: string } | null;
 	/** Only on the computer running the Engine. */
 	can_change: boolean;
 }

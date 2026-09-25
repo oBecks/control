@@ -13,3 +13,7 @@ Thumbs.db
 
 # Personal notes that stay on this machine
 *.local.md
+
+# Desktop App builds (packaging/build.py)
+/build/
+/dist/
