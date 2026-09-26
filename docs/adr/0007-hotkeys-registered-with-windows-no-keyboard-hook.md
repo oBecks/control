@@ -6,6 +6,10 @@ status: accepted
 
 The Desktop App registers each Hotkey's keys with Windows (`RegisterHotKey`), and Windows tells it only when those keys are pressed. Control never sees any other key. That's why Control needs no keyboard hook, which antivirus tools and anti-cheat games distrust and which would put every keystroke in front of Control. Keys are registered by physical key, so Hotkeys keep working when the Hebrew layout is active. Media keys, F13–F24 and Bluetooth buttons that act as keyboards register like any other key. Hotkeys are stored in the Registry, so the UI and the Assistant can edit them. The Desktop App only receives the notices and sends each Hotkey's action to the Engine, the same way any Client does.
 
+## How it's built
+
+The Desktop App's listener (`desktop/hotkeys.py`) long-polls the Engine (`GET /api/hotkeys/watch`), registers what it gets on its own thread, and reports keys Windows refused, so the UI can mark them as taken by another app. While the Window records keys, the Engine tells the listener to let go of every Hotkey (`PUT /api/hotkeys/recording`), so pressing an existing Hotkey reaches the Window instead of firing. A press calls `POST /api/hotkeys/{uid}/run`, and a small overlay above the tray (a plain Win32 window: no focus, clicks pass through) shows the result. Held keys repeat steps and presses at most every 0.3 s, and a press is skipped while the previous one still runs, since bulbs rate-limit requests.
+
 ## How the richer presses work without a hook
 
 - **Double press**: two notices for the same Hotkey within about 0.4 s.

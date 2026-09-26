@@ -13,7 +13,11 @@ import type {
 	AppShortcut,
 	StreamerFeatures,
 	StreamerState,
-	StateChange
+	StateChange,
+	Hotkey,
+	HotkeyAction,
+	KeysCheck,
+	PickableKey
 } from './types';
 
 export interface Device {
@@ -145,6 +149,18 @@ export const api = {
 	groupState: (uid: string) => call<GroupState>('GET', `/groups/${enc(uid)}/state`),
 	setGroupState: (uid: string, change: StateChange) => call<GroupState>('POST', `/groups/${enc(uid)}/state`, change),
 
+	// Hotkeys (ADR 0007): set up only on the computer running Control
+	hotkeys: () => call<HotkeyList>('GET', '/hotkeys'),
+	pickableKeys: () => call<PickableKey[]>('GET', '/hotkeys/keys'),
+	checkKeys: (keys: string, uid?: string) => call<KeysCheck>('POST', '/hotkeys/check', { keys, uid }),
+	addHotkey: (keys: string, target: string, action: HotkeyAction) =>
+		call<Hotkey>('POST', '/hotkeys', { keys, target, action }),
+	patchHotkey: (uid: string, patch: { keys?: string; target?: string; action?: HotkeyAction }) =>
+		call<Hotkey>('PATCH', `/hotkeys/${enc(uid)}`, patch),
+	deleteHotkey: (uid: string) => call<void>('DELETE', `/hotkeys/${enc(uid)}`),
+	/** While on, the Desktop App lets go of every Hotkey, so pressing one reaches the Window. */
+	recordingKeys: (on: boolean) => call<void>('PUT', '/hotkeys/recording', { on }),
+
 	// Remote Devices & the Code Set Finder
 	searchCodeSets: (brand: string, domain: LibraryDomain = 'climate') =>
 		call<CodeSet[]>('GET', `/signal-library/${domain}?brand=${enc(brand)}`),
@@ -253,6 +269,15 @@ export interface PhoneAccess {
 	can_change: boolean;
 	/** What Windows' "Allow access?" prompt calls Control: "Control", or "Python" when run from source. */
 	program: string;
+}
+
+export interface HotkeyList {
+	hotkeys: Hotkey[];
+	/** The Desktop App is running, so Hotkeys work. */
+	listening: boolean;
+	/** Only the computer running Control sets Hotkeys up. */
+	can_change: boolean;
+	recording: boolean;
 }
 
 export interface DesktopApp {

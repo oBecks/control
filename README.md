@@ -26,6 +26,7 @@ Everything stays on your home network.
 - Control a TV or fan that has no Wi-Fi, through an infrared hub.
 - Open Netflix or yes+ on your TV box with one tap.
 - Group devices ("Living room lights") and switch them together.
+- Set Hotkeys: keys on your PC that toggle a light, dim it while held, or press Volume + on the TV, from any app.
 - Use it from your phone, or just ask Claude.
 
 ## Works with
@@ -69,12 +70,15 @@ For Claude Code, or any other MCP client, run the local server `Control.exe --mc
 | `create_group` | Makes a Group |
 | `edit_group` | Renames a Group or changes its devices |
 | `delete_group` | Deletes a Group |
+| `list_hotkeys` | Lists your Hotkeys |
+| `create_hotkey` | Makes a Hotkey, like Ctrl+Alt+L to toggle a light |
+| `delete_hotkey` | Deletes a Hotkey |
 
 It only works in Claude on the same PC. Claude on the web or your phone can't reach your home network.
 
 ## Coming next
 
-Hotkeys, then Dashboards, Automations and Scenes. Later, Samsung TVs, Rooms and more brands. See the [roadmap](docs/roadmap.md).
+Dashboards, then Automations and Scenes. Later, Samsung TVs, Rooms and more brands. See the [roadmap](docs/roadmap.md).
 
 <details>
 <summary>Run from source</summary>

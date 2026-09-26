@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import { House, Radar, Settings } from '@lucide/svelte';
+	import { House, Keyboard, Radar, Settings } from '@lucide/svelte';
 	import { home } from '$lib/home.svelte';
 	import AccessRequestBanner from '$lib/access/AccessRequestBanner.svelte';
 	import WaitingScreen from '$lib/access/WaitingScreen.svelte';
@@ -9,15 +9,17 @@
 
 	let { children } = $props();
 
+	const onThisComputer = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
+
 	const NAV = [
 		{ href: resolve('/'), label: 'Home', icon: House },
 		{ href: resolve('/add'), label: 'Add devices', short: 'Add', icon: Radar },
+		// Hotkeys are keys on this computer, so phones don't get the page.
+		...(onThisComputer ? [{ href: resolve('/hotkeys'), label: 'Hotkeys', icon: Keyboard }] : []),
 		{ href: resolve('/settings'), label: 'Settings', icon: Settings }
 	];
 
 	$effect(() => home.start());
-
-	const onThisComputer = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
 </script>
 
 {#if home.lock === 'approval_required'}
