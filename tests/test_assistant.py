@@ -328,3 +328,35 @@ def test_phones_cant_connect_claude(client, claude_desktop):  # noqa: F811
     assert p.get("/api/assistant").json()["can_change"] is False
     assert p.put("/api/assistant/claude").status_code == 403
     assert claude.status() == "off"
+
+
+# --- After an update, say to restart Claude until the new server calls -------------------------
+
+
+def test_after_an_update_settings_say_to_restart_claude_until_the_new_server_calls(client, monkeypatch):  # noqa: F811
+    from control import __version__
+    from control.api import assistant as assistant_api
+
+    monkeypatch.setattr(assistant_api, "_restart_pending", None)
+    monkeypatch.setattr(claude, "status", lambda: "connected")
+    r = Registry()
+    r.set_setting("version", "0.0.1")  # the Engine last ran an older Control
+    r.close()
+    assert client.get("/api/assistant").json()["restart_claude"] == __version__
+    client.get("/api/devices", headers={server.MCP_HEADER: "0.0.1"})  # Claude still runs the old one
+    assert client.get("/api/assistant").json()["restart_claude"] == __version__
+    client.get("/api/devices", headers={server.MCP_HEADER: __version__})  # Claude was restarted
+    assert client.get("/api/assistant").json()["restart_claude"] is None
+
+
+def test_the_restart_note_can_be_dismissed_and_needs_claude(client, monkeypatch):  # noqa: F811
+    from control.api import assistant as assistant_api
+
+    monkeypatch.setattr(assistant_api, "_restart_pending", None)
+    monkeypatch.setattr(claude, "status", lambda: "off")
+    # No version recorded yet but devices exist: an update from before the note.
+    assert client.get("/api/assistant").json()["restart_claude"] is None  # Claude isn't connected
+    monkeypatch.setattr(claude, "status", lambda: "connected")
+    assert client.get("/api/assistant").json()["restart_claude"] is not None
+    assert client.delete("/api/assistant/restart-note").json()["restart_claude"] is None
+    assert client.get("/api/assistant").json()["restart_claude"] is None

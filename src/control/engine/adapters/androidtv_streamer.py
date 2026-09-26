@@ -22,7 +22,7 @@ from cryptography.hazmat.primitives import serialization
 from .. import vault
 from ..errors import DeviceUnreachable
 from ..registry import default_db_path
-from ..streamer import StreamerState, key_code
+from ..streamer import SCREENSAVERS, StreamerState, key_code
 
 CLIENT_NAME = "Control"  # shown on the TV while Linking
 _CONNECT_TIMEOUT = 6.0
@@ -178,6 +178,15 @@ class AndroidTVStreamer:
             remote.send_key_command(code)
 
         self._do(press)
+
+    def wake(self) -> None:
+        """Leave the screensaver: an app opened behind it stays hidden."""
+
+        async def wake(remote):
+            remote.send_key_command("WAKEUP")
+            await _until(lambda: remote.current_app not in SCREENSAVERS, 3.0)
+
+        self._do(wake)
 
     def open_app(self, app: str) -> None:
         """A link opens directly. A bare package goes through its Play Store page, whose focused

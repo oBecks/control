@@ -218,7 +218,8 @@ export const api = {
 	// The Assistant (ADR 0005)
 	assistant: () => call<Assistant>('GET', '/assistant'),
 	connectClaude: () => call<Assistant>('PUT', '/assistant/claude'),
-	disconnectClaude: () => call<Assistant>('DELETE', '/assistant/claude')
+	disconnectClaude: () => call<Assistant>('DELETE', '/assistant/claude'),
+	dismissRestartNote: () => call<Assistant>('DELETE', '/assistant/restart-note')
 };
 
 /** local: the computer running the Engine. approved: an Approved Browser. */
@@ -275,6 +276,8 @@ export interface Assistant {
 	claude_desktop: 'missing' | 'connected' | 'outdated' | 'off';
 	/** Adds Control to Claude Code. */
 	claude_code_command: string;
+	/** Control was updated to this version and Claude still runs the old tools: restart Claude. */
+	restart_claude: string | null;
 	/** Only on the computer running the Engine. */
 	can_change: boolean;
 }
