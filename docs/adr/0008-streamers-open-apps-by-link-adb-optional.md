@@ -4,7 +4,7 @@ status: accepted
 
 # Streamers open apps by link, with adb as an optional second step of the Link
 
-Android TV boxes are controlled over the Android TV Remote protocol (`androidtvremote2`): a Link with a PIN, then power, keys, the open app and volume. Its only way to open an app is to send a link. Opening by package name (`market://launch?id=…`) used to go through the Play Store, but that route broke. On the user's NVIDIA Shield and yes+ box it, `intent:` and `android-app://` links are all refused. So each Streamer App Shortcut keeps the app's package (to name the open app) and, when known, a link that opens it (`https://www.youtube.com`, `stremio://`).
+Android TV boxes are controlled over the Android TV Remote protocol (`androidtvremote2`): a Link with a PIN, then power, keys, the open app and volume. Its only way to open an app is to send a link. Opening by package name (`market://launch?id=…`) used to go through the Play Store, but that route broke. On the user's NVIDIA Shield and yes+ box, package names, `intent:` links and `android-app://` links are all refused. So each Streamer App Shortcut keeps the app's package (to name the open app) and, when known, a link that opens it (`https://www.youtube.com`, `stremio://`).
 
 Some apps declare no link at all. yes+ (`il.co.yes.yesplus`) has only a home-screen entry. For those, Control has two ways, chosen in this order:
 

@@ -51,14 +51,18 @@
 	async function edit() {
 		draft = features.apps.map((a) => ({ ...a }));
 		playStoreOk = false;
+		take({ installed: false, apps: [] }); // not the last edit's list while this one loads
 		take(await api.streamerCatalogue(uid).catch(() => ({ installed: false, apps: [] })));
 	}
 
 	async function save() {
 		if (!draft) return;
 		saving = true;
-		if (await onapps(draft)) draft = null;
-		saving = false;
+		try {
+			if (await onapps(draft)) draft = null;
+		} finally {
+			saving = false;
+		}
 	}
 
 	const volume = $derived(

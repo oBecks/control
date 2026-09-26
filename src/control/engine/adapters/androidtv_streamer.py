@@ -90,7 +90,12 @@ def _run(coro, timeout: float = _CALL_TIMEOUT):
         if _loop is None:
             _loop = asyncio.new_event_loop()
             threading.Thread(target=_loop.run_forever, name="android-tv", daemon=True).start()
-    return asyncio.run_coroutine_threadsafe(coro, _loop).result(timeout)
+    future = asyncio.run_coroutine_threadsafe(coro, _loop)
+    try:
+        return future.result(timeout)
+    except TimeoutError:
+        future.cancel()  # or it would carry on, e.g. press OK after the caller gave up
+        raise DeviceUnreachable("the Android TV didn't answer in time") from None
 
 
 # --- Connections (touched only on the loop) ----------------------------------------
