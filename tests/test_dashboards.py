@@ -55,6 +55,9 @@ def test_items_keep_their_ids_and_refuse_what_doesnt_fit():
 def test_a_heading_keeps_trimmed_text_and_no_target():
     [h] = dashboards.check_items([{"kind": "heading", "text": "  Living room  ", "target": "a"}], {"a"})
     assert h == {"id": h["id"], "kind": "heading", "size": "full", "text": "Living room"}
+    # A narrower one sits beside other items, e.g. two rooms side by side.
+    [h] = dashboards.check_items([{"kind": "heading", "size": "4x1", "text": "Kitchen"}], set())
+    assert h["size"] == "4x1"
 
 
 # --- API -------------------------------------------------------------------------------

@@ -312,7 +312,9 @@
 		border: 2px dashed var(--border);
 	}
 	.arranging .cell.heading {
-		padding: var(--s-2) var(--s-10) var(--s-2) var(--s-10);
+		/* Room for the handle at the end; the × sits outside the corner. */
+		padding-block: var(--s-2);
+		padding-inline: var(--s-3) var(--s-10);
 		border: 1px dashed var(--border);
 		border-radius: var(--r-md);
 	}

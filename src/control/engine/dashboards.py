@@ -10,7 +10,7 @@ import secrets
 # Device or Group.
 KINDS: dict[str, tuple[tuple[str, ...], bool]] = {
     "tile": (("2x1", "1x1"), True),
-    "heading": (("full",), False),
+    "heading": (("full", "4x1", "2x1", "1x1"), False),
     "spacer": (("1x1", "2x1", "4x1"), False),
 }
 MAX_ITEMS = 200

@@ -6,11 +6,16 @@ import type { DashboardItem, DashboardItemKind } from '../types';
 /** The sizes each kind comes in, the first being its default. Mirrors engine/dashboards.py. */
 export const SIZES: { [K in DashboardItemKind]: Extract<DashboardItem, { kind: K }>['size'][] } = {
 	tile: ['2x1', '1x1'],
-	heading: ['full'],
+	heading: ['full', '4x1', '2x1', '1x1'],
 	spacer: ['1x1', '2x1', '4x1']
 };
 
-export const SIZE_LABEL: Record<string, string> = { '2x1': 'Wide', '1x1': 'Small', '4x1': 'Extra wide' };
+export const SIZE_LABEL: Record<string, string> = {
+	full: 'Full width',
+	'4x1': 'Extra wide',
+	'2x1': 'Wide',
+	'1x1': 'Small'
+};
 
 /** Grid columns by the Dashboard's own width: phone, tablet, desktop. */
 export function columnsFor(width: number): 4 | 6 | 8 {

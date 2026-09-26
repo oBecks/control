@@ -151,7 +151,7 @@ export interface PickableKey {
 /** One item on a Dashboard (ADR 0009). Sizes are "WxH" in grid cells, or "full" for the whole width. */
 export type DashboardItem =
 	| { id: string; kind: 'tile'; size: '2x1' | '1x1'; target: string }
-	| { id: string; kind: 'heading'; size: 'full'; text: string }
+	| { id: string; kind: 'heading'; size: 'full' | '4x1' | '2x1' | '1x1'; text: string }
 	| { id: string; kind: 'spacer'; size: '1x1' | '2x1' | '4x1' };
 
 export type DashboardItemKind = DashboardItem['kind'];
