@@ -95,7 +95,7 @@ Someone who lives in the home, known to Control by the phone(s) the user marked 
 _Avoid_: User, member, resident
 
 **Hotkey**:
-Keys pressed on the PC running Control that do one thing: toggle or set a Device or Group, press a remote button, or run an Automation or Scene. It can be a combination (Ctrl+Alt+L), a sequence (Ctrl+Alt+L, then 1), a double or long press, or a key held to keep dimming. Works in any app and any keyboard layout, including media keys and Bluetooth buttons that act as keys. The keys go only to Control, never also to the app in front.
+Keys pressed on the PC running Control that do one thing to one Device or Group: toggle it, set anything its Device Controls can set, step its brightness or temperature up or down, press one of its buttons, open a Streamer's app, or (later) run an Automation or Scene. Forgetting the Device or Group deletes its Hotkeys. It can be a combination (Ctrl+Alt+L), a sequence (Ctrl+Alt+L, then 1), a double or long press, or a key held to keep dimming. Works in any app and any keyboard layout, including media keys and Bluetooth buttons that act as keys. The keys go only to Control, never also to the app in front.
 _Avoid_: Shortcut, key binding, macro
 
 ### Screens
