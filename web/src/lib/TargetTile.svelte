@@ -6,14 +6,14 @@
 
 	interface Props {
 		uid: string;
-		small?: boolean;
+		size?: 'small' | 'normal' | 'large';
 		selected?: boolean;
 		/** Arranging a Dashboard: the Tile shows but doesn't toggle or open. */
 		inert?: boolean;
 		onopen?: (uid: string) => void;
 	}
 
-	let { uid, small = false, selected = false, inert = false, onopen }: Props = $props();
+	let { uid, size = 'normal', selected = false, inert = false, onopen }: Props = $props();
 
 	const group = $derived(home.groups.find((g) => g.uid === uid));
 	const device = $derived(group ? undefined : home.controllable.find((d) => d.uid === uid));
@@ -29,7 +29,7 @@
 		glow={groupGlow(st)}
 		offline={home.isGroupOffline(group)}
 		assumed={!!st?.assumed}
-		{small}
+		{size}
 		{selected}
 		{inert}
 		ontoggle={() => home.toggleGroup(group.uid)}
@@ -47,7 +47,7 @@
 		offline={home.isOffline(device)}
 		assumed={device.kind === 'remote'}
 		isNew={device.is_new}
-		{small}
+		{size}
 		{selected}
 		{inert}
 		ontoggle={() => home.toggle(device.uid)}

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Device, Group } from '../api';
 import type { DashboardItem } from '../types';
-import { columnsFor, homeItems, moveItem, spanOf } from './layout';
+import { columnsFor, homeItems, moveItem, rowsOf, spanOf } from './layout';
 
 const device = (uid: string, category: string) => ({ uid, category }) as Device;
 const group = (uid: string) => ({ uid }) as Group;
@@ -17,6 +17,12 @@ describe('the grid', () => {
 		expect(spanOf(spacer, 8)).toBe(4);
 		expect(spanOf(spacer, 4)).toBe(4);
 		expect(spanOf(heading, 6)).toBe(6);
+	});
+
+	it('gives a large Tile two rows and everything else one', () => {
+		expect(rowsOf({ id: 'a', kind: 'tile', size: '2x2', target: 'x' })).toBe(2);
+		expect(rowsOf({ id: 'b', kind: 'heading', size: 'full', text: '' })).toBe(1);
+		expect(rowsOf({ id: 'c', kind: 'spacer', size: '4x1' })).toBe(1);
 	});
 });
 

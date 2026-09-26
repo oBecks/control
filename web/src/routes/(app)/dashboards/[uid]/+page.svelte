@@ -7,7 +7,7 @@
 	import { MediaQuery } from 'svelte/reactivity';
 	import AddItems from '$lib/dashboards/AddItems.svelte';
 	import { dashboards } from '$lib/dashboards/dashboards.svelte';
-	import { columnsFor, moveItem, SIZE_LABEL, SIZES, spanOf } from '$lib/dashboards/layout';
+	import { columnsFor, moveItem, rowsOf, SIZE_LABEL, SIZES, spanOf } from '$lib/dashboards/layout';
 	import { reorder } from '$lib/dashboards/reorder';
 	import { home } from '$lib/home.svelte';
 	import { Panel } from '$lib/panel.svelte';
@@ -150,12 +150,13 @@
 						class:picked={arranging && picked === item.id}
 						data-index={i}
 						style:grid-column="span {spanOf(item, columns)}"
+						style:grid-row="span {rowsOf(item)}"
 						animate:flip={{ duration: reduceMotion.current ? 0 : 200 }}
 					>
 						{#if item.kind === 'tile'}
 							<TargetTile
 								uid={item.target}
-								small={item.size === '1x1'}
+								size={item.size === '1x1' ? 'small' : item.size === '2x2' ? 'large' : 'normal'}
 								inert={arranging}
 								selected={desktop.current && !arranging && panel.highlighted(item.target)}
 								onopen={(target) => panel.open(target)}
@@ -289,8 +290,9 @@
 	.cell.spacer {
 		min-block-size: var(--tile-h);
 	}
+	/* A heading keeps its own short height, at the top of its row, however wide it is. */
 	.cell.heading {
-		align-items: end;
+		align-self: start;
 		padding-block-start: var(--s-3);
 	}
 	.cell h2 {

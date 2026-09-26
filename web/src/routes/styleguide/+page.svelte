@@ -282,17 +282,22 @@
 			<Tile name="Evening" status="All on" icon={Layers} on glow="var(--accent)" assumed />
 			<Tile name="Bedroom" status="Off" icon={LightbulbOff} />
 		</div>
-		<h3 class="block-sub">Small Tiles</h3>
+		<h3 class="block-sub">Small and Large Tiles</h3>
 		<p class="note">
-			On a Dashboard a Tile can be small: one grid cell, icon and name only. Tap toggles; holding it or right-clicking
-			opens Device Controls. While a Dashboard is being arranged, Tiles show but don't respond.
+			On a Dashboard a Tile can be small (one grid cell, icon and name only; holding it or right-clicking opens Device
+			Controls) or large (2×2, bigger icon, name and state). Tap toggles either. While a Dashboard is being arranged,
+			Tiles show but don't respond.
 		</p>
 		<div class="grid" style:--cols="repeat(auto-fill, minmax(96px, 1fr))">
-			<Tile small name="Desk lamp" status="On · 80%" icon={Lightbulb} on glow="rgb(255 169 87)" />
-			<Tile small name="Bedroom ceiling light" status="Off" icon={LightbulbOff} />
-			<Tile small name="Evening" status="All on" icon={Layers} on glow="var(--accent)" />
-			<Tile small name="Porch" status="Off" icon={LightbulbOff} offline />
-			<Tile small inert name="Arranging" status="Off" icon={LightbulbOff} />
+			<Tile size="small" name="Desk lamp" status="On · 80%" icon={Lightbulb} on glow="rgb(255 169 87)" />
+			<Tile size="small" name="Bedroom ceiling light" status="Off" icon={LightbulbOff} />
+			<Tile size="small" name="Evening" status="All on" icon={Layers} on glow="var(--accent)" />
+			<Tile size="small" name="Porch" status="Off" icon={LightbulbOff} offline />
+			<Tile size="small" inert name="Arranging" status="Off" icon={LightbulbOff} />
+		</div>
+		<div class="grid" style:--cols="repeat(auto-fill, minmax(240px, 1fr))">
+			<Tile size="large" name="AC" status="Cool 24°" icon={AirVent} on glow="var(--cool)" assumed />
+			<Tile size="large" name="Living room" status="On · 80%" icon={Lightbulb} on glow="rgb(255 169 87)" />
 		</div>
 	</section>
 

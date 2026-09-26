@@ -19,7 +19,7 @@
 
 	let query = $state('');
 	let picked = $state<string[]>([]);
-	let size = $state<'2x1' | '1x1'>('2x1');
+	let size = $state<'2x1' | '1x1' | '2x2'>('2x1');
 
 	const matches = (name: string) => name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
 
@@ -65,7 +65,7 @@
 			}}
 		>
 			<Heading size={18} strokeWidth={2.2} />
-			<span><b>Heading</b><small>A title across the whole width</small></span>
+			<span><b>Heading</b><small>A title, as wide as you like</small></span>
 		</button>
 		<button
 			type="button"
@@ -114,8 +114,9 @@
 		<Segmented
 			label="Tile size"
 			options={[
+				{ value: '1x1', label: 'Small' },
 				{ value: '2x1', label: 'Wide' },
-				{ value: '1x1', label: 'Small' }
+				{ value: '2x2', label: 'Large' }
 			]}
 			bind:value={size}
 		/>

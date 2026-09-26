@@ -113,7 +113,7 @@ An empty item on a Dashboard that holds a gap where the user wants one. Visible 
 _Avoid_: Blank, gap, filler
 
 **Tile**:
-A Device's or Group's compact presence on Home or a Dashboard. Tapping it toggles on/off; its chevron, holding it, or right-clicking it opens Device Controls. When on, it takes the Device's real colour. On a Dashboard it can also be small (icon and short name, no chevron).
+A Device's or Group's compact presence on Home or a Dashboard. Tapping it toggles on/off; its chevron, holding it, or right-clicking it opens Device Controls. When on, it takes the Device's real colour. On a Dashboard it can also be small (icon and short name, no chevron) or large.
 _Avoid_: Card, widget, button
 
 **Remote Pad**:

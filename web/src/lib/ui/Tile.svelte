@@ -15,8 +15,8 @@
 		selected?: boolean;
 		/** Increment to flash a "sent" confirmation (remotes, whose state can't be shown). */
 		pulse?: number;
-		/** A Dashboard's small Tile: icon and name only, opened by holding it or right-clicking. */
-		small?: boolean;
+		/** On a Dashboard: small is icon and name only (opened by holding it or right-clicking); large is 2×2. */
+		size?: 'small' | 'normal' | 'large';
 		/** Shown but not usable, e.g. while a Dashboard is being arranged. */
 		inert?: boolean;
 		ontoggle?: () => void;
@@ -34,11 +34,14 @@
 		isNew = false,
 		selected = false,
 		pulse = 0,
-		small = false,
+		size = 'normal',
 		inert = false,
 		ontoggle,
 		onopen
 	}: Props = $props();
+
+	const small = $derived(size === 'small');
+	const large = $derived(size === 'large');
 
 	// Press-and-hold opens Device Controls (phone); the click that follows is swallowed.
 	const HOLD_MS = 450;
@@ -76,7 +79,16 @@
 	}
 </script>
 
-<div class="tile" class:on={on && !offline} class:offline class:selected class:small {inert} style:--glow={glow}>
+<div
+	class="tile"
+	class:on={on && !offline}
+	class:offline
+	class:selected
+	class:small
+	class:large
+	{inert}
+	style:--glow={glow}
+>
 	{#key pulse}{#if pulse}<span class="sent" aria-hidden="true"></span>{/if}{/key}
 	<button
 		class="hit"
@@ -92,7 +104,7 @@
 
 	<div class="top">
 		<span class="badge" aria-hidden="true">
-			{#if offline}<WifiOff size={18} strokeWidth={2.2} />{:else}<Icon size={20} strokeWidth={2.2} />{/if}
+			{#if offline}<WifiOff size={18} strokeWidth={2.2} />{:else}<Icon size={large ? 30 : 20} strokeWidth={2.2} />{/if}
 		</span>
 		{#if isNew}<span class="new">New</span>{/if}
 	</div>
@@ -272,6 +284,23 @@
 
 	.more:hover {
 		background: color-mix(in oklab, var(--text) 12%, transparent);
+	}
+
+	/* Large: the same Tile, read from across the room */
+	.large {
+		min-block-size: calc(var(--tile-h) * 2 + var(--s-3));
+		padding: var(--s-5);
+	}
+	.large .badge {
+		inline-size: 60px;
+		block-size: 60px;
+	}
+	.large .name {
+		font-size: var(--fs-xl);
+		font-weight: var(--fw-bold);
+	}
+	.large .status {
+		font-size: var(--fs-lg);
 	}
 
 	/* Small: icon above a name of up to two lines */

@@ -5,7 +5,7 @@ import type { DashboardItem, DashboardItemKind } from '../types';
 
 /** The sizes each kind comes in, the first being its default. Mirrors engine/dashboards.py. */
 export const SIZES: { [K in DashboardItemKind]: Extract<DashboardItem, { kind: K }>['size'][] } = {
-	tile: ['2x1', '1x1'],
+	tile: ['2x1', '1x1', '2x2'],
 	heading: ['full', '4x1', '2x1', '1x1'],
 	spacer: ['1x1', '2x1', '4x1']
 };
@@ -14,7 +14,8 @@ export const SIZE_LABEL: Record<string, string> = {
 	full: 'Full width',
 	'4x1': 'Extra wide',
 	'2x1': 'Wide',
-	'1x1': 'Small'
+	'1x1': 'Small',
+	'2x2': 'Large'
 };
 
 /** Grid columns by the Dashboard's own width: phone, tablet, desktop. */
@@ -28,12 +29,17 @@ export function spanOf(item: DashboardItem, columns: number): number {
 	return Math.min(Number(item.size.split('x')[0]), columns);
 }
 
+/** How many rows an item spans. */
+export function rowsOf(item: DashboardItem): number {
+	return item.size === 'full' ? 1 : Number(item.size.split('x')[1]);
+}
+
 /** A new item id. Not crypto.randomUUID: phones reach Control over plain http, where it's missing. */
 export function newId(): string {
 	return Math.random().toString(36).slice(2, 10);
 }
 
-export function tileItem(target: string, size: '2x1' | '1x1' = '2x1'): DashboardItem {
+export function tileItem(target: string, size: '2x1' | '1x1' | '2x2' = '2x1'): DashboardItem {
 	return { id: newId(), kind: 'tile', size, target };
 }
 

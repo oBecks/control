@@ -42,8 +42,9 @@ def test_items_get_an_id_and_their_kinds_default_size():
 def test_items_keep_their_ids_and_refuse_what_doesnt_fit():
     kept = dashboards.check_items([{"id": "x1", "kind": "tile", "size": "1x1", "target": "a"}], {"a"})
     assert kept == [{"id": "x1", "kind": "tile", "size": "1x1", "target": "a"}]
+    assert dashboards.check_items([{"kind": "tile", "size": "2x2", "target": "a"}], {"a"})[0]["size"] == "2x2"
     with pytest.raises(ValueError, match="comes in"):
-        dashboards.check_items([{"kind": "tile", "size": "2x2", "target": "a"}], {"a"})
+        dashboards.check_items([{"kind": "tile", "size": "4x1", "target": "a"}], {"a"})
     with pytest.raises(ValueError, match="unknown"):
         dashboards.check_items([{"kind": "clock"}], set())
     with pytest.raises(LookupError):

@@ -9,7 +9,7 @@ import secrets
 # Each item kind, the sizes it comes in (the first is its default), and whether it points at a
 # Device or Group.
 KINDS: dict[str, tuple[tuple[str, ...], bool]] = {
-    "tile": (("2x1", "1x1"), True),
+    "tile": (("2x1", "1x1", "2x2"), True),
     "heading": (("full", "4x1", "2x1", "1x1"), False),
     "spacer": (("1x1", "2x1", "4x1"), False),
 }
