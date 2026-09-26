@@ -6,20 +6,24 @@
 	import type { NewDashboardItem } from '$lib/types';
 	import Button from '$lib/ui/Button.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
-	import { newId, tileItem } from './layout';
+	import { headingItem, tileItem } from './layout';
 
 	interface Props {
 		/** Devices and Groups already on the Dashboard: they can be added again, but say so. */
 		placed: Set<string>;
+		/** The Dashboard's width: a new Heading spans it. */
+		columns: number;
 		onadd: (items: NewDashboardItem[]) => void;
 		onclose: () => void;
 	}
 
-	let { placed, onadd, onclose }: Props = $props();
+	let { placed, columns, onadd, onclose }: Props = $props();
 
 	let query = $state('');
 	let picked = $state<string[]>([]);
-	let size = $state<'2x1' | '1x1' | '2x2'>('2x1');
+	/** New Tiles' look; each one's width and height can be changed afterwards. */
+	let size = $state<'small' | 'wide' | 'large'>('wide');
+	const CELLS = { small: [1, 2], wide: [2, 2], large: [2, 4] } as const;
 
 	const matches = (name: string) => name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
 
@@ -45,7 +49,7 @@
 	}
 
 	function add() {
-		onadd(picked.map((uid) => tileItem(uid, size)));
+		onadd(picked.map((uid) => tileItem(uid, ...CELLS[size])));
 		onclose();
 	}
 </script>
@@ -60,7 +64,7 @@
 		<button
 			type="button"
 			onclick={() => {
-				onadd([{ id: newId(), kind: 'heading', size: 'full', text: 'Heading' }]);
+				onadd([headingItem('Heading', columns)]);
 				onclose();
 			}}
 		>
@@ -104,9 +108,9 @@
 		<Segmented
 			label="Tile size"
 			options={[
-				{ value: '1x1', label: 'Small' },
-				{ value: '2x1', label: 'Wide' },
-				{ value: '2x2', label: 'Large' }
+				{ value: 'small', label: 'Small' },
+				{ value: 'wide', label: 'Wide' },
+				{ value: 'large', label: 'Large' }
 			]}
 			bind:value={size}
 		/>

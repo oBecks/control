@@ -18,11 +18,15 @@ router = APIRouter(prefix="/api/dashboards")
 class ItemIO(BaseModel):
     id: str | None = Field(None, description="kept across changes; left out, the Engine makes one")
     kind: str = Field(description="tile or heading")
-    size: str | None = Field(None, description='"WxH" in Tile units, or "full"; left out, the kind\'s default')
     x: int = Field(description="its column, from 0")
     y: int = Field(description="its row, from 0; a row is half a Tile tall")
+    w: int | None = Field(None, description="its width in columns; left out, the kind's default")
+    h: int | None = Field(None, description="its height in rows (a Tile at least 2); left out, the kind's default")
     target: str | None = Field(None, description="a Tile's Device or Group uid")
     text: str | None = Field(None, description="a Heading's text")
+    align: str | None = Field(None, description="a Heading's: start, center or end")
+    text_size: str | None = Field(None, description="a Heading's: s, m, l or xl")
+    bold: bool | None = Field(None, description="a Heading's")
 
 
 class DashboardOut(BaseModel):

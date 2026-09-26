@@ -148,10 +148,19 @@ export interface PickableKey {
 	types: boolean;
 }
 
-/** A Dashboard item's content, before it has a cell (ADR 0010). Sizes are "WxH" in Tile units, or "full". */
+/** A Dashboard item before it has a cell (ADR 0010): w is its width in columns, h its height in rows. */
 export type NewDashboardItem =
-	| { id: string; kind: 'tile'; size: '2x1' | '1x1' | '2x2'; target: string }
-	| { id: string; kind: 'heading'; size: 'full' | '4x1' | '2x1' | '1x1'; text: string };
+	| { id: string; kind: 'tile'; w: number; h: number; target: string }
+	| {
+			id: string;
+			kind: 'heading';
+			w: number;
+			h: number;
+			text: string;
+			align: 'start' | 'center' | 'end';
+			text_size: 's' | 'm' | 'l' | 'xl';
+			bold: boolean;
+	  };
 
 /** One item on a Dashboard, at its cell: x is its column, y its row (a row is half a Tile tall), from 0. */
 export type DashboardItem = NewDashboardItem & { x: number; y: number };

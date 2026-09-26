@@ -6,19 +6,16 @@ import type { DashboardItem, DashboardItemKind, NewDashboardItem } from '../type
 
 export type Columns = 4 | 6 | 8;
 
-/** The sizes each kind comes in. Mirrors engine/dashboards.py. */
-export const SIZES: { [K in DashboardItemKind]: Extract<DashboardItem, { kind: K }>['size'][] } = {
-	tile: ['1x1', '2x1', '2x2'],
-	heading: ['full', '4x1', '2x1', '1x1']
+/** How many rows high each kind may be: a Tile needs room for its icon and name. Mirrors engine/dashboards.py. */
+export const ROWS: Record<DashboardItemKind, { min: number; max: number }> = {
+	tile: { min: 2, max: 12 },
+	heading: { min: 1, max: 6 }
 };
 
-export const SIZE_LABEL: Record<string, string> = {
-	full: 'Full width',
-	'4x1': 'Extra wide',
-	'2x1': 'Wide',
-	'1x1': 'Small',
-	'2x2': 'Large'
-};
+/** How a Tile of this size looks: one column is small, four rows or more is large. */
+export function tileLook(item: { w: number; h: number }): 'small' | 'normal' | 'large' {
+	return item.w === 1 ? 'small' : item.h >= 4 ? 'large' : 'normal';
+}
 
 export const COLUMNS: { value: Columns; label: string }[] = [
 	{ value: 4, label: 'Phone' },
@@ -39,11 +36,9 @@ export function fits(columns: number, width: number, gap = 12): boolean {
 	return width >= columns * MIN_CELL + (columns - 1) * gap;
 }
 
-/** The (w, h) an item takes in grid cells. A row is half a Tile tall: a Tile is 2 rows, a Heading 1. */
+/** The (w, h) an item takes in grid cells, never wider than the grid. A row is half a Tile tall. */
 export function cellsOf(item: NewDashboardItem, columns: number): { w: number; h: number } {
-	if (item.size === 'full') return { w: columns, h: 1 };
-	const [w, h] = item.size.split('x').map(Number);
-	return { w: Math.min(w, columns), h: item.kind === 'tile' ? h * 2 : 1 };
+	return { w: Math.min(item.w, columns), h: item.h };
 }
 
 function collide(a: DashboardItem, b: DashboardItem, columns: number): boolean {
@@ -63,7 +58,10 @@ function pushDown(items: DashboardItem[], moved: DashboardItem, columns: number)
 }
 
 function clampX(item: DashboardItem, columns: number) {
-	item.x = Math.max(0, Math.min(item.x, columns - cellsOf(item, columns).w));
+	const rows = ROWS[item.kind];
+	item.w = Math.max(1, Math.min(item.w, columns));
+	item.h = Math.max(rows.min, Math.min(item.h, rows.max));
+	item.x = Math.max(0, Math.min(item.x, columns - item.w));
 	item.y = Math.max(0, item.y);
 }
 
@@ -71,7 +69,7 @@ function clampX(item: DashboardItem, columns: number) {
 export function place(
 	items: DashboardItem[],
 	id: string,
-	change: Partial<Pick<DashboardItem, 'x' | 'y' | 'size'>>,
+	change: Partial<Pick<DashboardItem, 'x' | 'y' | 'w' | 'h'>>,
 	columns: number
 ): DashboardItem[] {
 	const next = items.map((i) => ({ ...i }));
@@ -83,7 +81,7 @@ export function place(
 	return next;
 }
 
-/** The items on a grid of another width: those that no longer fit move left, and down below whatever is there. */
+/** The items on a grid of another width: those that no longer fit get narrower or move left, and down below whatever is there. */
 export function withColumns(items: DashboardItem[], columns: number): DashboardItem[] {
 	const next = items.map((i) => ({ ...i })).sort((a, b) => a.y - b.y || a.x - b.x);
 	const settled: DashboardItem[] = [];
@@ -139,8 +137,12 @@ export function newId(): string {
 	return Math.random().toString(36).slice(2, 10);
 }
 
-export function tileItem(target: string, size: '2x1' | '1x1' | '2x2' = '2x1'): NewDashboardItem {
-	return { id: newId(), kind: 'tile', size, target };
+export function tileItem(target: string, w = 2, h = 2): NewDashboardItem {
+	return { id: newId(), kind: 'tile', w, h, target };
+}
+
+export function headingItem(text: string, w: number): NewDashboardItem {
+	return { id: newId(), kind: 'heading', w, h: 1, text, align: 'start', text_size: 'm', bold: true };
 }
 
 /** "A copy of Home": Home's Groups and Category sections, each under its heading. */
@@ -156,8 +158,7 @@ export function homeItems(groups: Group[], controllable: Device[], columns: numb
 	return sections
 		.filter((s) => s.uids.length)
 		.flatMap((s) => {
-			const heading: NewDashboardItem = { id: newId(), kind: 'heading', size: 'full', text: s.title };
-			const placed = pack([heading, ...s.uids.map((uid) => tileItem(uid))], columns, top);
+			const placed = pack([headingItem(s.title, columns), ...s.uids.map((uid) => tileItem(uid))], columns, top);
 			top = bottomOf(placed, columns);
 			return placed;
 		});

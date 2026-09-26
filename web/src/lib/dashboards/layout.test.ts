@@ -1,23 +1,39 @@
 import { describe, expect, it } from 'vitest';
 import type { Device, Group } from '../api';
 import type { DashboardItem } from '../types';
-import { addBelow, cellsOf, columnsFor, fits, homeItems, moveItem, place, readingOrder, withColumns } from './layout';
+import {
+	addBelow,
+	cellsOf,
+	columnsFor,
+	fits,
+	homeItems,
+	moveItem,
+	place,
+	readingOrder,
+	tileLook,
+	withColumns
+} from './layout';
 
 const device = (uid: string, category: string) => ({ uid, category }) as Device;
 const group = (uid: string) => ({ uid }) as Group;
-const tile = (id: string, x: number, y: number, size: '2x1' | '1x1' | '2x2' = '2x1'): DashboardItem => ({
+const tile = (id: string, x: number, y: number, w = 2, h = 2): DashboardItem => ({
 	id,
 	kind: 'tile',
-	size,
+	w,
+	h,
 	target: id,
 	x,
 	y
 });
-const heading = (id: string, x: number, y: number, size: '2x1' | 'full' = '2x1'): DashboardItem => ({
+const heading = (id: string, x: number, y: number, w = 2): DashboardItem => ({
 	id,
 	kind: 'heading',
-	size,
+	w,
+	h: 1,
 	text: id,
+	align: 'start',
+	text_size: 'm',
+	bold: true,
 	x,
 	y
 });
@@ -28,10 +44,17 @@ describe('the grid', () => {
 		expect([columnsFor(375), columnsFor(700), columnsFor(1100)]).toEqual([4, 6, 8]);
 	});
 
-	it('makes a Tile two rows high and a Heading one, so a Heading sits right on a Tile', () => {
-		expect(cellsOf(tile('a', 0, 0), 8)).toEqual({ w: 2, h: 2 });
-		expect(cellsOf(tile('a', 0, 0, '2x2'), 8)).toEqual({ w: 2, h: 4 });
-		expect(cellsOf(heading('h', 0, 0, 'full'), 6)).toEqual({ w: 6, h: 1 });
+	it('never makes an item wider than the grid', () => {
+		expect(cellsOf(tile('a', 0, 0, 3, 5), 8)).toEqual({ w: 3, h: 5 });
+		expect(cellsOf(heading('h', 0, 0, 8), 6)).toEqual({ w: 6, h: 1 });
+	});
+
+	it('gives a Tile the small look at one column and the large look from four rows', () => {
+		expect([tileLook({ w: 1, h: 6 }), tileLook({ w: 3, h: 2 }), tileLook({ w: 2, h: 4 })]).toEqual([
+			'small',
+			'normal',
+			'large'
+		]);
 	});
 
 	it('knows when a screen is too narrow for a Dashboard', () => {
@@ -54,11 +77,14 @@ describe('place', () => {
 
 	it('pushes down what a Tile grows over', () => {
 		const items = [tile('a', 0, 0), tile('b', 0, 2), tile('c', 2, 0)];
-		expect(at(place(items, 'a', { size: '2x2' }, 8))).toEqual({ a: [0, 0], b: [0, 4], c: [2, 0] });
+		expect(at(place(items, 'a', { h: 4 }, 8))).toEqual({ a: [0, 0], b: [0, 4], c: [2, 0] });
+		expect(at(place(items, 'a', { w: 3 }, 8))).toEqual({ a: [0, 0], b: [0, 2], c: [2, 2] });
 	});
 
-	it('keeps an item inside the grid', () => {
+	it('keeps an item inside the grid and its size within bounds', () => {
 		expect(at(place([tile('a', 0, 0)], 'a', { x: 7, y: -3 }, 8))).toEqual({ a: [6, 0] });
+		const [shrunk] = place([tile('a', 0, 0)], 'a', { w: 12, h: 1 }, 8);
+		expect([shrunk.w, shrunk.h]).toEqual([8, 2]);
 	});
 
 	it('leaves the original list untouched', () => {

@@ -2,7 +2,7 @@
 	// One Dashboard: its items at their cells, and Edit mode to arrange them (ADR 0010).
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import { GripVertical, Pencil, Plus, Trash2, X } from '@lucide/svelte';
+	import { Bold, GripVertical, Pencil, Plus, Trash2, X } from '@lucide/svelte';
 	import { MediaQuery } from 'svelte/reactivity';
 	import AddItems from '$lib/dashboards/AddItems.svelte';
 	import { dashboards } from '$lib/dashboards/dashboards.svelte';
@@ -16,8 +16,8 @@
 		fits,
 		place,
 		readingOrder,
-		SIZE_LABEL,
-		SIZES,
+		ROWS,
+		tileLook,
 		withColumns,
 		type Columns
 	} from '$lib/dashboards/layout';
@@ -29,6 +29,22 @@
 	import Button from '$lib/ui/Button.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
 	import Sheet from '$lib/ui/Sheet.svelte';
+	import Stepper from '$lib/ui/Stepper.svelte';
+
+	type Heading = Extract<DashboardItem, { kind: 'heading' }>;
+
+	/** Left and right as the page reads; they swap in a right-to-left language. */
+	const ALIGNS: { value: Heading['align']; label: string }[] = [
+		{ value: 'start', label: 'Left' },
+		{ value: 'center', label: 'Center' },
+		{ value: 'end', label: 'Right' }
+	];
+	const TEXT_SIZES: { value: Heading['text_size']; label: string }[] = [
+		{ value: 's', label: 'S' },
+		{ value: 'm', label: 'M' },
+		{ value: 'l', label: 'L' },
+		{ value: 'xl', label: 'XL' }
+	];
 
 	/** Empty rows offered under the last item while arranging, to drop things into. */
 	const ROOM_BELOW = 6;
@@ -82,12 +98,13 @@
 		if (dash) dashboards.save(dash.uid, { items: next });
 	}
 
-	function resize(id: string, size: DashboardItem['size']) {
-		save(place(items, id, { size }, columns));
+	function resize(id: string, size: { w?: number; h?: number }) {
+		save(place(items, id, size, columns));
 	}
 
-	function retitle(id: string, text: string) {
-		save(items.map((i) => (i.id === id && i.kind === 'heading' ? { ...i, text } : i)));
+	/** Change a Heading's text or style. */
+	function restyle(id: string, change: Partial<Pick<Heading, 'text' | 'align' | 'text_size' | 'bold'>>) {
+		save(items.map((i) => (i.id === id && i.kind === 'heading' ? { ...i, ...change } : i)));
 	}
 
 	function remove(id: string) {
@@ -218,13 +235,15 @@
 						{#if item.kind === 'tile'}
 							<TargetTile
 								uid={item.target}
-								size={item.size === '1x1' ? 'small' : item.size === '2x2' ? 'large' : 'normal'}
+								size={tileLook(item)}
 								inert={arranging}
 								selected={desktop.current && !arranging && panel.highlighted(item.target)}
 								onopen={(target) => panel.open(target)}
 							/>
 						{:else}
-							<h2>{item.text}</h2>
+							<h2 class="size-{item.text_size}" class:bold={item.bold} style:text-align={item.align}>
+								{item.text}
+							</h2>
 						{/if}
 
 						{#if arranging}
@@ -252,21 +271,57 @@
 								value={pickedItem.text}
 								aria-label="Heading text"
 								maxlength="60"
-								onchange={(e) => retitle(pickedItem.id, e.currentTarget.value)}
+								onchange={(e) => restyle(pickedItem.id, { text: e.currentTarget.value })}
 							/>
 						{/if}
-						<Segmented
-							label="Size"
-							options={SIZES[pickedItem.kind].map((s) => ({ value: s, label: SIZE_LABEL[s] }))}
-							value={pickedItem.size}
-							onchange={(size) => resize(pickedItem.id, size)}
-						/>
+						<div class="group">
+							<Stepper
+								label="Width"
+								value={Math.min(pickedItem.w, columns)}
+								min={1}
+								max={columns}
+								onchange={(w) => resize(pickedItem.id, { w })}
+							/>
+							<Stepper
+								label="Height"
+								value={pickedItem.h}
+								min={ROWS[pickedItem.kind].min}
+								max={ROWS[pickedItem.kind].max}
+								onchange={(h) => resize(pickedItem.id, { h })}
+							/>
+						</div>
+						{#if pickedItem.kind === 'heading'}
+							{@const heading = pickedItem}
+							<div class="group">
+								<Segmented
+									label="Align"
+									options={ALIGNS}
+									value={heading.align}
+									onchange={(align) => restyle(heading.id, { align })}
+								/>
+								<Segmented
+									label="Text size"
+									options={TEXT_SIZES}
+									value={heading.text_size}
+									onchange={(text_size) => restyle(heading.id, { text_size })}
+								/>
+								<button
+									type="button"
+									class="toggle"
+									aria-label="Bold"
+									aria-pressed={heading.bold}
+									onclick={() => restyle(heading.id, { bold: !heading.bold })}
+								>
+									<Bold size={16} strokeWidth={heading.bold ? 3 : 2} />
+								</button>
+							</div>
+						{/if}
 						<Button variant="ghost" size="sm" onclick={() => remove(pickedItem.id)}>
 							<Trash2 size={15} strokeWidth={2.4} /> Remove
 						</Button>
 					{:else}
 						<span class="what"
-							>Drag <GripVertical size={14} strokeWidth={2.4} /> to any cell. Tap an item to size it.</span
+							>Drag <GripVertical size={14} strokeWidth={2.4} /> to any cell. Tap an item to change its size.</span
 						>
 						<Segmented label="Made for" options={COLUMNS} value={columns} onchange={setColumns} />
 					{/if}
@@ -281,7 +336,7 @@
 	{#if desktop.current}
 		<aside class="panel" aria-label={adding ? 'Add items' : 'Device controls'}>
 			{#if adding}
-				<AddItems placed={targets} onadd={add} onclose={() => (adding = false)} />
+				<AddItems placed={targets} {columns} onadd={add} onclose={() => (adding = false)} />
 			{:else if panel.showing}
 				<TargetPanel {panel} />
 			{:else if arranging}
@@ -292,7 +347,7 @@
 		</aside>
 	{:else if adding}
 		<Sheet label="Add items" onclose={() => (adding = false)}>
-			<AddItems placed={targets} onadd={add} onclose={() => (adding = false)} />
+			<AddItems placed={targets} {columns} onadd={add} onclose={() => (adding = false)} />
 		</Sheet>
 	{:else if panel.showing}
 		<Sheet label={panel.label} onclose={() => panel.close()}>
@@ -367,16 +422,27 @@
 		min-block-size: 0;
 	}
 	.cell.heading {
-		align-items: end;
-		padding-block-end: var(--s-1);
+		align-items: center;
+		overflow: hidden;
 	}
 	.cell h2 {
 		margin: 0;
-		overflow: hidden;
 		font-size: var(--fs-lg);
+		font-weight: var(--fw-regular);
+		line-height: 1.2;
+		overflow-wrap: anywhere;
+	}
+	.cell h2.bold {
 		font-weight: var(--fw-bold);
-		text-overflow: ellipsis;
-		white-space: nowrap;
+	}
+	.cell h2.size-s {
+		font-size: var(--fs-md);
+	}
+	.cell h2.size-l {
+		font-size: var(--fs-xl);
+	}
+	.cell h2.size-xl {
+		font-size: var(--fs-2xl);
 	}
 
 	/* Arranging: the empty cells show, and every item can be picked, dragged by its handle, and removed. */
@@ -467,6 +533,26 @@
 		flex: 1 1 140px;
 		color: var(--text-2);
 		font-size: var(--fs-sm);
+	}
+	.bar .group {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--s-2);
+	}
+	.toggle {
+		display: grid;
+		place-items: center;
+		inline-size: 38px;
+		block-size: 38px;
+		border: 1px solid var(--border);
+		border-radius: var(--r-pill);
+		background: var(--surface-2);
+		color: var(--text-2);
+	}
+	.toggle[aria-pressed='true'] {
+		background: var(--accent);
+		border-color: var(--accent);
+		color: var(--on-accent);
 	}
 	.bar input {
 		flex: 1 1 160px;

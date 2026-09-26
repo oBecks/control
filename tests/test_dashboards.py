@@ -32,8 +32,8 @@ def kinds(d: dict) -> list[str]:
     return [i["kind"] + (":" + i["target"] if i.get("target") else "") for i in d["items"]]
 
 
-def tile(target: str, x: int, y: int, size: str = "2x1") -> dict:
-    return {"kind": "tile", "target": target, "x": x, "y": y, "size": size}
+def tile(target: str, x: int, y: int, w: int = 2, h: int = 2) -> dict:
+    return {"kind": "tile", "target": target, "x": x, "y": y, "w": w, "h": h}
 
 
 def check(items: list[dict], targets=("a", "b"), columns=8) -> list[dict]:
@@ -45,28 +45,30 @@ def check(items: list[dict], targets=("a", "b"), columns=8) -> list[dict]:
 
 def test_items_get_an_id_and_their_kinds_default_size():
     items = check([{"kind": "tile", "target": "a", "x": 0, "y": 1}, {"kind": "heading", "x": 0, "y": 0}])
-    assert [(i["kind"], i["size"]) for i in items] == [("tile", "2x1"), ("heading", "full")]
+    assert [(i["kind"], i["w"], i["h"]) for i in items] == [("tile", 2, 2), ("heading", 8, 1)]
     assert all(i["id"] for i in items) and items[0]["id"] != items[1]["id"]
 
 
-def test_a_tile_is_two_rows_high_and_a_heading_one():
-    assert dashboards.cells("tile", "2x1", 8) == (2, 2)
-    assert dashboards.cells("tile", "1x1", 8) == (1, 2)
-    assert dashboards.cells("tile", "2x2", 8) == (2, 4)
-    assert dashboards.cells("heading", "2x1", 8) == (2, 1)
-    assert dashboards.cells("heading", "full", 6) == (6, 1)
+def test_any_size_the_grid_holds():
+    assert check([tile("a", 0, 0, 3, 5)])[0] | {"id": ""} == {"id": "", "kind": "tile", "target": "a", "x": 0,
+                                                             "y": 0, "w": 3, "h": 5}
+    assert check([tile("a", 0, 0, 8, 2)])[0]["w"] == 8
+    with pytest.raises(ValueError, match="columns wide"):
+        check([tile("a", 0, 0, 9, 2)])
+    with pytest.raises(ValueError, match="rows high"):
+        check([tile("a", 0, 0, 2, 1)])  # a Tile needs room for its icon and name
+    with pytest.raises(ValueError, match="whole number"):
+        check([tile("a", 0, 0, 1.5, 2)])
 
 
 def test_a_heading_sits_right_on_top_of_one_tile():
-    items = check([{"kind": "heading", "size": "2x1", "text": "AC", "x": 0, "y": 0}, tile("a", 0, 1)])
+    items = check([{"kind": "heading", "w": 2, "text": "AC", "x": 0, "y": 0}, tile("a", 0, 1)])
     assert [(i["x"], i["y"]) for i in items] == [(0, 0), (0, 1)]
 
 
 def test_items_keep_their_ids_and_refuse_what_doesnt_fit():
-    kept = check([{"id": "x1", **tile("a", 3, 5, "1x1")}])
-    assert kept == [{"id": "x1", "kind": "tile", "size": "1x1", "x": 3, "y": 5, "target": "a"}]
-    with pytest.raises(ValueError, match="comes in"):
-        check([tile("a", 0, 0, "4x1")])
+    kept = check([{"id": "x1", **tile("a", 3, 5, 1, 2)}])
+    assert kept == [{"id": "x1", "kind": "tile", "x": 3, "y": 5, "w": 1, "h": 2, "target": "a"}]
     with pytest.raises(ValueError, match="unknown"):
         check([{"kind": "spacer", "x": 0, "y": 0}])
     with pytest.raises(LookupError):
@@ -78,23 +80,31 @@ def test_items_keep_their_ids_and_refuse_what_doesnt_fit():
 def test_items_stay_inside_the_grid_and_never_overlap():
     with pytest.raises(ValueError, match="column"):
         check([tile("a", 7, 0)])  # 2 wide from the last column
-    with pytest.raises(ValueError, match="cell"):
+    with pytest.raises(ValueError, match="whole number"):
         check([{"kind": "tile", "target": "a"}])  # no cell
     with pytest.raises(ValueError, match="overlap"):
         check([tile("a", 0, 0), tile("b", 1, 1)])
     assert len(check([tile("a", 0, 0), tile("b", 2, 0), tile("a", 0, 2)])) == 3  # side by side, then below
 
 
-def test_a_full_heading_is_as_wide_as_the_grid():
+def test_a_heading_is_as_wide_as_the_grid_unless_made_narrower():
     with pytest.raises(ValueError, match="overlap"):
         check([{"kind": "heading", "x": 0, "y": 0}, tile("a", 6, 0)], columns=8)
     with pytest.raises(ValueError, match="columns wide"):
         dashboards.check_columns(5)
 
 
-def test_a_heading_keeps_trimmed_text_and_no_target():
+def test_a_heading_keeps_trimmed_text_its_style_and_no_target():
     [h] = check([{"kind": "heading", "text": "  Living room  ", "target": "a", "x": 0, "y": 0}])
-    assert h == {"id": h["id"], "kind": "heading", "size": "full", "x": 0, "y": 0, "text": "Living room"}
+    assert h == {"id": h["id"], "kind": "heading", "x": 0, "y": 0, "w": 8, "h": 1, "text": "Living room",
+                 "align": "start", "text_size": "m", "bold": True}
+    [h] = check([{"kind": "heading", "text": "AC", "x": 0, "y": 0, "w": 2, "h": 2, "align": "center",
+                  "text_size": "xl", "bold": False}])
+    assert (h["align"], h["text_size"], h["bold"], h["h"]) == ("center", "xl", False, 2)
+    with pytest.raises(ValueError, match="aligns"):
+        check([{"kind": "heading", "x": 0, "y": 0, "align": "left"}])
+    with pytest.raises(ValueError, match="text is"):
+        check([{"kind": "heading", "x": 0, "y": 0, "text_size": "huge"}])
 
 
 def test_dashboards_from_before_free_placement_are_laid_out_as_they_looked():
@@ -105,9 +115,19 @@ def test_dashboards_from_before_free_placement_are_laid_out_as_they_looked():
         {"id": "b", "kind": "tile", "size": "1x1", "target": "b"},
         {"id": "c", "kind": "tile", "size": "2x1", "target": "a"},  # doesn't fit the row: next one
     ]
-    placed = dashboards.from_flow(flow, 4)
-    assert [(i["id"], i["x"], i["y"]) for i in placed] == [("h", 0, 0), ("a", 0, 1), ("b", 3, 1), ("c", 0, 3)]
+    placed = dashboards.upgrade(flow, 4)
+    assert [(i["id"], i["x"], i["y"], i["w"], i["h"]) for i in placed] == [
+        ("h", 0, 0, 4, 1), ("a", 0, 1, 2, 2), ("b", 3, 1, 1, 2), ("c", 0, 3, 2, 2)]
     assert check(placed, columns=4)
+
+
+def test_placed_items_with_a_named_size_get_cells():
+    named = [{"id": "t", "kind": "tile", "size": "2x2", "target": "a", "x": 0, "y": 1},
+             {"id": "h", "kind": "heading", "size": "2x1", "text": "AC", "x": 0, "y": 0}]
+    upgraded = dashboards.upgrade(named, 8)
+    assert [(i["w"], i["h"]) for i in upgraded] == [(2, 4), (2, 1)]
+    assert "size" not in upgraded[0]
+    assert (upgraded[1]["align"], upgraded[1]["text_size"], upgraded[1]["bold"]) == ("start", "m", True)
 
 
 # --- API -------------------------------------------------------------------------------
@@ -116,7 +136,7 @@ def test_dashboards_from_before_free_placement_are_laid_out_as_they_looked():
 def test_make_arrange_rename_and_delete_a_dashboard(pc):
     d = pc.post("/api/dashboards", json={"name": " Phone remote ", "columns": 4, "items": [
         {"kind": "heading", "text": "Lights", "x": 0, "y": 0},
-        tile("yeelight:1", 0, 1, "1x1"),
+        tile("yeelight:1", 0, 1, 1, 2),
         tile(pc.group, 2, 1),
     ]})
     assert d.status_code == 201
@@ -126,7 +146,7 @@ def test_make_arrange_rename_and_delete_a_dashboard(pc):
 
     # The UI sends the whole new list: the Group's Tile moved to the top, and the heading down.
     items = d["items"]
-    items[2].update(x=0, y=0, size="2x2")
+    items[2].update(x=0, y=0, h=4)
     items[0].update(y=4)
     items[1].update(x=2, y=0)
     d2 = pc.patch(f"/api/dashboards/{d['uid']}", json={"items": items, "name": "Remote"}).json()
@@ -198,8 +218,8 @@ def test_deleting_a_group_takes_its_tiles_off(pc):
 def test_a_dashboard_stored_as_a_flow_comes_back_placed(pc):
     uid = pc.post("/api/dashboards", json={"name": "Old"}).json()["uid"]
     r = Registry()
-    flow = [{"id": "h", "kind": "heading", "size": "2x1", "text": "AC"}, {"id": "t", "kind": "tile", "size": "2x1",
-                                                                          "target": "yeelight:1"}]
+    flow = [{"id": "h", "kind": "heading", "size": "2x1", "text": "AC"},
+            {"id": "t", "kind": "tile", "size": "2x1", "target": "yeelight:1"}]
     with r._db:
         r._db.execute("UPDATE dashboards SET items = ? WHERE uid = ?", (json.dumps(flow), uid))
     r.close()

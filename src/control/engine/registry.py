@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS dashboards (
     uid       TEXT PRIMARY KEY,
     name      TEXT NOT NULL UNIQUE COLLATE NOCASE,
     columns   INTEGER NOT NULL DEFAULT 8,   -- the grid's width: 4 phone, 6 tablet, 8 desktop
-    items     TEXT NOT NULL DEFAULT '[]',   -- JSON: [{"id", "kind", "size", "x", "y", "target"?, "text"?}]
+    items     TEXT NOT NULL DEFAULT '[]',   -- JSON: [{"id", "kind", "x", "y", "w", "h", "target"?, "text"?...}]
     position  INTEGER NOT NULL,             -- order in the Dashboards list
     created   REAL NOT NULL
 );
@@ -648,9 +648,7 @@ class Registry:
         return Group(uid=r["uid"], name=r["name"], members=[m["device_uid"] for m in members], made_by=r["made_by"])
 
     def _to_dashboard(self, r: sqlite3.Row) -> Dashboard:
-        items = json.loads(r["items"])
-        if any("x" not in i for i in items):  # arranged before free placement (ADR 0010)
-            items = dashboard_items.from_flow(items, r["columns"])
+        items = dashboard_items.upgrade(json.loads(r["items"]), r["columns"])
         return Dashboard(uid=r["uid"], name=r["name"], columns=r["columns"], items=items)
 
     def _to_hotkey(self, r: sqlite3.Row) -> Hotkey:
