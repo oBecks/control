@@ -407,6 +407,9 @@ def test_the_watch_answers_when_recording_runs_out_and_sleeps_otherwise():
     start = time.monotonic()
     listener.watch(listener.revision, recording=True, timeout=5)
     assert time.monotonic() - start < 1  # takes the Hotkeys back once recording runs out
+    start = time.monotonic()
+    listener.watch(listener.revision, recording=True, timeout=5)  # it ran out before this watch
+    assert time.monotonic() - start < 0.1
     waits = []
     real_wait = listener._cond.wait
     listener._cond.wait = lambda timeout=None: waits.append(timeout) or real_wait(timeout)
