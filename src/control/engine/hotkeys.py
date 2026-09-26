@@ -1,6 +1,8 @@
 """Hotkeys (see CONTEXT.md, ADR 0007): keys on the PC that do one thing to one Device or Group.
 
 Keys are written as text, e.g. "Ctrl+Alt+L", "F13" or "Volume Up": modifiers first, then one key.
+A Trigger adds how they're pressed: "Ctrl+Alt+L (double)", "Ctrl+Alt+L (long)", or a sequence,
+"Ctrl+Alt+L, then 1" (the second keys may type text: they're Control's only for a moment).
 The key is also accepted by its physical name as browsers report it (`KeyboardEvent.code`, e.g.
 "KeyL"), so the Window can record keys whatever the keyboard layout. Each key maps to a Windows
 virtual-key code for `RegisterHotKey`; letters and digits use the same codes in every layout
@@ -15,6 +17,7 @@ An action is one of:
 Holding the keys repeats steps and presses; the others fire once.
 """
 
+import re
 from dataclasses import dataclass
 
 # Modifiers, in the order they're written, with RegisterHotKey's flags.
@@ -142,21 +145,103 @@ def parse(text: str) -> Keys:
     return Keys(tuple(m for m in MODIFIERS if m in mods), key)
 
 
-def problem(keys: Keys) -> str | None:
+# How keys are pressed. A double press waits DOUBLE_WITHIN after the first release for the second;
+# a long press fires once the keys are held LONG_AFTER. A sequence's second keys are Control's for
+# SEQUENCE_SECONDS after the first.
+PRESSES = ("once", "double", "long")
+DOUBLE_WITHIN = 0.4
+LONG_AFTER = 0.5
+SEQUENCE_SECONDS = 2.0
+_PRESS_WORDS = {"double": "double", "twice": "double", "x2": "double", "×2": "double", "long": "long", "hold": "long"}
+_PRESS_SUFFIX = re.compile(r"\s*\(?\s*(double|twice|x2|×2|long|hold)(?:[\s-]*press)?\s*\)?\s*$", re.IGNORECASE)
+_THEN = re.compile(r",\s+(?:then\s+)?|\s+then\s+", re.IGNORECASE)  # "Ctrl+," keeps its comma
+
+
+@dataclass(frozen=True)
+class Trigger:
+    """A Hotkey's keys and how they're pressed."""
+
+    keys: Keys  # the only keys, or a sequence's first
+    press: str = "once"  # once, double or long
+    then: Keys | None = None  # a sequence's second keys
+
+    @property
+    def label(self) -> str:
+        if self.then:
+            return f"{self.keys.label}, then {self.then.label}"
+        return self.keys.label if self.press == "once" else f"{self.keys.label} ({self.press})"
+
+
+def parse_trigger(text: str) -> Trigger:
+    """"Ctrl+Alt+L", "Ctrl+Alt+L double", "ctrl+alt+l (long press)", "Ctrl+Alt+L, then 1",
+    "Ctrl+Alt+L then 1" → Trigger. Raises ValueError."""
+    parts = _THEN.split(text.strip())
+    if len(parts) > 2:
+        raise ValueError("a sequence is two keys, e.g. Ctrl+Alt+L, then 1")
+    if len(parts) == 2:
+        if _PRESS_SUFFIX.search(parts[0]) or _PRESS_SUFFIX.search(parts[1]):
+            raise ValueError("a sequence's keys are pressed once each")
+        return Trigger(parse(parts[0]), "once", parse(parts[1]))
+    press = "once"
+    if m := _PRESS_SUFFIX.search(text):
+        press = _PRESS_WORDS[m.group(1).casefold()]
+        text = text[: m.start()]
+    return Trigger(parse(text), press)
+
+
+def problem(trigger: Trigger | Keys) -> str | None:
     """Why these keys can't be a Hotkey, or None."""
+    keys = trigger.keys if isinstance(trigger, Trigger) else trigger
     if keys.key.types and not {"Ctrl", "Alt", "Win"} & set(keys.mods):
         return f"{keys.label} is used for typing: add Ctrl, Alt or Win"
+    if isinstance(trigger, Trigger) and trigger.then:
+        if trigger.then.key.code == "Escape" and not trigger.then.mods:
+            return "Esc cancels a sequence: pick another second key"
+        if trigger.then == trigger.keys:
+            return "a sequence's second keys must differ from its first"
     return None
 
 
-def warning(keys: Keys) -> str | None:
+def warning(trigger: Trigger | Keys) -> str | None:
     """What the user gives up with these keys: they reach only Control (ADR 0007)."""
+    keys = trigger.keys if isinstance(trigger, Trigger) else trigger
+    if isinstance(trigger, Trigger) and trigger.then and not trigger.then.mods:
+        return f"For {SEQUENCE_SECONDS:g} s after {keys.label}, {trigger.then.label} reaches only Control."
     if keys.mods:
         return None
     if keys.key.group == "media":
         return f"While this Hotkey exists, {keys.label} works only for Control, not for Windows or other apps."
     if keys.key.group == "function":
         return f"Apps won't get {keys.label} while this Hotkey exists."
+    return None
+
+
+def clash(trigger: Trigger, repeats: bool, others: list[tuple[Trigger, bool]]) -> str | None:
+    """Why this Trigger can't sit beside the other Hotkeys' (each with whether its action repeats),
+    or None. The same keys can have a single, a double and a long press, but a sequence's first keys
+    start only sequences, and a long press can't share keys with a single press that repeats."""
+    for other, other_repeats in others:
+        if other.label.casefold() == trigger.label.casefold():
+            return f"{trigger.label} is already a Hotkey"
+        if trigger.then:
+            if not other.then and other.keys == trigger.keys:
+                return f"{trigger.keys.label} is a Hotkey of its own, so it can't start a sequence"
+            if not other.then and other.keys == trigger.then:
+                return f"{trigger.then.label} is a Hotkey of its own, so it can't end a sequence"
+            # Keys that start sequences are always registered, so they can't be another's second key.
+            if other.then and other.keys == trigger.then:
+                return f"{trigger.then.label} starts sequences ({other.label}), so it can't end one"
+            if other.then and other.then == trigger.keys:
+                return f"{trigger.keys.label} ends a sequence ({other.label}), so it can't start one"
+            continue
+        if other.then and other.keys == trigger.keys:
+            return f"{trigger.keys.label} starts sequences ({other.label}), so it can't be a Hotkey of its own"
+        if other.then and other.then == trigger.keys:
+            return f"{trigger.keys.label} ends a sequence ({other.label}), so it can't be a Hotkey of its own"
+        if other.keys == trigger.keys and {trigger.press, other.press} == {"once", "long"}:
+            if (repeats if trigger.press == "once" else other_repeats):
+                return (f"holding {trigger.keys.label} already repeats its single press, "
+                        "so it can't also have a long press")
     return None
 
 

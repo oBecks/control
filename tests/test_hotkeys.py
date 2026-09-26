@@ -59,6 +59,52 @@ def test_a_media_key_alone_warns_it_stops_working_elsewhere():
 LIGHT = {"on", "brightness", "rgb", "kelvin"}
 
 
+def test_how_keys_are_pressed_is_written_one_way_too():
+    t = hotkeys.parse_trigger
+    assert t("Ctrl+Alt+L").label == "Ctrl+Alt+L"
+    assert t("ctrl+alt+l double").label == "Ctrl+Alt+L (double)"
+    assert t("Ctrl+Alt+L twice").press == "double"
+    assert t("F13 (long press)").label == "F13 (long)"
+    assert t("F13 hold").press == "long"
+    assert t("Ctrl+Alt+L, then 1").label == "Ctrl+Alt+L, then 1"
+    assert t("ctrl+alt+KeyL then Digit1").label == "Ctrl+Alt+L, then 1"
+    assert t("Ctrl+,, then 1").keys.key.label == ","  # the comma key isn't a sequence
+    assert t("Ctrl+Alt+L, ,").then.key.label == ","
+    with pytest.raises(ValueError, match="two keys"):
+        t("Ctrl+Alt+L, then 1, then 2")
+    with pytest.raises(ValueError, match="once each"):
+        t("Ctrl+Alt+L, then 1 double")
+
+
+def test_a_sequences_second_keys_may_type():
+    p = hotkeys.problem
+    assert p(hotkeys.parse_trigger("Ctrl+Alt+L, then 1")) is None
+    assert "used for typing" in p(hotkeys.parse_trigger("L, then 1"))
+    assert "Esc cancels" in p(hotkeys.parse_trigger("Ctrl+Alt+L, then Esc"))
+    assert "must differ" in p(hotkeys.parse_trigger("Ctrl+Alt+L, then Ctrl+Alt+L"))
+    assert "reaches only Control" in hotkeys.warning(hotkeys.parse_trigger("Ctrl+Alt+L, then 1"))
+
+
+def test_which_presses_can_share_keys():
+    t = hotkeys.parse_trigger
+
+    def clash(new, others, repeats=False):
+        return hotkeys.clash(t(new), repeats, [(t(k), r) for k, r in others])
+
+    assert clash("F13 (double)", [("F13", False), ("F13 (long)", False)]) is None
+    assert "already a Hotkey" in clash("f13 (DOUBLE)", [("F13 (double)", False)])
+    assert "repeats its single press" in clash("F13 (long)", [("F13", True)])
+    assert "repeats its single press" in clash("F13", [("F13 (long)", False)], repeats=True)
+    assert clash("F13", [("F13 (long)", True)], repeats=False) is None  # a long press may repeat
+    assert "can't start a sequence" in clash("F13, then 1", [("F13 (double)", False)])
+    assert "starts sequences" in clash("F13", [("F13, then 1", False)])
+    assert clash("F13, then 2", [("F13, then 1", False)]) is None
+    assert "can't end a sequence" in clash("F13, then F14", [("F14", False)])
+    assert "ends a sequence" in clash("F14", [("F13, then F14", False)])
+    assert "starts sequences" in clash("F13, then F14", [("F14, then 1", False)])
+    assert "can't start one" in clash("F14, then 1", [("F13, then F14", False)])
+
+
 def test_actions_are_checked_against_what_the_target_can_do():
     check = hotkeys.check_action
     assert check({"do": "toggle"}, "light", LIGHT, {}, [], False) == {"do": "toggle"}
@@ -244,6 +290,62 @@ def test_edit_and_delete(hk):
     assert c.get("/api/hotkeys").json()["hotkeys"] == []
 
 
+def test_one_keys_pressed_once_twice_or_long(hk):
+    c = hk["client"]
+    add(c, "F13", "yeelight:1", {"do": "toggle"})
+    add(c, "F13 double", "yeelight:1", {"do": "set", "state": {"brightness": 100}})
+    add(c, "F13 (long)", "yeelight:1", {"do": "step", "field": "brightness", "by": -10})
+    answer = c.get("/api/hotkeys/watch?revision=0").json()
+    [entry] = answer["keys"]
+    assert entry["label"] == "F13" and entry["vk"] == 0x7C and entry["then"] == []
+    assert entry["once"]["does"] == "Toggle" and entry["double"]["does"] == "Set brightness 100%"
+    assert entry["long"]["repeats"]
+    assert [h["keys"] for h in c.get("/api/hotkeys").json()["hotkeys"]] == ["F13", "F13 (double)", "F13 (long)"]
+
+
+def test_a_long_press_cant_share_keys_with_a_single_press_that_repeats(hk):
+    c = hk["client"]
+    single = add(c, "F13", "yeelight:1", {"do": "step", "field": "brightness", "by": 10})
+    resp = c.post("/api/hotkeys", json={"keys": "F13 (long)", "target": "yeelight:1", "action": {"do": "toggle"}})
+    assert resp.status_code == 422 and "repeats its single press" in resp.json()["detail"]
+    check = c.post("/api/hotkeys/check", json={"keys": "F13 long"}).json()
+    assert "repeats" in check["problem"] and check["keys"] == "F13 (long)"
+
+    # The other way round: a single press changed to repeat, with a long press on its keys.
+    c.patch(f"/api/hotkeys/{single['uid']}", json={"action": {"do": "toggle"}})
+    add(c, "F13 (long)", "yeelight:1", {"do": "toggle"})
+    step = {"do": "step", "field": "brightness", "by": 10}
+    resp = c.patch(f"/api/hotkeys/{single['uid']}", json={"action": step})
+    assert resp.status_code == 422 and "repeats its single press" in resp.json()["detail"]
+    check = c.post("/api/hotkeys/check", json={"keys": "F13", "uid": single["uid"], "action": step}).json()
+    assert "repeats" in check["problem"]
+
+
+def test_sequences(hk):
+    c = hk["client"]
+    add(c, "Ctrl+Alt+L, then 1", "yeelight:1", {"do": "toggle"})
+    add(c, "Ctrl+Alt+L then 2", "yeelight:1", {"do": "set", "state": {"on": False}})
+    resp = c.post("/api/hotkeys", json={"keys": "Ctrl+Alt+L", "target": "yeelight:1", "action": {"do": "toggle"}})
+    assert resp.status_code == 422 and "starts sequences" in resp.json()["detail"]
+    check = c.post("/api/hotkeys/check", json={"keys": "Ctrl+Alt+L, then 1"}).json()
+    assert "already the Hotkey for Yeelight color (Toggle)" in check["problem"]
+
+    [entry] = c.get("/api/hotkeys/watch?revision=0").json()["keys"]
+    assert entry["label"] == "Ctrl+Alt+L" and "once" not in entry
+    assert [(s["label"], s["vk"], s["mods"], s["hotkey"]["does"]) for s in entry["then"]] == [
+        ("1", 0x31, 0, "Toggle"), ("2", 0x32, 0, "Turn off")]
+
+
+def test_keys_control_already_has_arent_another_apps(hk, monkeypatch):
+    c = hk["client"]
+    h = add(c, "F13", "yeelight:1", {"do": "toggle"})
+    monkeypatch.setattr(desktop_hotkeys, "can_register", lambda keys: False)  # Control registered them
+    add(c, "F13 (double)", "yeelight:1", {"do": "toggle"})
+    assert c.patch(f"/api/hotkeys/{h['uid']}", json={"action": {"do": "set", "state": {"on": True}}}).status_code == 200
+    check = c.post("/api/hotkeys/check", json={"keys": "F14, then 1"}).json()
+    assert check["problem"] == "Another app uses F14"
+
+
 def test_phones_can_see_but_not_set_up_hotkeys(hk):
     c = hk["client"]
     turn_on(c)
@@ -263,13 +365,13 @@ def test_the_listener_registers_and_reports_what_windows_refused(hk, monkeypatch
     c = hk["client"]
     monkeypatch.setattr(hotkeys_api, "WATCH_SECONDS", 0.1)
     first = c.get("/api/hotkeys/watch?revision=0").json()
-    assert first["hotkeys"] == [] and not first["recording"]
+    assert first["keys"] == [] and not first["recording"]
 
     # A Hotkey added while the listener watches: the watch answers with it, and the add waits for
     # the listener to say it registered.
     def listener():
         answer = c.get(f"/api/hotkeys/watch?revision={first['revision']}").json()
-        taken = [h["uid"] for h in answer["hotkeys"]]
+        taken = [e["once"]["uid"] for e in answer["keys"]]
         c.put("/api/hotkeys/registered", json={"revision": answer["revision"], "taken": taken})
 
     monkeypatch.setattr(hotkeys_api, "WATCH_SECONDS", 5)
@@ -289,14 +391,14 @@ def test_while_recording_the_listener_lets_go_of_every_hotkey(hk, monkeypatch):
     monkeypatch.setattr(hotkeys_api, "WATCH_SECONDS", 0.1)
     add(c, "F13", "yeelight:1", {"do": "toggle"})
     answer = c.get("/api/hotkeys/watch?revision=0").json()
-    assert [h["name"] for h in answer["hotkeys"]] == ["Yeelight color"]
+    assert [e["once"]["name"] for e in answer["keys"]] == ["Yeelight color"]
     assert c.put("/api/hotkeys/recording", json={"on": True}).status_code == 204
     answer = c.get(f"/api/hotkeys/watch?revision={answer['revision']}").json()
-    assert answer["recording"] and answer["hotkeys"] == []
+    assert answer["recording"] and answer["keys"] == []
     assert c.get("/api/hotkeys").json()["recording"]
     c.put("/api/hotkeys/recording", json={"on": False})
     answer = c.get(f"/api/hotkeys/watch?revision={answer['revision']}&recording=true").json()
-    assert not answer["recording"] and len(answer["hotkeys"]) == 1
+    assert not answer["recording"] and len(answer["keys"]) == 1
 
 
 def test_a_stopping_engine_answers_the_listener_at_once(hk):
@@ -340,7 +442,8 @@ def test_held_keys_repeat_at_most_every_so_often(monkeypatch):
     shown = []
     listener._show = lambda *args, **kw: shown.append(args)
     listener._pool.submit = lambda fn, *args: fn(*args)  # run right away
-    listener._registered = {1: {"uid": "hotkey:a", "repeats": True}, 2: {"uid": "hotkey:b", "repeats": False}}
+    listener._registered = {1: {"once": {"uid": "hotkey:a", "repeats": True}, "then": []},
+                            2: {"once": {"uid": "hotkey:b", "repeats": False}, "then": []}}
     clock = [100.0]
     monkeypatch.setattr(desktop_hotkeys.time, "monotonic", lambda: clock[0])
 
@@ -359,7 +462,113 @@ def test_a_press_while_the_last_one_still_runs_is_skipped():
     listener = desktop_hotkeys.HotkeyListener(0)
     submitted = []
     listener._pool.submit = lambda fn, *args: submitted.append(args)
-    listener._registered = {1: {"uid": "hotkey:a", "repeats": False}}
+    listener._registered = {1: {"once": {"uid": "hotkey:a", "repeats": False}, "then": []}}
     listener._pressed(1)
     listener._pressed(1)
     assert len(submitted) == 1
+
+
+def presses():
+    fired = []
+    return desktop_hotkeys.Presses(lambda hk: fired.append(hk["uid"])), fired
+
+
+ONCE = {"uid": "once", "repeats": False}
+DOUBLE = {"uid": "double", "repeats": False}
+LONG = {"uid": "long", "repeats": False}
+
+
+def test_a_single_press_waits_to_see_if_a_second_follows():
+    p, fired = presses()
+    entry = {"vk": 0x7C, "once": ONCE, "double": DOUBLE, "then": []}
+    p.pressed(1, entry, 0.0)
+    p.tick(0.1, lambda vk: False)  # up
+    p.tick(0.3, lambda vk: False)
+    assert fired == []
+    p.tick(0.1 + hotkeys.DOUBLE_WITHIN, lambda vk: False)
+    assert fired == ["once"] and not p.active
+
+    p.pressed(1, entry, 1.0)
+    p.tick(1.1, lambda vk: False)
+    p.pressed(1, entry, 1.3)  # down again in time
+    assert fired == ["once", "double"] and not p.active
+
+
+def test_a_long_press_fires_while_the_keys_are_held():
+    p, fired = presses()
+    entry = {"vk": 0x7C, "once": ONCE, "long": LONG, "then": []}
+    p.pressed(1, entry, 0.0)
+    p.tick(0.2, lambda vk: True)
+    p.tick(0.3, lambda vk: False)  # a short press, with no double: at once
+    assert fired == ["once"]
+
+    p.pressed(1, entry, 1.0)
+    p.tick(1.2, lambda vk: True)
+    assert fired == ["once"]
+    p.tick(1.0 + hotkeys.LONG_AFTER, lambda vk: True)
+    p.tick(3.0, lambda vk: True)  # doesn't repeat
+    p.tick(3.1, lambda vk: False)
+    assert fired == ["once", "long"] and not p.active
+
+
+def test_held_keys_repeat_a_long_press_or_a_single_one_that_repeats():
+    p, fired = presses()
+    entry = {"vk": 0x7C, "once": ONCE, "long": {"uid": "dim", "repeats": True}, "then": []}
+    p.pressed(1, entry, 0.0)
+    for now in (0.5, 0.6, 0.8, 1.0):
+        p.tick(now, lambda vk: True)
+    assert fired == ["dim", "dim"]  # at 0.5 and 0.8
+
+    p, fired = presses()
+    entry = {"vk": 0x7C, "once": {"uid": "step", "repeats": True}, "double": DOUBLE, "then": []}
+    p.pressed(1, entry, 0.0)
+    for now in (0.5, 0.8, 1.1):
+        p.tick(now, lambda vk: True)
+    p.tick(1.2, lambda vk: False)
+    p.tick(2.0, lambda vk: False)
+    assert fired == ["step", "step", "step"] and not p.active  # no single press after letting go
+
+
+class FakeUser32:
+    def __init__(self):
+        self.registered = {}
+
+    def RegisterHotKey(self, hwnd, reg_id, mods, vk):  # noqa: N802
+        self.registered[reg_id] = (mods, vk)
+        return 1
+
+    def UnregisterHotKey(self, hwnd, reg_id):  # noqa: N802
+        self.registered.pop(reg_id, None)
+
+    def SetTimer(self, *args):  # noqa: N802
+        return 7
+
+    def KillTimer(self, *args):  # noqa: N802
+        pass
+
+
+def test_a_sequence_holds_its_second_keys_only_while_it_waits(monkeypatch):
+    user32 = FakeUser32()
+    monkeypatch.setattr(desktop_hotkeys, "_user32", user32, raising=False)  # off Windows there is none
+    clock = [100.0]
+    monkeypatch.setattr(desktop_hotkeys.time, "monotonic", lambda: clock[0])
+    listener = desktop_hotkeys.HotkeyListener(0)
+    fired = []
+    listener._fire = lambda hk: fired.append(hk["uid"])
+    second = {"vk": 0x31, "mods": 0, "label": "1", "hotkey": {"uid": "one", "name": "Lamp", "does": "Toggle"}}
+    listener._registered = {1: {"vk": 0x4C, "mods": 3, "label": "Ctrl+Alt+L", "then": [second]}}
+
+    listener._pressed(1)
+    assert set(user32.registered) == {desktop_hotkeys._THEN_IDS, desktop_hotkeys._ESCAPE_ID}
+    listener._pressed(desktop_hotkeys._THEN_IDS)
+    assert fired == ["one"] and user32.registered == {} and listener._sequence is None
+
+    listener._pressed(1)
+    listener._pressed(desktop_hotkeys._ESCAPE_ID)  # cancelled
+    assert fired == ["one"] and user32.registered == {}
+
+    listener._pressed(1)
+    clock[0] += hotkeys.SEQUENCE_SECONDS
+    monkeypatch.setattr(desktop_hotkeys, "_is_down", lambda vk: False)
+    listener._tick()  # ran out
+    assert user32.registered == {} and listener._sequence is None and not listener._ticking

@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { actionOf, choiceOf, choicesFor, DEFAULT_PARAMS, keyCaps, keysOf, type Abilities } from './keys';
+import {
+	actionOf,
+	choiceOf,
+	choicesFor,
+	DEFAULT_PARAMS,
+	keyCaps,
+	keysOf,
+	parseTrigger,
+	triggerText,
+	type Abilities
+} from './keys';
 
 const none = { ctrlKey: false, altKey: false, shiftKey: false, metaKey: false };
 
@@ -19,6 +29,14 @@ describe('recording keys', () => {
 	it('splits keys into caps', () => {
 		expect(keyCaps('Ctrl+Alt+L')).toEqual(['Ctrl', 'Alt', 'L']);
 		expect(keyCaps('Volume Up')).toEqual(['Volume Up']);
+	});
+
+	it('takes apart how the keys are pressed, and puts it back', () => {
+		for (const text of ['Ctrl+Alt+L', 'F13 (double)', 'F13 (long)', 'Ctrl+Alt+L, then 1', 'Ctrl+,, then ,']) {
+			expect(triggerText(parseTrigger(text))).toBe(text);
+		}
+		expect(parseTrigger('F13 (long)')).toEqual({ keys: 'F13', press: 'long', then: '' });
+		expect(parseTrigger('Ctrl+,, then ,')).toEqual({ keys: 'Ctrl+,', press: 'then', then: ',' });
 	});
 });
 

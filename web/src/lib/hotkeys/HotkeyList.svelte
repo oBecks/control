@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { ChevronRight } from '@lucide/svelte';
 	import type { Hotkey } from '$lib/types';
-	import { keyCaps } from './keys';
+	import TriggerCaps from './TriggerCaps.svelte';
 
 	interface Props {
 		list: Hotkey[];
@@ -17,9 +17,7 @@
 	{#each list as h (h.uid)}
 		<li>
 			<button type="button" class="row" onclick={() => onopen(h.uid)}>
-				<span class="caps">
-					{#each keyCaps(h.keys) as k, i (i)}<kbd>{k}</kbd>{/each}
-				</span>
+				<TriggerCaps keys={h.keys} />
 				<span class="text">
 					<span class="does">{showTarget ? `${h.target_name}: ${h.action_label}` : h.action_label}</span>
 					{#if h.status === 'taken'}
@@ -58,24 +56,6 @@
 	}
 	.row:hover {
 		background: var(--surface-2);
-	}
-	.caps {
-		display: flex;
-		flex-shrink: 0;
-		gap: 3px;
-	}
-	kbd {
-		min-inline-size: 26px;
-		padding: 2px 6px;
-		border-radius: var(--r-sm);
-		border: 1px solid var(--border);
-		border-block-end-width: 2px;
-		background: var(--surface);
-		color: var(--text);
-		font-family: inherit;
-		font-size: var(--fs-xs);
-		font-weight: var(--fw-bold);
-		text-align: center;
 	}
 	.text {
 		display: flex;

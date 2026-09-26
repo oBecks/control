@@ -230,19 +230,28 @@ def pickable_keys():
 class CheckIn(BaseModel):
     keys: str
     uid: str | None = Field(None, description="the Hotkey being edited, whose own keys are fine")
+    action: dict | None = Field(None, description="what it will do, if known: a long press can't share "
+                                                  "keys with a single press that repeats")
 
 
-def _keys_problem(r: Registry, keys: hotkeys.Keys, uid: str | None) -> str | None:
-    if p := hotkeys.problem(keys):
+def _keys_problem(r: Registry, trigger: hotkeys.Trigger, uid: str | None, repeats: bool = False) -> str | None:
+    if p := hotkeys.problem(trigger):
         return p
-    own = next((hk for hk in r.hotkeys() if hk.keys.casefold() == keys.label.casefold()), None)
-    if own and own.uid != uid:
-        other = _out(r, own)
-        return f"{keys.label} is already the Hotkey for {other.target_name} ({other.action_label})"
-    if own is None:
-        from ..desktop import hotkeys as desktop_hotkeys
+    others = [hk for hk in r.hotkeys() if hk.uid != uid]
+    parsed = [(hotkeys.parse_trigger(hk.keys), hotkeys.repeats(hk.action)) for hk in others]
+    if clash := hotkeys.clash(trigger, repeats, parsed):
+        same = next((hk for hk, (t, _) in zip(others, parsed, strict=True)
+                     if t.label.casefold() == trigger.label.casefold()), None)
+        if same:
+            other = _out(r, same)
+            return f"{trigger.label} is already the Hotkey for {other.target_name} ({other.action_label})"
+        return clash[0].upper() + clash[1:]
+    from ..desktop import hotkeys as desktop_hotkeys
 
-        if desktop_hotkeys.can_register(keys) is False:
+    # Keys Control registers already (this Hotkey's, or another press of them) are Control's.
+    mine = {hotkeys.parse_trigger(hk.keys).keys for hk in r.hotkeys()}
+    for keys in (trigger.keys, trigger.then):
+        if keys and keys not in mine and desktop_hotkeys.can_register(keys) is False:
             return f"Another app uses {keys.label}"
     return None
 
@@ -252,10 +261,12 @@ def check_keys(body: CheckIn, request: Request, r: Registry = Depends(registry))
     """Whether keys can be a Hotkey: `problem` says why not, `warning` what they'd take from other apps."""
     _local_only(request)
     try:
-        keys = hotkeys.parse(body.keys)
+        trigger = hotkeys.parse_trigger(body.keys)
     except ValueError as exc:
         return {"keys": body.keys, "problem": str(exc), "warning": None}
-    return {"keys": keys.label, "problem": _keys_problem(r, keys, body.uid), "warning": hotkeys.warning(keys)}
+    repeats = hotkeys.repeats(body.action or {})
+    return {"keys": trigger.label, "problem": _keys_problem(r, trigger, body.uid, repeats),
+            "warning": hotkeys.warning(trigger)}
 
 
 # --- The Desktop App's listener ------------------------------------------------------
@@ -267,13 +278,28 @@ def watch(request: Request, revision: int = 0, recording: bool = False, r: Regis
     starts or ends), else after WATCH_SECONDS. While recording, it's told to register nothing."""
     _local_only(request)
     listener.watch(revision, recording, WATCH_SECONDS)
-    registered = []
-    if not listener.recording:
-        for hk in r.hotkeys():
-            keys = hotkeys.parse(hk.keys)
-            registered.append({"uid": hk.uid, "vk": keys.key.vk, "mods": keys.mod_flags,
-                               "repeats": hotkeys.repeats(hk.action), "name": _out(r, hk).target_name})
-    return {"revision": listener.revision, "recording": listener.recording, "hotkeys": registered}
+    return {"revision": listener.revision, "recording": listener.recording,
+            "keys": [] if listener.recording else _registrations(r)}
+
+
+def _keys_out(keys: hotkeys.Keys) -> dict:
+    return {"vk": keys.key.vk, "mods": keys.mod_flags, "label": keys.label}
+
+
+def _registrations(r: Registry) -> list[dict]:
+    """What the listener registers: one entry per keys, with the Hotkey for each way of pressing
+    them (once, double, long) or the sequences they start (`then`, each with its second keys)."""
+    entries: dict[hotkeys.Keys, dict] = {}
+    for hk in r.hotkeys():
+        trigger = hotkeys.parse_trigger(hk.keys)
+        out = _out(r, hk)
+        about = {"uid": hk.uid, "repeats": out.repeats, "name": out.target_name, "does": out.action_label}
+        entry = entries.setdefault(trigger.keys, _keys_out(trigger.keys) | {"then": []})
+        if trigger.then:
+            entry["then"].append(_keys_out(trigger.then) | {"hotkey": about})
+        else:
+            entry[trigger.press] = about
+    return list(entries.values())
 
 
 class RegisteredIn(BaseModel):
@@ -309,18 +335,18 @@ class HotkeyIn(BaseModel):
     by_assistant: bool = Field(False, description="made by the Assistant, so the app can say so")
 
 
-def _checked_keys(r: Registry, text: str, uid: str | None) -> str:
-    keys = hotkeys.parse(text)
-    if p := _keys_problem(r, keys, uid):
+def _checked_keys(r: Registry, text: str, uid: str | None, action: dict) -> str:
+    trigger = hotkeys.parse_trigger(text)
+    if p := _keys_problem(r, trigger, uid, hotkeys.repeats(action)):
         raise ValueError(p)
-    return keys.label
+    return trigger.label
 
 
 @router.post("", response_model=HotkeyOut, status_code=201)
 def add_hotkey(body: HotkeyIn, request: Request, r: Registry = Depends(registry)):
     _local_only(request)
-    keys = _checked_keys(r, body.keys, None)
     action = check_action(r, target(r, body.target), body.action)
+    keys = _checked_keys(r, body.keys, None, action)
     uid = r.add_hotkey(keys, body.target, action, "assistant" if body.by_assistant else "user")
     listener.wait_registered(listener.bump())
     return _out(r, r.get_hotkey(uid))
@@ -336,12 +362,13 @@ class HotkeyPatch(BaseModel):
 def patch_hotkey(uid: str, patch: HotkeyPatch, request: Request, r: Registry = Depends(registry)):
     _local_only(request)
     hk = r.get_hotkey(uid)
-    keys = _checked_keys(r, patch.keys, uid) if patch.keys is not None else None
     action = None
     if patch.target is not None or patch.action is not None:
         # A new target must be able to do the action, old or new.
         action = check_action(r, target(r, patch.target or hk.target), patch.action or hk.action)
-    r.update_hotkey(uid, keys=keys, target=patch.target, action=action)
+    # Checked again even when they stay: a new action may repeat, which a long press on them rules out.
+    keys = _checked_keys(r, patch.keys if patch.keys is not None else hk.keys, uid, action or hk.action)
+    r.update_hotkey(uid, keys=keys if patch.keys is not None else None, target=patch.target, action=action)
     listener.wait_registered(listener.bump())
     return _out(r, r.get_hotkey(uid))
 

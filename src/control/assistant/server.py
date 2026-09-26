@@ -467,7 +467,11 @@ def create_server(engine: Engine) -> MCPServer:
         - set: any of brightness, color (#RRGGBB), kelvin, mode, temperature, fan
         - press: one of a remote's or Streamer's buttons (`button`, e.g. "Volume +"); holding repeats
         - open_app: a Streamer's app (`app`, e.g. "Netflix")
-        Keys that type text need Ctrl, Alt or Win. The keys then reach only Control."""
+        Keys that type text need Ctrl, Alt or Win. The keys then reach only Control.
+        The same keys can also have a double press ("Ctrl+Alt+L (double)") and a long press
+        ("Ctrl+Alt+L (long)", held half a second); their single press then waits a moment for a
+        second press. A sequence ("Ctrl+Alt+L, then 1") takes a second key within 2 seconds, which may
+        type text, and the first keys then start only sequences."""
         d = controllable(lookup(device))
         action_body = hotkey_action(d, action, step, button, app,
                                     {"brightness": brightness, "kelvin": kelvin, "mode": mode,
@@ -482,9 +486,10 @@ def create_server(engine: Engine) -> MCPServer:
 
     @server.tool(title="Delete a Hotkey", annotations=DELETE)
     def delete_hotkey(keys: str) -> dict:
-        """Delete a Hotkey, by its keys (e.g. "Ctrl+Alt+L"). The keys go back to other apps."""
+        """Delete a Hotkey, by its keys (e.g. "Ctrl+Alt+L", "F13 (double)", "Ctrl+Alt+L, then 1").
+        The keys go back to other apps."""
         try:
-            label = hotkeys.parse(keys).label
+            label = hotkeys.parse_trigger(keys).label
         except ValueError as exc:
             raise ToolError(str(exc)) from None
         found = [h for h in engine.call("GET", "/hotkeys")["hotkeys"] if h["keys"].casefold() == label.casefold()]

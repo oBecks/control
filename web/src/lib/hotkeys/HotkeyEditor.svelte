@@ -1,9 +1,11 @@
 <script lang="ts">
 	// Make or change a Hotkey: its keys, the Device or Group, and what it does to it.
 	import { Trash2, X } from '@lucide/svelte';
+	import { api } from '$lib/api';
 	import { home } from '$lib/home.svelte';
 	import type { Hotkey, KeysCheck } from '$lib/types';
 	import Button from '$lib/ui/Button.svelte';
+	import Segmented from '$lib/ui/Segmented.svelte';
 	import { hotkeys } from './hotkeys.svelte';
 	import KeyRecorder from './KeyRecorder.svelte';
 	import {
@@ -11,10 +13,13 @@
 		choiceOf,
 		choicesFor,
 		DEFAULT_PARAMS,
+		parseTrigger,
 		stepOf,
+		triggerText,
 		type Abilities,
 		type Choice,
-		type Params
+		type Params,
+		type Press
 	} from './keys';
 
 	interface Props {
@@ -30,8 +35,12 @@
 	// The form starts from the Hotkey once; polling hands over fresh objects that mustn't reset it.
 	const initial = (() => ({ hotkey, preset }))();
 	const start = initial.hotkey ? choiceOf(initial.hotkey.action) : { choice: 'toggle' as Choice, params: {} };
-	let keys = $state(initial.hotkey?.keys ?? '');
+	const trigger = parseTrigger(initial.hotkey?.keys ?? '');
+	let keys = $state(trigger.keys);
+	let press = $state<Press>(trigger.press);
+	let second = $state(trigger.then);
 	let check = $state<KeysCheck | null>(null);
+	let checking = $state(false);
 	let target = $state(initial.hotkey?.target ?? initial.preset ?? '');
 	let choice = $state<Choice>(start.choice);
 	let params = $state<Params>({ ...DEFAULT_PARAMS, ...start.params });
@@ -93,6 +102,58 @@
 
 	const choices = $derived(choicesFor(abilities));
 	const step = $derived(stepOf(choice));
+	const action = $derived(actionOf(choice, params));
+
+	const PRESSES: { value: Press; label: string }[] = [
+		{ value: 'once', label: 'Once' },
+		{ value: 'double', label: 'Twice' },
+		{ value: 'long', label: 'Hold' },
+		{ value: 'then', label: 'Then a key' }
+	];
+	const PRESS_HINTS: Record<Press, string> = {
+		once: '',
+		double: 'Press them twice quickly. If one press of these keys also does something, it waits a moment first.',
+		long: 'Hold them for half a second.',
+		then: 'Press the keys, then the second key within 2 seconds. A small window near the tray lists the choices.'
+	};
+	/** Holding the keys repeats steps and presses, except after two presses or in a sequence. */
+	const holdRepeats = $derived(press === 'once' || press === 'long');
+
+	/** The keys as a whole, e.g. "Ctrl+Alt+L, then 1"; empty until there's enough to check. */
+	const text = $derived(keys && (press !== 'then' || second) ? triggerText({ keys, press, then: second }) : '');
+
+	// The Engine checks the keys, with what they'll do: a long press can't share keys with a single
+	// press that repeats. A newer check wins over an older one still on its way.
+	let checks = 0;
+	$effect(() => {
+		const asked = text;
+		const does = target ? action : undefined;
+		const n = ++checks;
+		if (!asked) {
+			check = null;
+			checking = false;
+			return;
+		}
+		checking = true;
+		api
+			.checkKeys(asked, hotkey?.uid, does)
+			.then((c) => {
+				if (n !== checks) return;
+				check = c;
+				if (!c.problem) {
+					// Shown the way Control writes them ("KeyL" becomes "L").
+					const t = parseTrigger(c.keys);
+					if (t.keys !== keys) keys = t.keys;
+					if (t.then !== second) second = t.then;
+				}
+			})
+			.catch((e) => {
+				if (n === checks) check = { keys: asked, problem: e instanceof Error ? e.message : String(e), warning: null };
+			})
+			.finally(() => {
+				if (n === checks) checking = false;
+			});
+	});
 
 	// Another target may not offer the choice: fall back to its first one.
 	$effect(() => {
@@ -112,8 +173,10 @@
 	}
 
 	const ready = $derived(
-		!!keys &&
-			!check?.problem &&
+		!!text &&
+			!checking &&
+			!!check &&
+			!check.problem &&
 			!!target &&
 			choices.some((c) => c.value === choice) &&
 			(choice !== 'press' || !!params.button) &&
@@ -123,7 +186,7 @@
 	async function save(e: SubmitEvent) {
 		e.preventDefault();
 		saving = true;
-		if (await hotkeys.save(hotkey?.uid ?? null, keys, target, actionOf(choice, params))) onclose();
+		if (await hotkeys.save(hotkey?.uid ?? null, text, target, action)) onclose();
 		saving = false;
 	}
 
@@ -143,11 +206,25 @@
 
 	<div class="field">
 		<span>Keys</span>
-		<KeyRecorder bind:keys bind:check uid={hotkey?.uid} />
+		<KeyRecorder {keys} onrecord={(k) => (keys = k)} />
 		<p class="hint">
 			They work in any app, and then only for Control. Spare keys are best: F13–F24, media keys, or Ctrl+Alt with a
 			letter.
 		</p>
+	</div>
+
+	<div class="field">
+		<span>Pressed</span>
+		<Segmented label="Pressed" options={PRESSES} bind:value={press} />
+		{#if PRESS_HINTS[press]}<p class="hint">{PRESS_HINTS[press]}</p>{/if}
+		{#if press === 'then'}
+			<KeyRecorder keys={second} second onrecord={(k) => (second = k)} />
+		{/if}
+		{#if check?.problem}
+			<p class="problem">{check.problem}</p>
+		{:else if check?.warning}
+			<p class="hint">{check.warning}</p>
+		{/if}
 	</div>
 
 	{#if initial.preset && !hotkey}
@@ -188,7 +265,7 @@
 					{step.unit}
 				</span>
 			</label>
-			<p class="hint">Hold the keys to keep going.</p>
+			{#if holdRepeats}<p class="hint">Hold the keys to keep going.</p>{/if}
 		{:else if choice === 'brightness'}
 			<label class="field inline">
 				<span>Brightness</span>
@@ -223,7 +300,7 @@
 					{#each abilities.buttons as b (b.name)}<option value={b.name}>{b.label}</option>{/each}
 				</select>
 			</label>
-			<p class="hint">Hold the keys to keep pressing it.</p>
+			{#if holdRepeats}<p class="hint">Hold the keys to keep pressing it.</p>{/if}
 		{:else if choice === 'open_app'}
 			<label class="field">
 				<span>App</span>
@@ -346,8 +423,13 @@
 		font-size: var(--fs-sm);
 		color: var(--text-2);
 	}
-	.field .hint {
+	.field .hint,
+	.problem {
 		margin: 0;
+		font-size: var(--fs-sm);
+	}
+	.problem {
+		color: var(--danger);
 	}
 	.actions {
 		display: flex;
