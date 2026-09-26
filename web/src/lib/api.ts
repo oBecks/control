@@ -152,7 +152,9 @@ export const api = {
 	// Hotkeys (ADR 0007): set up only on the computer running Control
 	hotkeys: () => call<HotkeyList>('GET', '/hotkeys'),
 	pickableKeys: () => call<PickableKey[]>('GET', '/hotkeys/keys'),
-	checkKeys: (keys: string, uid?: string) => call<KeysCheck>('POST', '/hotkeys/check', { keys, uid }),
+	/** With the action, it also says whether a long press clashes with a single press that repeats. */
+	checkKeys: (keys: string, uid?: string, action?: HotkeyAction) =>
+		call<KeysCheck>('POST', '/hotkeys/check', { keys, uid, action }),
 	addHotkey: (keys: string, target: string, action: HotkeyAction) =>
 		call<Hotkey>('POST', '/hotkeys', { keys, target, action }),
 	patchHotkey: (uid: string, patch: { keys?: string; target?: string; action?: HotkeyAction }) =>

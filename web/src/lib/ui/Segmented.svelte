@@ -17,6 +17,7 @@
 <div class="seg" role="radiogroup" aria-label={label}>
 	{#each options as o (o.value)}
 		<button
+			type="button"
 			role="radio"
 			aria-checked={value === o.value}
 			class:active={value === o.value}

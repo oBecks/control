@@ -12,10 +12,11 @@ The Desktop App's listener (`desktop/hotkeys.py`) long-polls the Engine (`GET /a
 
 ## How the richer presses work without a hook
 
-- **Double press**: two notices for the same Hotkey within about 0.4 s.
-- **Hold to dim**: Windows repeats the notice while the key is held. It stops when the key is released.
-- **Long press**: after the first notice, Control checks that one key's up/down state (`GetAsyncKeyState`) until it's released.
-- **Sequences** (Ctrl+Alt+L, then 1): after the first combination, Control registers the follow-up keys for about 2 seconds, then releases them. Typing is only affected during that window.
+A Hotkey's keys are stored as text that says how they're pressed: `Ctrl+Alt+L`, `Ctrl+Alt+L (double)`, `Ctrl+Alt+L (long)`, or `Ctrl+Alt+L, then 1`. The listener gets one entry per keys from `/watch`, with the Hotkey for each way of pressing them.
+
+- **Hold to dim**: keys pressed only once are registered with Windows' repeat, which repeats the notice while the key is held and stops when it's released.
+- **Double and long press**: keys that also have one are registered without repeat. After the notice, Control checks that one key's up/down state (`GetAsyncKeyState`) every 30 ms until it's released (`Presses` in `desktop/hotkeys.py`). Held 0.5 s is a long press, fired while still held; down again within 0.4 s of coming up is a double press; otherwise it's a single press, which then waits those 0.4 s only when the keys also have a double press. Held keys repeat a long press that steps or presses, or with no long press a single press that does. So a long press can't share keys with a single press that repeats.
+- **Sequences** (Ctrl+Alt+L, then 1): after the first keys, Control registers each second key, and Esc, for 2 seconds, then releases them, and the overlay lists the choices. Typing is only affected during that window, so the second key may be a plain letter or digit. The first keys then start only sequences: they can't be a Hotkey of their own, and a second key can't be another Hotkey's keys.
 
 ## Consequences
 

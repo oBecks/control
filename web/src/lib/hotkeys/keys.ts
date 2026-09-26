@@ -43,6 +43,34 @@ export function keyCaps(keys: string): string[] {
 	return keys.split('+').map((k) => k.trim());
 }
 
+// --- How the keys are pressed ------------------------------------------------------------
+
+/** Once, twice, held (long), or followed by a second key (a sequence). */
+export type Press = 'once' | 'double' | 'long' | 'then';
+
+export interface Trigger {
+	/** The keys, or a sequence's first keys, e.g. "Ctrl+Alt+L". */
+	keys: string;
+	press: Press;
+	/** A sequence's second keys. */
+	then: string;
+}
+
+/** A Hotkey's keys as Control writes them ("Ctrl+Alt+L (double)", "Ctrl+Alt+L, then 1"), taken apart. */
+export function parseTrigger(text: string): Trigger {
+	const sequence = text.match(/^(.+?), then (.+)$/);
+	if (sequence) return { keys: sequence[1], press: 'then', then: sequence[2] };
+	const press = text.match(/^(.+) \((double|long)\)$/);
+	if (press) return { keys: press[1], press: press[2] as Press, then: '' };
+	return { keys: text, press: 'once', then: '' };
+}
+
+/** The other way round, for the Engine to check and keep. */
+export function triggerText(t: Trigger): string {
+	if (t.press === 'then') return `${t.keys}, then ${t.then}`;
+	return t.press === 'once' ? t.keys : `${t.keys} (${t.press})`;
+}
+
 // --- What a Hotkey does ----------------------------------------------------------------
 
 export type Choice =

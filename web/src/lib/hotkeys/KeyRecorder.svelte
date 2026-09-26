@@ -1,22 +1,22 @@
 <script lang="ts">
-	// Records a Hotkey's keys by pressing them. While recording, the Desktop App lets go of every
-	// Hotkey, so pressing an existing one lands here instead of firing. Keys another app holds never
-	// reach the Window: those can be picked from a list instead.
+	// Records keys by pressing them: a Hotkey's, or a sequence's second key. While recording, the
+	// Desktop App lets go of every Hotkey, so pressing an existing one lands here instead of firing.
+	// Keys another app holds never reach the Window: those can be picked from a list instead.
 	import { api } from '$lib/api';
-	import type { KeysCheck, PickableKey } from '$lib/types';
+	import type { PickableKey } from '$lib/types';
 	import Button from '$lib/ui/Button.svelte';
 	import { keyCaps, keysOf, modifiersOf } from './keys';
 
 	interface Props {
-		/** The keys as Control writes them, e.g. "Ctrl+Alt+L". */
+		/** The keys to show, as Control writes them, e.g. "Ctrl+Alt+L". */
 		keys: string;
-		/** Whether they can be a Hotkey. */
-		check: KeysCheck | null;
-		/** The Hotkey being edited, whose own keys are fine. */
-		uid?: string;
+		/** Keys just pressed or picked, e.g. "Ctrl+Alt+KeyL"; the Engine writes them properly. */
+		onrecord: (keys: string) => void;
+		/** A sequence's second key: a plain key is fine, so the list offers one. */
+		second?: boolean;
 	}
 
-	let { keys = $bindable(), check = $bindable(), uid }: Props = $props();
+	let { keys, onrecord, second = false }: Props = $props();
 
 	const MODIFIERS = ['Ctrl', 'Alt', 'Shift', 'Win'];
 	const GROUPS: [PickableKey['group'], string][] = [
@@ -32,8 +32,10 @@
 	let held = $state<string[]>([]);
 	let picking = $state(false);
 	let pickable = $state<PickableKey[]>([]);
-	let pickMods = $state<string[]>(['Ctrl', 'Alt']);
-	let pickKey = $state('F13');
+	// The list starts from a usual choice: a digit for a sequence's second key.
+	const first = (() => (second ? { mods: [], key: 'Digit1' } : { mods: ['Ctrl', 'Alt'], key: 'F13' }))();
+	let pickMods = $state<string[]>(first.mods);
+	let pickKey = $state(first.key);
 	let timer: ReturnType<typeof setTimeout> | undefined;
 
 	function start() {
@@ -53,15 +55,6 @@
 	// Leaving the editor mid-recording gives the Hotkeys back.
 	$effect(() => stop);
 
-	async function take(pressed: string) {
-		try {
-			check = await api.checkKeys(pressed, uid);
-			keys = check.keys;
-		} catch (e) {
-			check = { keys: pressed, problem: e instanceof Error ? e.message : String(e), warning: null };
-		}
-	}
-
 	function onkeydown(e: KeyboardEvent) {
 		if (!recording) return;
 		e.preventDefault();
@@ -72,7 +65,7 @@
 		const pressed = keysOf(e);
 		if (!pressed) return;
 		stop();
-		take(pressed);
+		onrecord(pressed);
 	}
 
 	function onkeyup(e: KeyboardEvent) {
@@ -90,7 +83,7 @@
 
 	function usePicked() {
 		const mods = MODIFIERS.filter((m) => pickMods.includes(m));
-		take([...mods, pickKey].join('+'));
+		onrecord([...mods, pickKey].join('+'));
 	}
 </script>
 
@@ -99,7 +92,9 @@
 <div class="recorder">
 	<div class="keys" class:recording aria-live="polite">
 		{#if recording}
-			<span class="prompt">{held.length ? `${held.join(' + ')} + …` : 'Press the keys…'}</span>
+			<span class="prompt">
+				{held.length ? `${held.join(' + ')} + …` : second ? 'Press the second key…' : 'Press the keys…'}
+			</span>
 		{:else if keys}
 			<span class="caps">
 				{#each keyCaps(keys) as k, i (i)}<kbd>{k}</kbd>{/each}
@@ -111,12 +106,6 @@
 			{recording ? 'Cancel' : keys ? 'Change' : 'Record keys'}
 		</Button>
 	</div>
-
-	{#if check?.problem}
-		<p class="problem">{check.problem}</p>
-	{:else if check?.warning}
-		<p class="hint">{check.warning}</p>
-	{/if}
 
 	<button type="button" class="link" onclick={openPicker} aria-expanded={picking}>
 		{picking ? 'Hide the key list' : 'Key not showing up? Pick it from a list'}
@@ -193,16 +182,6 @@
 		font-size: var(--fs-sm);
 		font-weight: var(--fw-bold);
 		text-align: center;
-	}
-	p {
-		margin: 0;
-		font-size: var(--fs-sm);
-	}
-	.problem {
-		color: var(--danger);
-	}
-	.hint {
-		color: var(--text-2);
 	}
 	.link {
 		align-self: flex-start;
