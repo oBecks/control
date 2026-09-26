@@ -151,8 +151,65 @@ def test_read_tools_are_marked_read_only(home):
 
     tools = {t.name: t.annotations for t in anyio.run(go)}
     assert {n for n, a in tools.items() if a.read_only_hint} == {"list_devices", "get_device"}
-    # Pressing a button again (e.g. a Power Toggle) undoes it.
-    assert {n for n, a in tools.items() if a.idempotent_hint} == {"set_power", "set_light", "set_climate"}
+    # Pressing a button again (e.g. a Power Toggle) undoes it; creating a Group twice makes two.
+    assert {n for n, a in tools.items() if a.idempotent_hint} == {
+        "set_power", "set_light", "set_climate", "edit_group", "delete_group"}
+    assert {n for n, a in tools.items() if a.destructive_hint} == {"delete_group"}
+
+
+# --- Groups --------------------------------------------------------------------------
+
+
+def test_create_and_control_a_group(home):
+    srv, light, tx = home
+    made = ok(srv, "create_group", name="Evening", devices=["yeelight", "AC"])
+    assert made["members"] == ["Yeelight color", "AC"] and made["controls"] == "power"
+    assert ok(srv, "list_devices")["groups"] == [
+        {"name": "Evening", "uid": made["uid"], "group": True, "members": ["Yeelight color", "AC"]}]
+
+    out = ok(srv, "set_power", device="evening", on=True)
+    assert out["power"] == "on" and out["member_states"] == {"Yeelight color": "on", "AC": "on"}
+    assert light.state.on and tx.sent
+    assert "isn't a light" in error(srv, "set_light", device="Evening", brightness=10)
+    assert "is a Group" in error(srv, "press_button", device="Evening", button="Power")
+
+
+def test_a_group_of_lights_is_set_like_a_light(home, client):  # noqa: F811
+    srv, light, _ = home
+    ok(srv, "create_group", name="Lights", devices=["Yeelight color"])
+    out = ok(srv, "set_light", device="Lights", brightness=40)
+    assert (out["power"], out["brightness"]) == ("on", 40) and out["group"] is True
+    assert client.get("/api/groups").json()[0]["made_by"] == "assistant"
+
+
+def test_some_on_is_said_plainly(home, client):  # noqa: F811
+    srv, light, _ = home
+    r = Registry()
+    r.add_remote("Fan", Category.CLIMATE, "broadlink:aa", "learned",
+                 {"format": "buttons", "kind": "fan", "buttons": {"power_on": "AAAA", "power_off": "AAAB"}})
+    r.close()
+    ok(srv, "create_group", name="Bedroom", devices=["Yeelight color", "Fan"])
+    ok(srv, "set_power", device="Fan", on=True)
+    assert ok(srv, "get_device", device="Bedroom")["power"] == "some on (1 of 2)"
+
+
+def test_a_power_toggle_cant_join_a_group(home):
+    srv, *_ = home
+    assert "only has a Power Toggle" in error(srv, "create_group", name="Media", devices=["Living room TV"])
+
+
+def test_edit_and_delete_a_group(home):
+    srv, *_ = home
+    ok(srv, "create_group", name="Evening", devices=["Yeelight color"])
+    out = ok(srv, "edit_group", group="evening", name="Night", add=["AC"])
+    assert (out["name"], out["members"]) == ("Night", ["Yeelight color", "AC"])
+    out = ok(srv, "edit_group", group="Night", remove=["Yeelight color"])
+    assert out["members"] == ["AC"]
+    assert "leave 'Night' empty" in error(srv, "edit_group", group="Night", remove=["AC"])
+    assert "Say what to change" in error(srv, "edit_group", group="Night")
+    assert ok(srv, "delete_group", group="Night") == {"deleted": "Night"}
+    assert "No Group called 'Night'" in error(srv, "delete_group", group="Night")
+    assert "groups" not in ok(srv, "list_devices")
 
 
 def test_starts_control_when_no_engine_answers():

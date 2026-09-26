@@ -62,6 +62,19 @@ CREATE TABLE IF NOT EXISTS approved_browsers (
     approved_at  REAL NOT NULL,
     last_seen    REAL NOT NULL
 );
+-- Groups: a named set of Devices controlled as one (network or Remote Devices, by uid).
+CREATE TABLE IF NOT EXISTS groups (
+    uid       TEXT PRIMARY KEY,
+    name      TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    made_by   TEXT NOT NULL DEFAULT 'user',   -- 'user' or 'assistant'
+    created   REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS group_members (
+    group_uid   TEXT NOT NULL,
+    device_uid  TEXT NOT NULL,
+    position    INTEGER NOT NULL,
+    PRIMARY KEY (group_uid, device_uid)
+);
 """
 
 
@@ -109,6 +122,14 @@ class RemoteDevice:
 
 
 @dataclass
+class Group:
+    uid: str
+    name: str
+    members: list[str]  # device uids, in the order the user picked them
+    made_by: str  # "user" or "assistant"
+
+
+@dataclass
 class ApprovedBrowser:
     id: str
     name: str
@@ -127,6 +148,7 @@ class Registry:
     def __init__(self, path: Path | str | None = None):
         path = Path(path) if path else default_db_path()
         path.parent.mkdir(parents=True, exist_ok=True)
+        self.path = path
         # The API opens a Registry per request and may touch it from several worker threads.
         self._db = sqlite3.connect(path, check_same_thread=False)
         self._db.row_factory = sqlite3.Row
@@ -217,6 +239,7 @@ class Registry:
     def forget(self, uid: str) -> None:
         with self._db:
             self._db.execute("DELETE FROM devices WHERE uid = ?", (uid,))
+            self._leave_groups(uid)
 
     # --- Links ---------------------------------------------------------------
 
@@ -316,6 +339,61 @@ class Registry:
     def forget_remote(self, uid: str) -> None:
         with self._db:
             self._db.execute("DELETE FROM remote_devices WHERE uid = ?", (uid,))
+            self._leave_groups(uid)
+
+    # --- Groups --------------------------------------------------------------
+
+    def add_group(self, name: str, members: list[str], made_by: str = "user") -> str:
+        uid = f"group:{uuid.uuid4().hex[:12]}"
+        try:
+            with self._db:
+                self._db.execute(
+                    "INSERT INTO groups (uid, name, made_by, created) VALUES (?, ?, ?, ?)",
+                    (uid, name, made_by, time.time()),
+                )
+                self._set_members(uid, members)
+        except sqlite3.IntegrityError:
+            raise ValueError(f"a group named '{name}' already exists") from None
+        return uid
+
+    def groups(self) -> list[Group]:
+        rows = self._db.execute("SELECT * FROM groups ORDER BY created").fetchall()
+        return [self._to_group(r) for r in rows]
+
+    def get_group(self, uid: str) -> Group:
+        row = self._db.execute("SELECT * FROM groups WHERE uid = ?", (uid,)).fetchone()
+        if row is None:
+            raise LookupError(f"no group '{uid}'")
+        return self._to_group(row)
+
+    def update_group(self, uid: str, name: str | None = None, members: list[str] | None = None) -> None:
+        self.get_group(uid)  # 404s early
+        try:
+            with self._db:
+                if name is not None:
+                    self._db.execute("UPDATE groups SET name = ? WHERE uid = ?", (name, uid))
+                if members is not None:
+                    self._set_members(uid, members)
+        except sqlite3.IntegrityError:
+            raise ValueError(f"a group named '{name}' already exists") from None
+
+    def forget_group(self, uid: str) -> None:
+        with self._db:
+            self._db.execute("DELETE FROM group_members WHERE group_uid = ?", (uid,))
+            if self._db.execute("DELETE FROM groups WHERE uid = ?", (uid,)).rowcount == 0:
+                raise LookupError(f"no group '{uid}'")
+
+    def _set_members(self, uid: str, members: list[str]) -> None:
+        self._db.execute("DELETE FROM group_members WHERE group_uid = ?", (uid,))
+        self._db.executemany(
+            "INSERT INTO group_members (group_uid, device_uid, position) VALUES (?, ?, ?)",
+            [(uid, m, i) for i, m in enumerate(dict.fromkeys(members))],
+        )
+
+    def _leave_groups(self, device_uid: str) -> None:
+        """A forgotten Device leaves its Groups; a Group left with nobody in it goes too."""
+        self._db.execute("DELETE FROM group_members WHERE device_uid = ?", (device_uid,))
+        self._db.execute("DELETE FROM groups WHERE uid NOT IN (SELECT group_uid FROM group_members)")
 
     # --- Settings ------------------------------------------------------------
 
@@ -362,6 +440,12 @@ class Registry:
                 raise LookupError(f"no approved browser '{browser_id}'")
 
     # --- Internals ---------------------------------------------------------
+
+    def _to_group(self, r: sqlite3.Row) -> Group:
+        members = self._db.execute(
+            "SELECT device_uid FROM group_members WHERE group_uid = ? ORDER BY position", (r["uid"],)
+        ).fetchall()
+        return Group(uid=r["uid"], name=r["name"], members=[m["device_uid"] for m in members], made_by=r["made_by"])
 
     def _to_browser(self, r: sqlite3.Row) -> ApprovedBrowser:
         return ApprovedBrowser(id=r["id"], name=r["name"], approved_at=r["approved_at"], last_seen=r["last_seen"])

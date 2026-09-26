@@ -3,6 +3,9 @@ import type { RGB } from './color';
 
 export type Control = 'light' | 'plug' | 'climate' | 'remote';
 
+/** A Group's control surface: a light's or an AC's when every member is one, otherwise on/off. */
+export type GroupControl = 'light' | 'climate' | 'power';
+
 export interface LightFeatures {
 	color: boolean;
 	color_temp: boolean;

@@ -3,6 +3,7 @@ import type {
 	ClimateFeatures,
 	ClimateState,
 	Control,
+	GroupControl,
 	LightFeatures,
 	LightState,
 	PlugState,
@@ -28,6 +29,21 @@ export interface Device {
 	source: string | null;
 	/** Remote Devices: uid of the Hub that sends their Signals. */
 	via: string | null;
+	/** Why it can't join a Group (e.g. only a Power Toggle); null if it can. */
+	group_problem: string | null;
+}
+
+/** A named set of Devices controlled as one. */
+export interface Group {
+	uid: string;
+	name: string;
+	/** Device uids, in the order the user picked them. */
+	members: string[];
+	/** light or climate when every member is one; otherwise on/off only. */
+	control: GroupControl;
+	/** The members' Category when they share one, otherwise "mixed". */
+	category: string;
+	made_by: 'user' | 'assistant';
 }
 
 export type DeviceState =
@@ -35,6 +51,20 @@ export type DeviceState =
 	| { control: 'plug'; features: Record<string, never>; state: PlugState }
 	| { control: 'climate'; features: ClimateFeatures; state: ClimateState; assumed: true }
 	| { control: 'remote'; features: RemoteFeatures; state: RemoteState; assumed: true };
+
+/** A Group's members merged into one reading: only what every member supports, on while any is on. */
+export type GroupState = (
+	| { control: 'light'; features: LightFeatures; state: LightState; assumed: boolean }
+	| { control: 'climate'; features: ClimateFeatures; state: ClimateState; assumed: true }
+	| { control: 'power'; features: Record<string, never>; state: PlugState; assumed: boolean }
+) & {
+	on_count: number;
+	total: number;
+	/** Each member's own reading, for its Tile. */
+	members: Record<string, DeviceState>;
+	/** Members that didn't answer, or refused the change. */
+	failed: Record<string, { reason: string; unreachable: boolean }>;
+};
 
 export interface ScanResult {
 	added: string[];
@@ -90,6 +120,15 @@ export const api = {
 		call<Device>('PATCH', `/devices/${enc(uid)}`, patch),
 	scan: () => call<ScanResult>('POST', '/scan'),
 	markAllSeen: () => call<void>('POST', '/devices/seen'),
+
+	// Groups
+	groups: () => call<Group[]>('GET', '/groups'),
+	addGroup: (name: string, members: string[]) => call<Group>('POST', '/groups', { name, members }),
+	patchGroup: (uid: string, patch: { name?: string; members?: string[] }) =>
+		call<Group>('PATCH', `/groups/${enc(uid)}`, patch),
+	deleteGroup: (uid: string) => call<void>('DELETE', `/groups/${enc(uid)}`),
+	groupState: (uid: string) => call<GroupState>('GET', `/groups/${enc(uid)}/state`),
+	setGroupState: (uid: string, change: StateChange) => call<GroupState>('POST', `/groups/${enc(uid)}/state`, change),
 
 	// Remote Devices & the Code Set Finder
 	searchCodeSets: (brand: string, domain: LibraryDomain = 'climate') =>

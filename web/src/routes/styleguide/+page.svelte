@@ -13,6 +13,7 @@
 		Sun,
 		Sunrise,
 		DoorOpen,
+		Layers,
 		Monitor
 	} from '@lucide/svelte';
 	import type { Component } from 'svelte';
@@ -266,6 +267,16 @@
 		<div class="grid" style:--cols="repeat(auto-fill, minmax(var(--tile-min), 1fr))">
 			{#each devices as d (d.uid)}{@render tileFor(d)}{/each}
 		</div>
+		<h3 class="block-sub">Group Tiles</h3>
+		<p class="note">
+			A Group sits in the row at the top of Home. It glows while any member is on, says how many are on until all are,
+			and a tap turns everything off if any member is on, otherwise everything on.
+		</p>
+		<div class="grid" style:--cols="repeat(auto-fill, minmax(var(--tile-min), 1fr))">
+			<Tile name="Living room" status="2 of 3 on" icon={Lightbulb} on glow="rgb(255 169 87)" />
+			<Tile name="Evening" status="All on" icon={Layers} on glow="var(--accent)" assumed />
+			<Tile name="Bedroom" status="Off" icon={LightbulbOff} />
+		</div>
 	</section>
 
 	<!-- Components -->
@@ -427,6 +438,11 @@
 	}
 	.block > .note {
 		margin-block-end: var(--s-5);
+	}
+	.block-sub {
+		margin: var(--s-8) 0 0;
+		font-size: var(--fs-lg);
+		font-weight: var(--fw-bold);
 	}
 	.mini {
 		margin: 0 0 var(--s-2);

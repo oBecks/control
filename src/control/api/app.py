@@ -8,6 +8,8 @@ It also serves the built web UI. Listens on 127.0.0.1, and on the LAN only while
 import base64
 import mimetypes
 import os
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from dataclasses import asdict
 from pathlib import Path
 from typing import Literal
@@ -17,7 +19,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from .. import __version__
-from ..engine import code_set_finder, remote_buttons, signal_library
+from ..engine import code_set_finder, groups, remote_buttons, signal_library
 from ..engine.connect import (
     connect_buttons,
     connect_climate,
@@ -30,7 +32,7 @@ from ..engine.connect import (
 from ..engine.errors import DeviceUnreachable
 from ..engine.found_device import Category
 from ..engine.links import tuya_link
-from ..engine.registry import KnownDevice, Registry, RemoteDevice
+from ..engine.registry import Group, KnownDevice, Registry, RemoteDevice
 from ..engine.scan import DEFAULT_TIMEOUT, scan_and_remember
 from . import access, assistant, desktop
 from .deps import registry
@@ -77,13 +79,17 @@ class DeviceOut(BaseModel):
     note: str = Field("", description="setup hint, e.g. how to unlock a device")
     source: str | None = Field(None, description="remote devices: where the Signals came from")
     via: str | None = Field(None, description="remote devices: uid of the Hub that sends their Signals")
+    group_problem: str | None = Field(
+        None, description="why it can't join a Group (e.g. only a Power Toggle); null if it can"
+    )
 
 
 def _network_out(r: Registry, d: KnownDevice) -> DeviceOut:
+    control = control_kind(r, d)
     return DeviceOut(
-        uid=d.uid, name=d.name, category=d.category, kind="network", control=control_kind(r, d),
+        uid=d.uid, name=d.name, category=d.category, kind="network", control=control,
         brand=d.brand, model=d.model, ip=d.ip, readiness=d.readiness.value, online=d.online, is_new=d.is_new,
-        note=d.note,
+        note=d.note, group_problem=groups.power_problem(control),
     )
 
 
@@ -94,10 +100,11 @@ def _remote_control(d: RemoteDevice) -> str | None:
 
 
 def _remote_out(d: RemoteDevice) -> DeviceOut:
+    control = _remote_control(d)
     return DeviceOut(
-        uid=d.uid, name=d.name, category=d.category, kind="remote", control=_remote_control(d),
+        uid=d.uid, name=d.name, category=d.category, kind="remote", control=control,
         brand="", model="", ip=None, readiness="ready", online=True, is_new=False, source=d.source,
-        via=d.transmitter_uid,
+        via=d.transmitter_uid, group_problem=groups.power_problem(control, d.signals.get("buttons")),
     )
 
 
@@ -245,6 +252,151 @@ def get_state(uid: str, r: Registry = Depends(registry)):
 @app.post("/api/devices/{uid}/state")
 def set_state(uid: str, desired: StateIn, r: Registry = Depends(registry)):
     return _read_state(r, _device_out(r, uid), desired)
+
+
+# --- Groups ----------------------------------------------------------------
+
+
+class GroupOut(BaseModel):
+    uid: str
+    name: str
+    members: list[str] = Field(description="Device uids, in the order the user picked them")
+    control: Literal["light", "climate", "power"] = Field(
+        description="light or climate when every member is one; otherwise on/off only"
+    )
+    category: str = Field(description="the members' Category when they share one, otherwise mixed")
+    made_by: Literal["user", "assistant"]
+
+
+def _group_out(r: Registry, g: Group) -> GroupOut:
+    members = [_device_out(r, uid) for uid in g.members]
+    return GroupOut(
+        uid=g.uid, name=g.name, members=g.members, made_by=g.made_by,
+        control=groups.control_of([m.control for m in members]),
+        category=groups.category_of([m.category.value for m in members]),
+    )
+
+
+def _check_group(r: Registry, name: str | None, members: list[str] | None) -> None:
+    if name is not None:
+        if not name:
+            raise ValueError("give the group a name")
+        if any(d.name.casefold() == name.casefold() for d in list_devices(r)):
+            raise ValueError(f"a device is already called '{name}'; give the group another name")
+    if members is not None:
+        if not members:
+            raise ValueError("pick at least one device for the group")
+        for m in members:
+            out = _device_out(r, m)  # 404s for an unknown Device
+            if out.group_problem:
+                raise ValueError(f"'{out.name}' {out.group_problem}")
+
+
+@app.get("/api/groups", response_model=list[GroupOut])
+def list_groups(r: Registry = Depends(registry)):
+    return [_group_out(r, g) for g in r.groups()]
+
+
+class GroupIn(BaseModel):
+    name: str
+    members: list[str] = Field(description="Device uids")
+    by_assistant: bool = Field(False, description="made by the Assistant, so the app can say so")
+
+
+@app.post("/api/groups", response_model=GroupOut, status_code=201)
+def add_group(body: GroupIn, r: Registry = Depends(registry)):
+    name = body.name.strip()
+    _check_group(r, name, body.members)
+    uid = r.add_group(name, body.members, "assistant" if body.by_assistant else "user")
+    return _group_out(r, r.get_group(uid))
+
+
+@app.get("/api/groups/{uid}", response_model=GroupOut)
+def get_group(uid: str, r: Registry = Depends(registry)):
+    return _group_out(r, r.get_group(uid))
+
+
+class GroupPatch(BaseModel):
+    name: str | None = None
+    members: list[str] | None = Field(None, description="the full new list of Device uids")
+
+
+@app.patch("/api/groups/{uid}", response_model=GroupOut)
+def patch_group(uid: str, patch: GroupPatch, r: Registry = Depends(registry)):
+    r.get_group(uid)  # 404s early
+    name = patch.name.strip() if patch.name is not None else None
+    _check_group(r, name, patch.members)
+    r.update_group(uid, name=name, members=patch.members)
+    return _group_out(r, r.get_group(uid))
+
+
+@app.delete("/api/groups/{uid}", status_code=204)
+def forget_group(uid: str, r: Registry = Depends(registry)):
+    r.forget_group(uid)
+
+
+def _member_reading(r: Registry, uid: str, desired: StateIn | None) -> dict:
+    # Members are read side by side, each on its own thread and so with its own connection.
+    with closing(Registry(r.path)) as own:
+        return _read_state(own, _device_out(own, uid), desired)
+
+
+def _group_state(r: Registry, g: Group, desired: StateIn | None) -> dict:
+    """Read (or change) every member at once and merge their readings. Members that didn't answer,
+    or refused the change, are listed under `failed`; only when all of them fail is it an error."""
+    out = _group_out(r, g)
+    members = {uid: _device_out(r, uid) for uid in g.members}
+    failed: dict[str, dict] = {
+        uid: {"reason": f"{m.name} {m.group_problem}", "unreachable": False}
+        for uid, m in members.items() if m.group_problem
+    }
+    live = [uid for uid in g.members if uid not in failed]
+
+    def one(uid: str) -> tuple[str, dict | None, Exception | None]:
+        try:
+            return uid, _member_reading(r, uid, desired), None
+        except (DeviceUnreachable, LookupError, ValueError) as exc:
+            return uid, None, exc
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(one, live))
+    readings = {uid: reading for uid, reading, _ in results if reading is not None}
+    errors = [exc for _, _, exc in results if exc is not None]
+    for uid, _, exc in results:
+        if exc is not None:
+            failed[uid] = {"reason": f"{members[uid].name}: {exc}", "unreachable": isinstance(exc, DeviceUnreachable)}
+    if not readings:
+        # Nobody answered: the same error a single Device would give.
+        if errors:
+            raise next((e for e in errors if not isinstance(e, DeviceUnreachable)), errors[0])
+        raise ValueError(f"no device in '{g.name}' can be controlled")
+    merged = groups.merge(out.control, [readings[uid] for uid in g.members if uid in readings])
+    return merged | {
+        "on_count": sum(groups.is_on(m) for m in readings.values()),
+        "total": len(g.members),
+        "members": readings,
+        "failed": failed,
+    }
+
+
+@app.get("/api/groups/{uid}/state")
+def get_group_state(uid: str, r: Registry = Depends(registry)):
+    """Every member's state, merged into one, plus each member's own reading under `members`."""
+    return _group_state(r, r.get_group(uid), None)
+
+
+@app.post("/api/groups/{uid}/state")
+def set_group_state(uid: str, desired: StateIn, r: Registry = Depends(registry)):
+    """Send the same change to every member (e.g. {"on": false} turns them all off)."""
+    g = r.get_group(uid)
+    control = _group_out(r, g).control
+    asked = {k for k, v in desired.model_dump().items() if v is not None}
+    if not asked:
+        raise ValueError("say what to change")
+    if extra := asked - groups.SETTABLE[control]:
+        what = {"light": "lights", "climate": "ACs", "power": "devices"}[control]
+        raise ValueError(f"'{g.name}' groups {what}, which can't all take {', '.join(sorted(extra))}")
+    return _group_state(r, g, desired)
 
 
 # --- Remote Devices & Signal Library ---------------------------------------
