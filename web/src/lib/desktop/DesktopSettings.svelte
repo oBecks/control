@@ -39,6 +39,9 @@
 				<span>
 					<strong>Control {status.update.version} is available</strong>
 					<small>Download and run the installer. Your devices and settings stay.</small>
+					{#if status.claude_connected}
+						<small>After updating, restart Claude to get the new Assistant tools.</small>
+					{/if}
 				</span>
 			</a>
 		{/if}

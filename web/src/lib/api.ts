@@ -262,6 +262,8 @@ export interface DesktopApp {
 	start_with_windows: boolean | null;
 	/** A newer release; `url` is its installer. */
 	update: { version: string; url: string } | null;
+	/** Claude Desktop uses Control (checked only while there's an update): restart it after updating. */
+	claude_connected: boolean;
 	/** Say once that closing the Window kept Control running (when Windows notifications are off). */
 	close_note: boolean;
 	/** Only on the computer running the Engine. */
