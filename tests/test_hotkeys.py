@@ -101,6 +101,8 @@ def test_which_presses_can_share_keys():
     assert clash("F13, then 2", [("F13, then 1", False)]) is None
     assert "can't end a sequence" in clash("F13, then F14", [("F14", False)])
     assert "ends a sequence" in clash("F14", [("F13, then F14", False)])
+    assert "starts sequences" in clash("F13, then F14", [("F14, then 1", False)])
+    assert "can't start one" in clash("F14, then 1", [("F13, then F14", False)])
 
 
 def test_actions_are_checked_against_what_the_target_can_do():

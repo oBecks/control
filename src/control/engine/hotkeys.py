@@ -228,6 +228,11 @@ def clash(trigger: Trigger, repeats: bool, others: list[tuple[Trigger, bool]]) -
                 return f"{trigger.keys.label} is a Hotkey of its own, so it can't start a sequence"
             if not other.then and other.keys == trigger.then:
                 return f"{trigger.then.label} is a Hotkey of its own, so it can't end a sequence"
+            # Keys that start sequences are always registered, so they can't be another's second key.
+            if other.then and other.keys == trigger.then:
+                return f"{trigger.then.label} starts sequences ({other.label}), so it can't end one"
+            if other.then and other.then == trigger.keys:
+                return f"{trigger.keys.label} ends a sequence ({other.label}), so it can't start one"
             continue
         if other.then and other.keys == trigger.keys:
             return f"{trigger.keys.label} starts sequences ({other.label}), so it can't be a Hotkey of its own"
