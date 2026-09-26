@@ -125,6 +125,10 @@ def test_a_heading_with_a_size_that_makes_no_sense_spans_the_grid():
     for size in ("wide", "0x1", "", None):
         [h] = dashboards.upgrade([{"id": "h", "kind": "heading", "size": size, "x": 0, "y": 0}], 6)
         assert (h["w"], h["h"]) == (6, 1)
+    [h] = dashboards.upgrade([{"id": "h", "kind": "heading", "x": 0, "y": 0}], 6)  # no size at all
+    assert (h["w"], h["h"]) == (6, 1)
+    [t] = dashboards.upgrade([{"id": "t", "kind": "tile", "target": "a", "x": 0, "y": 0}], 6)
+    assert (t["w"], t["h"]) == (1, 2)
 
 
 def test_placed_items_with_a_named_size_get_cells():

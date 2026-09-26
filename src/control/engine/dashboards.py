@@ -89,7 +89,7 @@ def check_items(items: list[dict], targets: set[str], columns: int) -> list[dict
 
 
 def _old_cells(item: dict, columns: int) -> tuple[int, int]:
-    size = item.get("size", "1x1")
+    size = item.get("size")
     if size == "full":
         return columns, 1
     if item.get("kind") == "heading":
