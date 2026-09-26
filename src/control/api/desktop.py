@@ -37,6 +37,8 @@ class DesktopOut(BaseModel):
     app: bool  # this Engine runs inside the Desktop App
     start_with_windows: bool | None  # null outside the Desktop App
     update: UpdateOut | None
+    # Claude Desktop starts Control.exe --mcp: after an update it needs a restart to get new tools.
+    claude_connected: bool
     close_note: bool  # show the one-time "still running" note (this computer only)
     can_change: bool  # only on the computer running the Engine
 
@@ -46,6 +48,7 @@ class StartWithWindowsIn(BaseModel):
 
 
 def _status(request: Request, r: Registry) -> DesktopOut:
+    from ..assistant import claude
     from ..desktop import autostart
 
     u, local = state.update, request.state.local
@@ -53,6 +56,7 @@ def _status(request: Request, r: Registry) -> DesktopOut:
         version=__version__, app=state.running,
         start_with_windows=autostart.is_on() if state.running else None,
         update=UpdateOut(version=u.version, url=u.url) if u else None,
+        claude_connected=bool(u) and claude.status() in ("connected", "outdated"),
         close_note=local and r.setting(CLOSE_NOTE, False), can_change=local,
     )
 

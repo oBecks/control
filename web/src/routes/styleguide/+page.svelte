@@ -96,7 +96,11 @@
 		{ uid: 'p2', name: 'Kettle', control: 'plug', state: { on: false }, isNew: true }
 	]);
 
-	const ICONS: Record<Exclude<Control, 'remote'>, Component> = { light: Lightbulb, climate: AirVent, plug: Plug };
+	const ICONS: Record<Exclude<Control, 'remote' | 'streamer'>, Component> = {
+		light: Lightbulb,
+		climate: AirVent,
+		plug: Plug
+	};
 
 	function statusOf(d: Demo): string {
 		if (d.control === 'light') return d.state.on ? `On · ${d.state.brightness}%` : 'Off';
@@ -128,8 +132,9 @@
 	const selected = $derived(devices.find((d) => d.uid === selectedUid)!);
 	let sheetOpen = $state(false);
 
-	const byControl = (c: Exclude<Control, 'remote'>) => devices.filter((d) => d.control === c);
-	const onCount = (c: Exclude<Control, 'remote'>) => byControl(c).filter((d) => d.state.on && !d.offline).length;
+	const byControl = (c: Exclude<Control, 'remote' | 'streamer'>) => devices.filter((d) => d.control === c);
+	const onCount = (c: Exclude<Control, 'remote' | 'streamer'>) =>
+		byControl(c).filter((d) => d.state.on && !d.offline).length;
 
 	let activeScene = $state<string | null>(null);
 	let demoSlider = $state(40);
@@ -193,12 +198,12 @@
 		<section>
 			<SectionHeader
 				{title}
-				summary={onCount(c as Exclude<Control, 'remote'>)
-					? `${onCount(c as Exclude<Control, 'remote'>)} on`
+				summary={onCount(c as Exclude<Control, 'remote' | 'streamer'>)
+					? `${onCount(c as Exclude<Control, 'remote' | 'streamer'>)} on`
 					: 'all off'}
 			/>
 			<div class="grid" style:--cols={cols}>
-				{#each byControl(c as Exclude<Control, 'remote'>) as d (d.uid)}{@render tileFor(d, true)}{/each}
+				{#each byControl(c as Exclude<Control, 'remote' | 'streamer'>) as d (d.uid)}{@render tileFor(d, true)}{/each}
 			</div>
 		</section>
 	{/each}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { DeviceState, GroupState } from './api';
-import { groupStatus, isOn, statusFor } from './present';
+import { groupStatus, isOn, statusFor, streamerName } from './present';
 
 const remote = (on: boolean | null, discrete: boolean): DeviceState => ({
 	control: 'remote',
@@ -74,5 +74,32 @@ describe('groupStatus', () => {
 				failed: {}
 			})
 		).toBe('All on');
+	});
+});
+
+describe('streamerName', () => {
+	it("keeps a box from sounding like the TV it's plugged into", () => {
+		expect(streamerName('TV – סלון', false)).toBe('Streamer – סלון');
+		expect(streamerName('SHIELD', false)).toBe('Streamer SHIELD');
+		expect(streamerName('Streamer – Den', false)).toBe('Streamer – Den');
+		expect(streamerName('TVRoom box', false)).toBe('Streamer TVRoom box');
+	});
+	it('calls a TV a TV', () => {
+		expect(streamerName('Streamer – Den', true)).toBe('TV – Den');
+		expect(streamerName('BRAVIA', true)).toBe('TV BRAVIA');
+		expect(streamerName('TV – Den', true)).toBe('TV – Den');
+	});
+});
+
+describe('a Streamer', () => {
+	it('says which app is open', () => {
+		const s = (on: boolean, app_name: string | null): DeviceState => ({
+			control: 'streamer',
+			features: { buttons: [], apps: [], is_tv: false, adb: false },
+			state: { on, app: null, app_name, volume: null, volume_max: null, muted: null }
+		});
+		expect(statusFor(s(true, 'Netflix'))).toBe('Netflix');
+		expect(statusFor(s(true, null))).toBe('On');
+		expect(statusFor(s(false, 'Netflix'))).toBe('Off');
 	});
 });

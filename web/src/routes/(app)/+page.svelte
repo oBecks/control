@@ -229,6 +229,7 @@
 					goto(resolve('/add'));
 				}}
 				onrename={(name) => home.rename(selected.uid, name)}
+				onapps={(apps) => home.setStreamer(selected.uid, { apps })}
 			/>
 		{/if}
 	{/snippet}

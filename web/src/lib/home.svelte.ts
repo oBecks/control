@@ -9,7 +9,7 @@ import {
 	type GroupState,
 	type ScanResult
 } from './api';
-import type { StateChange } from './types';
+import type { AppShortcut, StateChange } from './types';
 
 const POLL_MS = 8000;
 /** Phones asking for access are polled faster, since someone is standing there waiting. */
@@ -277,6 +277,19 @@ class Home {
 		}
 	}
 
+	/** Save a Streamer's setup (TV or box, App Shortcuts), then re-read it. */
+	async setStreamer(uid: string, setup: { is_tv?: boolean; apps?: AppShortcut[] }): Promise<boolean> {
+		try {
+			const updated = await api.setStreamer(uid, setup);
+			this.devices = this.devices.map((d) => (d.uid === uid ? updated : d));
+			await this.#readState(uid);
+			return true;
+		} catch (e) {
+			this.notify(e instanceof Error ? e.message : String(e));
+			return false;
+		}
+	}
+
 	/** Scan the network; returns the result, or null if it failed (already reported). */
 	async scan(): Promise<ScanResult | null> {
 		this.scanning = true;
@@ -318,7 +331,9 @@ function optimistic(s: DeviceState, change: StateChange): DeviceState {
 	if (change.press) return s;
 	const next = structuredClone($state.snapshot(s)) as DeviceState;
 	const st = next.state as unknown as Record<string, unknown>;
-	for (const [k, v] of Object.entries(change)) if (v !== undefined) st[k] = v;
+	// Opening an app turns it on; which app is open is the device's answer (a link isn't a package).
+	const { open_app: _, ...rest } = change;
+	for (const [k, v] of Object.entries(rest)) if (v !== undefined) st[k] = v;
 	if (change.on === undefined && Object.keys(change).length) st.on = true;
 	if (next.control === 'light') {
 		if (change.rgb) Object.assign(next.state, { mode: 'color' });

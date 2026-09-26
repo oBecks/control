@@ -5,7 +5,8 @@
 	import LightControls from './controls/LightControls.svelte';
 	import PlugControls from './controls/PlugControls.svelte';
 	import RemoteControls from './controls/RemoteControls.svelte';
-	import type { StateChange } from './types';
+	import StreamerControls from './controls/StreamerControls.svelte';
+	import type { AppShortcut, StateChange } from './types';
 	import Button from './ui/Button.svelte';
 
 	interface Props {
@@ -20,9 +21,22 @@
 		onteach?: () => void;
 		/** Resolves true when the rename was saved. */
 		onrename?: (name: string) => Promise<boolean>;
+		/** Streamers: save new App Shortcuts; resolves true when saved. */
+		onapps?: (apps: AppShortcut[]) => Promise<boolean>;
 	}
 
-	let { device, value, offline, scanning = false, onchange, onfindagain, onclose, onteach, onrename }: Props = $props();
+	let {
+		device,
+		value,
+		offline,
+		scanning = false,
+		onchange,
+		onfindagain,
+		onclose,
+		onteach,
+		onrename,
+		onapps = async () => false
+	}: Props = $props();
 
 	let editing = $state(false);
 	let draft = $state('');
@@ -108,6 +122,10 @@
 	<ClimateControls features={value.features} value={value.state} assumed {onchange} />
 {:else if value.control === 'remote'}
 	<RemoteControls features={value.features} value={value.state} {onchange} {onteach} />
+{:else if value.control === 'streamer'}
+	{#key device.uid}
+		<StreamerControls uid={device.uid} features={value.features} value={value.state} {onchange} {onapps} />
+	{/key}
 {:else}
 	<PlugControls value={value.state} {onchange} />
 {/if}

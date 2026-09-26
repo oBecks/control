@@ -25,8 +25,16 @@ _Avoid_: Blaster
 A Hub that reports its own devices (e.g. a Philips Hue bridge), so nothing needs to be asked. Not supported yet.
 
 **Remote Device**:
-A Device with no network connection of its own (a TV, an AC, a fan), controlled by sending Signals through a Transmitter. Its Signals come from a Code Set in the Signal Library or are taught by Learning.
+A Device with no network connection of its own (a TV, an AC, a fan), controlled by sending Signals through a Transmitter. Its Signals come from a Code Set in the Signal Library or are taught by Learning. A Streamer, or a TV with network control of its own, is not a Remote Device: it reports its real state.
 _Avoid_: Virtual device, IR device
+
+**Streamer**:
+A Device of Category Media that plays media on the TV it's plugged into (e.g. an NVIDIA Shield, a yes+ box), controlled over the network with a real state. The TV itself is a separate Device. A TV with network control of its own is a TV, not a Streamer.
+_Avoid_: Box, set-top box, Android TV, media player
+
+**Streamer App Shortcut**:
+A button in a Streamer's Device Controls that opens one app on it (Netflix, yes+). Each Streamer has its own, chosen at setup and reordered, removed or added later: from the apps installed on it when its Link's second step is done, otherwise from a catalogue of known apps (or added by hand). An app is opened by its link; one without a link (e.g. yes+) is opened through the second step, or else through its Play Store page.
+_Avoid_: Favourite, app, launcher
 
 **Signal**:
 One learned or library-provided remote command (e.g. "AC 24°C cool", "TV volume up") that a Transmitter sends on behalf of a Remote Device. A TV's or fan's Signals are named after the remote's buttons.
@@ -122,7 +130,7 @@ A pass over the local network that produces Found Devices.
 _Avoid_: Discovery, search
 
 **Link**:
-The one-time step that makes a Found Device controllable when it needs more than being found, e.g. signing into a brand account to fetch its local key, or pressing a bridge button. After a Link, control stays on the local network.
+The one-time step that makes a Found Device controllable when it needs more than being found, e.g. signing into a brand account to fetch its local key, typing a PIN a TV shows, or pressing a bridge button. After a Link, control stays on the local network. A Streamer's Link has an optional second step: turning on the box's developer mode and allowing Control on the TV, which lets Control open any app and see which apps are installed.
 _Avoid_: Pair, integrate, connect, login
 
 **Readiness**:

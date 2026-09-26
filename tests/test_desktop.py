@@ -72,6 +72,17 @@ def test_settings_show_a_found_update(pc, in_app):
     assert pc.get("/api/desktop").json()["update"] == {"version": "0.2.0", "url": "https://example.test/ControlSetup.exe"}
 
 
+def test_an_update_says_to_restart_claude_only_when_claude_uses_control(pc, in_app, monkeypatch):
+    from control.assistant import claude
+
+    monkeypatch.setattr(claude, "status", lambda: "connected")
+    assert pc.get("/api/desktop").json()["claude_connected"] is False  # no update, nothing to say
+    desktop_api.state.update = updates.Update("0.3.0", "https://example.test/ControlSetup.exe")
+    assert pc.get("/api/desktop").json()["claude_connected"] is True
+    monkeypatch.setattr(claude, "status", lambda: "off")
+    assert pc.get("/api/desktop").json()["claude_connected"] is False
+
+
 def test_phone_access_names_the_program_windows_asks_about(pc, monkeypatch):
     assert pc.get("/api/access/phone").json()["program"] == "Python"  # from source
     monkeypatch.setattr("sys.frozen", True, raising=False)  # Control.exe

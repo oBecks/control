@@ -1,7 +1,7 @@
 // Mirrors the Engine API (src/control/api/app.py).
 import type { RGB } from './color';
 
-export type Control = 'light' | 'plug' | 'climate' | 'remote';
+export type Control = 'light' | 'plug' | 'climate' | 'remote' | 'streamer';
 
 /** A Group's control surface: a light's or an AC's when every member is one, otherwise on/off. */
 export type GroupControl = 'light' | 'climate' | 'power';
@@ -55,6 +55,39 @@ export interface RemoteState {
 	on: boolean | null;
 }
 
+/** A Streamer App Shortcut: a button that opens one app. `app`: its package (names the open app);
+ * `link`: what opens it, when known (some devices only open apps by link). */
+export interface AppShortcut {
+	name: string;
+	app: string;
+	link?: string;
+}
+
+/** An app Control knows, as a Streamer's setup offers it. `default`: ticked at setup. */
+export interface CatalogueApp extends AppShortcut {
+	default: boolean;
+}
+
+export interface StreamerFeatures {
+	buttons: { name: string; label: string }[];
+	apps: AppShortcut[];
+	/** A TV running Android TV itself, not a box plugged into one. */
+	is_tv: boolean;
+	/** The Link's optional second step: Control may open any app and see what's installed (ADR 0008). */
+	adb: boolean;
+}
+
+/** A Streamer's real state, as the device reports it. */
+export interface StreamerState {
+	on: boolean;
+	/** The open app's package, and what to call it. */
+	app: string | null;
+	app_name: string | null;
+	volume: number | null;
+	volume_max: number | null;
+	muted: boolean | null;
+}
+
 /** Partial desired state sent to POST /api/devices/{uid}/state */
 export interface StateChange {
 	on?: boolean;
@@ -66,4 +99,6 @@ export interface StateChange {
 	fan?: string;
 	swing?: string;
 	press?: string;
+	/** Streamers: an app's package name or link. */
+	open_app?: string;
 }
