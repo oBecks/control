@@ -26,6 +26,8 @@ Windows app that scans the home wifi for smart devices and controls them from on
 
 ## Gotchas
 
+- Adding, removing or renaming an Assistant tool (`src/control/assistant/server.py`): update the **Tools** table in `README.md`. The release check (`packaging/check_mcp.py`) reads the tools from the source, so it needs no update.
+
 - Run `npm`/`npx` through the PowerShell tool; from Git Bash they fail with `'"node"' is not recognized`.
 - After adding an npm dependency the first page load can be blank while Vite re-optimizes: reload.
 - In `.ts` modules that tests import, import Lucide icons per file (`@lucide/svelte/icons/tv`); the barrel import makes Vitest take ~60 s instead of ~2 s.
