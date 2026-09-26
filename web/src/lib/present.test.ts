@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { DeviceState } from './api';
-import { isOn, statusFor } from './present';
+import type { DeviceState, GroupState } from './api';
+import { groupStatus, isOn, statusFor } from './present';
 
 const remote = (on: boolean | null, discrete: boolean): DeviceState => ({
 	control: 'remote',
@@ -40,5 +40,39 @@ describe('statusFor', () => {
 
 	it('shows a placeholder while loading', () => {
 		expect(statusFor(undefined)).toBe('…');
+	});
+});
+
+const lights = (on_count: number, total: number): GroupState => ({
+	control: 'light',
+	features: { color: true, color_temp: true, min_kelvin: 1700, max_kelvin: 6500 },
+	state: { on: on_count > 0, brightness: 60, mode: 'white', rgb: null, kelvin: 3000 },
+	assumed: false,
+	on_count,
+	total,
+	members: {},
+	failed: {}
+});
+
+describe('groupStatus', () => {
+	it('counts members while only some are on', () => {
+		expect(groupStatus(lights(0, 3))).toBe('Off');
+		expect(groupStatus(lights(2, 3))).toBe('2 of 3 on');
+	});
+
+	it('reads like a single Device once all are on', () => {
+		expect(groupStatus(lights(3, 3))).toBe('On · 60%');
+		expect(
+			groupStatus({
+				control: 'power',
+				features: {},
+				state: { on: true },
+				assumed: false,
+				on_count: 2,
+				total: 2,
+				members: {},
+				failed: {}
+			})
+		).toBe('All on');
 	});
 });

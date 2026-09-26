@@ -26,6 +26,8 @@ Everything stays on your home network, and you can delete the app for each brand
 
 Tiles take on each device's real colour when it's on. Tap one to switch it, or open its controls. An AC or TV behind an infrared hub shows ≈, because Control only knows what it last sent.
 
+Put devices together in a **Group** ("Living room lights") and they get one Tile at the top of Home. A tap switches them all, and its controls offer what every device in it can do: brightness and colour for a group of lights, mode and temperature for a group of ACs, on and off for anything else.
+
 ## What it controls
 
 | | |
@@ -67,7 +69,7 @@ It works anywhere on your home Wi-Fi, as long as the PC is on.
 
 ## Ask Claude
 
-Open **Settings → Assistant** and click **Connect Claude**, then quit and reopen Claude Desktop. Now you can ask it to "dim the living room lights" or "set the AC to 23". Claude asks before it changes anything. It sees and controls your devices, but setting them up stays in Control.
+Open **Settings → Assistant** and click **Connect Claude**, then quit and reopen Claude Desktop. Now you can ask it to "dim the living room lights", "set the AC to 23" or "make a group of the bedroom lights". Claude asks before it changes anything. It sees and controls your devices and Groups, and can create and edit Groups, but setting up devices stays in Control.
 
 Claude Code in the Claude app uses the same connection. Any other MCP client can start the same local server: `Control.exe --mcp` (stdio). If Control isn't running, the server starts it in the tray. Nothing leaves your home network.
 
@@ -75,8 +77,8 @@ It works in Claude on the PC running Control, not on claude.ai, the Claude phone
 
 ## Coming next
 
-- **Scenes.** "Movie night" in one tap. *In progress.*
-- Rooms, more brands and Bluetooth. *Planned.*
+- **Hotkeys**, **Dashboards** you arrange yourself, **Automations** the app runs on its own, then **Scenes**. *Planned, in that order.*
+- Rooms, more brands and Bluetooth. *Later.*
 
 ## Good to know
 

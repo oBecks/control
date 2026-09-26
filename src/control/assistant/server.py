@@ -34,8 +34,14 @@ Be honest about state:
 - When power is "unknown", the Device only has a Power Toggle: nobody knows whether it's on.
 - An Offline Device wasn't seen in the last scan, so controlling it may fail.
 
-Setting things up (scanning, adding Devices, Learning buttons, renaming) happens in the Control app
-itself; point the user there."""
+Groups: a Group is a named set of Devices controlled as one (e.g. "Living room lights"). get_device,
+set_power, set_light and set_climate take a Group's name too, and change every member at once. A
+Group of lights takes what every one of its lights can do, a Group of ACs likewise, any other Group
+only on/off. You can create, edit and delete Groups when the user asks; the app marks them as made
+by the Assistant.
+
+Setting things up (scanning, adding Devices, Learning buttons, renaming Devices) happens in the
+Control app itself; point the user there."""
 
 ASSUMED = "Assumed State: what Control last sent. It may differ if someone used the physical remote."
 TOGGLE_ONLY = "Only a Power Toggle: Control can press Power but never knows whether the Device is on."
@@ -48,6 +54,8 @@ READ = ToolAnnotations(read_only_hint=True, open_world_hint=False)
 SET = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
 # Pressing a button: pressing it again can undo it (a Power Toggle).
 PRESS = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False)
+CREATE = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False)
+DELETE = ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=True, open_world_hint=False)
 
 
 # --- The Engine ----------------------------------------------------------------
@@ -121,11 +129,11 @@ def start_control(port: int) -> None:
 # --- Devices ---------------------------------------------------------------------
 
 
-def find(devices: list[dict], ref: str) -> dict:
-    """A Device by uid or name: exact name first (any case), then a unique part of a name."""
+def find(devices: list[dict], ref: str, what: str = "Device") -> dict:
+    """A Device (or Group) by uid or name: exact name first (any case), then a unique part of a name."""
     ref = ref.strip()
     if not ref:
-        raise ToolError("Say which Device, by name or uid.")
+        raise ToolError(f"Say which {what}, by name or uid.")
     devices = [d for d in devices if d["category"] != HUB]
     for d in devices:
         if d["uid"] == ref:
@@ -136,9 +144,13 @@ def find(devices: list[dict], ref: str) -> dict:
         return matches[0]
     if matches:
         listed = ", ".join(f"{d['name']} ({d['uid']})" for d in matches)
-        raise ToolError(f"'{ref}' matches several Devices: {listed}. Say which one, by name or uid.")
+        raise ToolError(f"'{ref}' matches several {what}s: {listed}. Say which one, by name or uid.")
     names = ", ".join(d["name"] for d in devices) or "none yet"
-    raise ToolError(f"No Device called '{ref}'. Devices: {names}.")
+    raise ToolError(f"No {what} called '{ref}'. {what}s: {names}.")
+
+
+def is_group(d: dict) -> bool:
+    return d["uid"].startswith("group:")
 
 
 def controllable(d: dict) -> dict:
@@ -151,6 +163,27 @@ def summary(d: dict) -> dict:
     out = {"name": d["name"], "uid": d["uid"], "category": d["category"]}
     if not d["online"]:
         out["offline"] = OFFLINE
+    return out
+
+
+def group_summary(g: dict, devices: list[dict]) -> dict:
+    names = {d["uid"]: d["name"] for d in devices}
+    return {"name": g["name"], "uid": g["uid"], "group": True, "members": [names.get(m, m) for m in g["members"]]}
+
+
+def describe_group(g: dict, reading: dict, devices: list[dict]) -> dict:
+    """A Group's state: what its members share, whether all, some or none are on, and each member."""
+    by_uid = {d["uid"]: d for d in devices}
+    out = group_summary(g, devices)
+    shared = describe({"name": g["name"], "uid": g["uid"], "category": g["category"], "online": True}, reading)
+    out |= {k: v for k, v in shared.items() if k not in ("name", "uid", "category")}
+    on, total = reading["on_count"], reading["total"]
+    out["power"] = "on" if on == total else "off" if on == 0 else f"some on ({on} of {total})"
+    out["member_states"] = {
+        by_uid[uid]["name"]: describe(by_uid[uid], m)["power"] for uid, m in reading["members"].items() if uid in by_uid
+    }
+    if reading["failed"]:
+        out["not_answering"] = [f["reason"] for f in reading["failed"].values()]
     return out
 
 
@@ -221,47 +254,68 @@ def parse_color(text: str) -> list[int]:
 def create_server(engine: Engine) -> MCPServer:
     server = MCPServer("Control", title="Control", instructions=INSTRUCTIONS, version=__version__)
 
+    def home_devices() -> list[dict]:
+        return [d for d in engine.call("GET", "/devices") if d["category"] != HUB]
+
     def lookup(ref: str) -> dict:
-        return find(engine.call("GET", "/devices"), ref)
+        """A Device or a Group (which acts as one Device)."""
+        return find(home_devices() + engine.call("GET", "/groups"), ref)
+
+    def lookup_group(ref: str) -> dict:
+        return find(engine.call("GET", "/groups"), ref, "Group")
 
     def read(d: dict) -> dict:
+        if is_group(d):
+            return describe_group(d, engine.call("GET", f"/groups/{d['uid']}/state"), home_devices())
         return describe(d, engine.call("GET", f"/devices/{d['uid']}/state"))
 
     def change(d: dict, body: dict) -> dict:
+        if is_group(d):
+            return describe_group(d, engine.call("POST", f"/groups/{d['uid']}/state", body), home_devices())
         return describe(d, engine.call("POST", f"/devices/{d['uid']}/state", body))
+
+    def member_uids(refs: list[str]) -> list[str]:
+        known = home_devices()
+        return [find(known, ref)["uid"] for ref in refs]
 
     @server.tool(title="List Devices", annotations=READ)
     def list_devices(include_state: bool = False) -> dict:
-        """List the Devices in the user's home by name, uid and category (light, plug, climate, media).
-        include_state also reads each Device's current state, which takes a few seconds."""
-        devices = [d for d in engine.call("GET", "/devices") if d["category"] != HUB]
-        ready = [d for d in devices if d["control"]]
+        """List the Devices in the user's home by name, uid and category (light, plug, climate, media),
+        and the user's Groups with their members. include_state also reads each Device's and Group's
+        current state, which takes a few seconds."""
+        everything = home_devices()
+        ready = [d for d in everything if d["control"]]
+        group_list = engine.call("GET", "/groups")
         out: dict = {"devices": [summary(d) for d in ready]}
+        if group_list:
+            out["groups"] = [group_summary(g, everything) for g in group_list]
         if include_state:
 
             def state(d: dict) -> dict:
                 try:
                     return read(d)
                 except ToolError as exc:
-                    return summary(d) | {"error": str(exc)}
+                    return (group_summary(d, everything) if is_group(d) else summary(d)) | {"error": str(exc)}
 
             with ThreadPoolExecutor(max_workers=8) as pool:
                 out["devices"] = list(pool.map(state, ready))
-        not_ready = [d["name"] for d in devices if not d["control"]]
+                if group_list:
+                    out["groups"] = list(pool.map(state, group_list))
+        not_ready = [d["name"] for d in everything if not d["control"]]
         if not_ready:
             out["not_set_up"] = {"devices": not_ready, "note": "Control can't control these until they're set up in the app."}
         return out
 
     @server.tool(title="Get Device state", annotations=READ)
     def get_device(device: str) -> dict:
-        """One Device's current state (power, brightness, colour, AC mode and temperature…), what can
-        be set on it, and for TVs and fans its buttons."""
+        """One Device's or Group's current state (power, brightness, colour, AC mode and temperature…),
+        what can be set on it, and for TVs and fans its buttons. A Group also lists each member's power."""
         return read(controllable(lookup(device)))
 
     @server.tool(title="Turn a Device on or off", annotations=SET)
     def set_power(device: str, on: bool) -> dict:
-        """Turn a Device on or off. Refused for a Device with only a Power Toggle, since Control can't
-        know which way Power would switch it; press_button "Power" toggles it."""
+        """Turn a Device, or every Device in a Group, on or off. Refused for a Device with only a Power
+        Toggle, since Control can't know which way Power would switch it; press_button "Power" toggles it."""
         d = controllable(lookup(device))
         if d["control"] == "remote":
             features = engine.call("GET", f"/devices/{d['uid']}/state")["features"]
@@ -276,8 +330,8 @@ def create_server(engine: Engine) -> MCPServer:
     @server.tool(title="Set a light", annotations=SET)
     def set_light(device: str, brightness: int | None = None, color: str | None = None,
                   kelvin: int | None = None) -> dict:
-        """Set a light's brightness (1-100), colour (#RRGGBB) or white temperature (kelvin). Setting
-        any of them also turns the light on. Use set_power to turn it off."""
+        """Set a light's (or a Group of lights') brightness (1-100), colour (#RRGGBB) or white
+        temperature (kelvin). Setting any of them also turns the light on. Use set_power to turn it off."""
         d = controllable(lookup(device))
         if d["control"] != "light":
             raise ToolError(f"'{d['name']}' isn't a light.")
@@ -294,8 +348,8 @@ def create_server(engine: Engine) -> MCPServer:
     @server.tool(title="Set an AC", annotations=SET)
     def set_climate(device: str, mode: str | None = None, temperature: float | None = None,
                     fan: str | None = None, swing: str | None = None) -> dict:
-        """Set an AC's mode, target temperature, fan speed or swing. Like its remote, changing any of
-        them also turns it on. get_device lists the values it accepts."""
+        """Set an AC's (or a Group of ACs') mode, target temperature, fan speed or swing. Like its
+        remote, changing any of them also turns it on. get_device lists the values it accepts."""
         d = controllable(lookup(device))
         if d["control"] != "climate":
             raise ToolError(f"'{d['name']}' isn't an AC.")
@@ -311,9 +365,44 @@ def create_server(engine: Engine) -> MCPServer:
         "HDMI 1". get_device lists its buttons."""
         d = controllable(lookup(device))
         if d["control"] != "remote":
-            raise ToolError(f"'{d['name']}' has no remote buttons. Use set_power, set_light or set_climate.")
+            what = "is a Group, which has" if is_group(d) else "has"
+            raise ToolError(f"'{d['name']}' {what} no remote buttons. Use set_power, set_light or set_climate.")
         features = engine.call("GET", f"/devices/{d['uid']}/state")["features"]
         return change(d, {"press": find_button(features, button)})
+
+    @server.tool(title="Create a Group", annotations=CREATE)
+    def create_group(name: str, devices: list[str]) -> dict:
+        """Create a Group: a named set of Devices controlled as one (e.g. "Living room lights" from the
+        lights in the living room). Devices by name or uid. A Device with only a Power Toggle can't join,
+        since a Group couldn't be sure to turn it off. The Group works right away."""
+        g = engine.call("POST", "/groups", {"name": name, "members": member_uids(devices), "by_assistant": True})
+        return group_summary(g, home_devices()) | {"controls": g["control"]}
+
+    @server.tool(title="Edit a Group", annotations=SET)
+    def edit_group(group: str, name: str | None = None, add: list[str] | None = None,
+                   remove: list[str] | None = None) -> dict:
+        """Rename a Group, or add Devices to it and remove Devices from it (by name or uid)."""
+        g = lookup_group(group)
+        members = list(g["members"])
+        if add:
+            members += [uid for uid in member_uids(add) if uid not in members]
+        if remove:
+            gone = set(member_uids(remove))
+            members = [m for m in members if m not in gone]
+        if name is None and members == g["members"]:
+            raise ToolError("Say what to change: a new name, or Devices to add or remove.")
+        if not members:
+            raise ToolError(f"That would leave '{g['name']}' empty. Use delete_group to remove it.")
+        body = {"name": name, "members": members if members != g["members"] else None}
+        g = engine.call("PATCH", f"/groups/{g['uid']}", {k: v for k, v in body.items() if v is not None})
+        return group_summary(g, home_devices()) | {"controls": g["control"]}
+
+    @server.tool(title="Delete a Group", annotations=DELETE)
+    def delete_group(group: str) -> dict:
+        """Delete a Group. Its Devices stay as they are; only the Group goes."""
+        g = lookup_group(group)
+        engine.call("DELETE", f"/groups/{g['uid']}")
+        return {"deleted": g["name"]}
 
     return server
 
