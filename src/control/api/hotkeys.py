@@ -66,7 +66,12 @@ class Listener:
             with self._cond:
                 while (self.revision == revision and self.recording == recording and not self.closing
                        and (left := deadline - time.monotonic()) > 0):
-                    self._cond.wait(min(left, 0.5))  # wakes to notice recording running out
+                    # Changes notify; only recording running out needs a timed wake. Sleeping
+                    # otherwise keeps the idle Engine from waking twice a second. Keyed on what the
+                    # caller saw, so recording running out just now still ends the wait at once.
+                    if recording:
+                        left = min(left, self.recording_until - time.monotonic())
+                    self._cond.wait(max(left, 0))
         finally:
             with self._cond:
                 self.watching -= 1
