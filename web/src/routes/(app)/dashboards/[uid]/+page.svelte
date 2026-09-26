@@ -423,9 +423,12 @@
 	}
 	.cell.heading {
 		align-items: center;
-		overflow: hidden;
 	}
+	/* The text is clipped, not the cell: the × sits outside the cell's corner. */
 	.cell h2 {
+		min-inline-size: 0;
+		max-block-size: 100%;
+		overflow: hidden;
 		margin: 0;
 		font-size: var(--fs-lg);
 		font-weight: var(--fw-regular);
