@@ -112,7 +112,7 @@ class HotkeyListener:
         _user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 0)  # PM_NOREMOVE: makes the message queue
         try:
             self.overlay = Overlay()
-        except OSError as exc:  # no overlay is better than no Hotkeys
+        except Exception as exc:  # noqa: BLE001 (no overlay is better than no Hotkeys)
             print(f"Hotkey overlay unavailable: {exc}", file=sys.stderr)
         self._ready.set()
         while _user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
@@ -247,7 +247,8 @@ class Overlay:
         u.FillRect.argtypes = [wintypes.HDC, ctypes.POINTER(wintypes.RECT), wintypes.HBRUSH]
         u.DrawTextW.argtypes = [wintypes.HDC, wintypes.LPCWSTR, ctypes.c_int, ctypes.POINTER(wintypes.RECT), wintypes.UINT]
         u.SetWindowRgn.argtypes = [wintypes.HWND, wintypes.HRGN, wintypes.BOOL]
-        u.GetDpiForWindow.argtypes = [wintypes.HWND]
+        if hasattr(u, "GetDpiForWindow"):  # Windows 10 and later
+            u.GetDpiForWindow.argtypes = [wintypes.HWND]
         u.SetTimer.argtypes = [wintypes.HWND, ctypes.c_size_t, wintypes.UINT, ctypes.c_void_p]
         u.KillTimer.argtypes = [wintypes.HWND, ctypes.c_size_t]
         u.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
@@ -310,10 +311,8 @@ class Overlay:
         return u.DefWindowProcW(hwnd, msg, wparam, lparam)
 
     def _scale(self) -> float:
-        try:
-            return (_user32.GetDpiForWindow(self.hwnd) or 96) / 96
-        except AttributeError:  # before Windows 10
-            return 1.0
+        dpi_for = getattr(_user32, "GetDpiForWindow", None)  # before Windows 10: unscaled
+        return (dpi_for(self.hwnd) or 96) / 96 if dpi_for else 1.0
 
     def _place(self) -> None:
         s = self._scale()

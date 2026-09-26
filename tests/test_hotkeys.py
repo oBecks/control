@@ -221,6 +221,17 @@ def test_a_group_hotkey(hk):
     assert c.get("/api/hotkeys").json()["hotkeys"] == []
 
 
+def test_a_hotkey_whose_button_was_deleted_says_so(hk):
+    c = hk["client"]
+    h = add(c, "F13", hk["tv"], {"do": "press", "button": "power"})
+    r = Registry()
+    r.set_remote_button(hk["tv"], "mute", "AAAB")
+    r.set_remote_button(hk["tv"], "power", None)
+    r.close()
+    resp = c.post(f"/api/hotkeys/{h['uid']}/run")
+    assert resp.status_code == 422 and "no 'power' button" in resp.json()["detail"]
+
+
 def test_edit_and_delete(hk):
     c = hk["client"]
     h = add(c, "F13", "yeelight:1", {"do": "toggle"})

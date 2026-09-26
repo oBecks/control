@@ -362,11 +362,13 @@ def run_hotkey(uid: str, r: Registry = Depends(registry)):
     a level (0-1) for a bar when it changed brightness or temperature."""
     hk = r.get_hotkey(uid)
     t = target(r, hk.target)
-    reading = run(r, t, hk.action)
+    # Checked again: its target may have changed since (a learned button deleted, a Group's members).
+    action = check_action(r, t, hk.action)
+    reading = run(r, t, action)
     text, level = hotkeys.result_text(
-        reading, hk.action,
-        press_label=t.buttons.get(hk.action.get("button", "")),
-        app_name=_app_names(t).get(hk.action.get("app", "")),
+        reading, action,
+        press_label=t.buttons.get(action.get("button", "")),
+        app_name=_app_names(t).get(action.get("app", "")),
     )
     return {"name": t.name, "text": text, "level": level}
 

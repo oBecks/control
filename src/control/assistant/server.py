@@ -501,7 +501,7 @@ def create_server(engine: Engine) -> MCPServer:
             return {"do": "set", "state": {"on": action == "on"}}
         if action in ("brightness_up", "brightness_down", "temperature_up", "temperature_down"):
             field = "brightness" if action.startswith("brightness") else "target_temp"
-            by = abs(step) if step else hotkeys.DEFAULT_STEP[field]
+            by = abs(step) if step is not None else hotkeys.DEFAULT_STEP[field]  # 0 is refused by the Engine
             return {"do": "step", "field": field, "by": by if action.endswith("_up") else -by}
         if action == "press":
             if not button:

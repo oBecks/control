@@ -243,6 +243,7 @@ def test_create_list_and_delete_hotkeys(home, client, no_listener):  # noqa: F81
 def test_hotkeys_the_engine_refuses_say_why(home, no_listener):
     srv, *_ = home
     assert "used for typing" in error(srv, "create_hotkey", keys="L", device="yeelight", action="toggle")
+    assert "small amount" in error(srv, "create_hotkey", keys="F13", device="yeelight", action="brightness_up", step=0)
     assert "only an AC" in error(srv, "create_hotkey", keys="F13", device="yeelight", action="temperature_up")
     assert "has no remote buttons" in error(srv, "create_hotkey", keys="F13", device="AC", action="press", button="x")
     warned = ok(srv, "create_hotkey", keys="Play/Pause", device="yeelight", action="toggle")
