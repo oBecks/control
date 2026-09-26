@@ -40,8 +40,10 @@ def _clear_restart(r: Registry) -> None:
 
 
 async def note_mcp(request: Request, call_next):
-    """Middleware: an MCP server of this version is running, so Claude has the new tools."""
-    if request.headers.get(MCP_HEADER) == __version__ and _restart_pending is not False:
+    """Middleware: an MCP server of this version is running, so Claude has the new tools.
+    It runs on this computer, so a phone's request can't clear the note."""
+    if (request.headers.get(MCP_HEADER) == __version__ and request.state.local
+            and _restart_pending is not False):
         with closing(Registry()) as r:
             _note_version(r)
             if _restart_pending:
