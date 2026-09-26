@@ -547,7 +547,7 @@ class FakeUser32:
 
 def test_a_sequence_holds_its_second_keys_only_while_it_waits(monkeypatch):
     user32 = FakeUser32()
-    monkeypatch.setattr(desktop_hotkeys, "_user32", user32)
+    monkeypatch.setattr(desktop_hotkeys, "_user32", user32, raising=False)  # off Windows there is none
     clock = [100.0]
     monkeypatch.setattr(desktop_hotkeys.time, "monotonic", lambda: clock[0])
     listener = desktop_hotkeys.HotkeyListener(0)
