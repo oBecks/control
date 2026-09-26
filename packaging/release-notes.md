@@ -2,4 +2,4 @@
 
 Control isn't signed yet, so Windows may show "Windows protected your PC". Click **More info**, then **Run anyway**.
 
-**Updating:** quit Control from its tray icon, then run the new installer. Your devices and settings stay.
+**Updating:** quit Control from its tray icon, then run the new installer. Your devices and settings stay. If Claude uses Control, restart Claude afterwards to get the new Assistant tools.
