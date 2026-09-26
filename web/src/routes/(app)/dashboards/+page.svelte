@@ -1,12 +1,12 @@
 <script lang="ts">
-	// Dashboards: every Dashboard, making new ones, and which one this browser opens to (ADR 0009).
+	// Dashboards: every Dashboard, making new ones, and which one this browser opens to (ADR 0010).
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { Check, ChevronRight, GripVertical, House, Pencil, Plus, Trash2 } from '@lucide/svelte';
 	import { flip } from 'svelte/animate';
 	import { MediaQuery } from 'svelte/reactivity';
 	import { dashboards } from '$lib/dashboards/dashboards.svelte';
-	import { homeItems, moveItem } from '$lib/dashboards/layout';
+	import { COLUMNS, columnsFor, homeItems, moveItem, type Columns } from '$lib/dashboards/layout';
 	import { reorder } from '$lib/dashboards/reorder';
 	import { home } from '$lib/home.svelte';
 	import type { Dashboard } from '$lib/types';
@@ -20,6 +20,8 @@
 	let making = $state(false);
 	let name = $state('');
 	let start = $state<'empty' | 'home'>('empty');
+	/** Made for a phone, a tablet or a desktop: this screen's, unless changed. */
+	let columns = $state<Columns>(columnsFor(window.innerWidth));
 	let busy = $state(false);
 	/** The row being renamed, or asked about deleting. */
 	let renaming = $state<string | null>(null);
@@ -36,8 +38,8 @@
 	async function create(e: SubmitEvent) {
 		e.preventDefault();
 		busy = true;
-		const items = start === 'home' ? homeItems(home.groups, home.controllable) : [];
-		const d = await dashboards.create(name, items);
+		const items = start === 'home' ? homeItems(home.groups, home.controllable, columns) : [];
+		const d = await dashboards.create(name, columns, items);
 		busy = false;
 		if (!d) return;
 		if (start === 'empty') dashboards.arrangeOnOpen = d.uid;
@@ -53,7 +55,8 @@
 
 	function count(d: Dashboard) {
 		const n = d.items.filter((i) => i.kind === 'tile').length;
-		return n ? `${n} tile${n === 1 ? '' : 's'}` : 'Empty';
+		const made = COLUMNS.find((c) => c.value === d.columns)?.label ?? '';
+		return `${made} · ${n ? `${n} tile${n === 1 ? '' : 's'}` : 'empty'}`;
 	}
 </script>
 
@@ -80,6 +83,11 @@
 				<!-- svelte-ignore a11y_autofocus -->
 				<input bind:value={name} placeholder="e.g. Phone remote" maxlength="40" required autofocus />
 			</label>
+			<div class="field">
+				<span>Made for</span>
+				<Segmented label="Made for" options={COLUMNS} bind:value={columns} />
+				<small>How wide its grid is. Items stay exactly where you put them; you can change this later.</small>
+			</div>
 			<div class="field">
 				<span>Start with</span>
 				<Segmented
@@ -240,6 +248,11 @@
 	.rename:focus {
 		border-color: var(--accent);
 		outline: none;
+	}
+	.field small {
+		color: var(--text-2);
+		font-size: var(--fs-sm);
+		font-weight: var(--fw-regular);
 	}
 	.actions {
 		display: flex;

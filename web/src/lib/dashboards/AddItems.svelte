@@ -1,9 +1,9 @@
 <script lang="ts">
-	// "Add item": a Heading or Spacer at once, or ticked Groups and Devices as Tiles.
-	import { Check, Heading, Search, SquareDashed, X } from '@lucide/svelte';
+	// "Add item": a Heading at once, or ticked Groups and Devices as Tiles. The Dashboard places them.
+	import { Check, Heading, Search, X } from '@lucide/svelte';
 	import { home } from '$lib/home.svelte';
 	import { groupIcon, iconFor, SECTIONS } from '$lib/present';
-	import type { DashboardItem } from '$lib/types';
+	import type { NewDashboardItem } from '$lib/types';
 	import Button from '$lib/ui/Button.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
 	import { newId, tileItem } from './layout';
@@ -11,7 +11,7 @@
 	interface Props {
 		/** Devices and Groups already on the Dashboard: they can be added again, but say so. */
 		placed: Set<string>;
-		onadd: (items: DashboardItem[]) => void;
+		onadd: (items: NewDashboardItem[]) => void;
 		onclose: () => void;
 	}
 
@@ -65,17 +65,7 @@
 			}}
 		>
 			<Heading size={18} strokeWidth={2.2} />
-			<span><b>Heading</b><small>A title, as wide as you like</small></span>
-		</button>
-		<button
-			type="button"
-			onclick={() => {
-				onadd([{ id: newId(), kind: 'spacer', size: '1x1' }]);
-				onclose();
-			}}
-		>
-			<SquareDashed size={18} strokeWidth={2.2} />
-			<span><b>Spacer</b><small>An empty gap, seen only while arranging</small></span>
+			<span><b>Heading</b><small>A title, as wide as you like, over anything</small></span>
 		</button>
 	</div>
 
@@ -162,7 +152,6 @@
 	}
 	.quick {
 		display: grid;
-		grid-template-columns: 1fr 1fr;
 		gap: var(--s-2);
 	}
 	.quick button {

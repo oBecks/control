@@ -148,11 +148,13 @@ export interface PickableKey {
 	types: boolean;
 }
 
-/** One item on a Dashboard (ADR 0009). Sizes are "WxH" in grid cells, or "full" for the whole width. */
-export type DashboardItem =
+/** A Dashboard item's content, before it has a cell (ADR 0010). Sizes are "WxH" in Tile units, or "full". */
+export type NewDashboardItem =
 	| { id: string; kind: 'tile'; size: '2x1' | '1x1' | '2x2'; target: string }
-	| { id: string; kind: 'heading'; size: 'full' | '4x1' | '2x1' | '1x1'; text: string }
-	| { id: string; kind: 'spacer'; size: '1x1' | '2x1' | '4x1' };
+	| { id: string; kind: 'heading'; size: 'full' | '4x1' | '2x1' | '1x1'; text: string };
+
+/** One item on a Dashboard, at its cell: x is its column, y its row (a row is half a Tile tall), from 0. */
+export type DashboardItem = NewDashboardItem & { x: number; y: number };
 
 export type DashboardItemKind = DashboardItem['kind'];
 
@@ -160,6 +162,7 @@ export type DashboardItemKind = DashboardItem['kind'];
 export interface Dashboard {
 	uid: string;
 	name: string;
-	/** In order: the grid packs them row by row. */
+	/** The grid's width: 4 for a phone, 6 for a tablet, 8 for a desktop. */
+	columns: 4 | 6 | 8;
 	items: DashboardItem[];
 }

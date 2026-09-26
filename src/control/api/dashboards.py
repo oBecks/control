@@ -1,7 +1,8 @@
-"""Dashboards (ADR 0009): named screens the user arranges, the same on every browser.
+"""Dashboards (ADR 0010): named screens the user arranges, the same on every browser.
 
-The Engine only keeps them: the UI reads each item's Device or Group through the usual endpoints.
-Anyone who may use the Engine may change them. Changes are whole: the latest one wins.
+The Engine only keeps them: the UI reads each item's Device or Group through the usual endpoints,
+and arranges the items itself (pushing others down on a drop). Anyone who may use the Engine may
+change them. Changes are whole: the latest one wins.
 """
 
 from fastapi import APIRouter, Depends
@@ -16,8 +17,10 @@ router = APIRouter(prefix="/api/dashboards")
 
 class ItemIO(BaseModel):
     id: str | None = Field(None, description="kept across changes; left out, the Engine makes one")
-    kind: str = Field(description="tile, heading or spacer")
-    size: str | None = Field(None, description='"WxH" in grid cells, or "full"; left out, the kind\'s default')
+    kind: str = Field(description="tile or heading")
+    size: str | None = Field(None, description='"WxH" in Tile units, or "full"; left out, the kind\'s default')
+    x: int = Field(description="its column, from 0")
+    y: int = Field(description="its row, from 0; a row is half a Tile tall")
     target: str | None = Field(None, description="a Tile's Device or Group uid")
     text: str | None = Field(None, description="a Heading's text")
 
@@ -25,11 +28,12 @@ class ItemIO(BaseModel):
 class DashboardOut(BaseModel):
     uid: str
     name: str
+    columns: int
     items: list[ItemIO]
 
 
 def _out(d: Dashboard) -> DashboardOut:
-    return DashboardOut(uid=d.uid, name=d.name, items=[ItemIO(**i) for i in d.items])
+    return DashboardOut(uid=d.uid, name=d.name, columns=d.columns, items=[ItemIO(**i) for i in d.items])
 
 
 def _name(name: str) -> str:
@@ -39,8 +43,8 @@ def _name(name: str) -> str:
     return name
 
 
-def _items(r: Registry, items: list[ItemIO]) -> list[dict]:
-    return dashboards.check_items([i.model_dump(exclude_none=True) for i in items], r.targets())
+def _items(r: Registry, items: list[ItemIO], columns: int) -> list[dict]:
+    return dashboards.check_items([i.model_dump(exclude_none=True) for i in items], r.targets(), columns)
 
 
 @router.get("", response_model=list[DashboardOut])
@@ -50,12 +54,14 @@ def list_dashboards(r: Registry = Depends(registry)):
 
 class DashboardIn(BaseModel):
     name: str
+    columns: int = Field(8, description="4 for a phone, 6 for a tablet, 8 for a desktop")
     items: list[ItemIO] = []
 
 
 @router.post("", response_model=DashboardOut, status_code=201)
 def add_dashboard(body: DashboardIn, r: Registry = Depends(registry)):
-    uid = r.add_dashboard(_name(body.name), _items(r, body.items))
+    columns = dashboards.check_columns(body.columns)
+    uid = r.add_dashboard(_name(body.name), columns, _items(r, body.items, columns))
     return _out(r.get_dashboard(uid))
 
 
@@ -76,15 +82,23 @@ def get_dashboard(uid: str, r: Registry = Depends(registry)):
 
 class DashboardPatch(BaseModel):
     name: str | None = None
-    items: list[ItemIO] | None = Field(None, description="the full new list, in order")
+    columns: int | None = Field(None, description="send the items too when they must move to fit")
+    items: list[ItemIO] | None = Field(None, description="the full new list")
 
 
 @router.patch("/{uid}", response_model=DashboardOut)
 def patch_dashboard(uid: str, patch: DashboardPatch, r: Registry = Depends(registry)):
-    r.get_dashboard(uid)  # 404s early
+    current = r.get_dashboard(uid)  # 404s early
     name = _name(patch.name) if patch.name is not None else None
-    items = _items(r, patch.items) if patch.items is not None else None
-    r.update_dashboard(uid, name=name, items=items)
+    columns = dashboards.check_columns(patch.columns) if patch.columns is not None else None
+    width = columns or current.columns
+    if patch.items is not None:
+        items = _items(r, patch.items, width)
+    elif columns is not None:
+        items = dashboards.check_items(current.items, r.targets(), width)  # still fits?
+    else:
+        items = None
+    r.update_dashboard(uid, name=name, columns=columns, items=items)
     return _out(r.get_dashboard(uid))
 
 

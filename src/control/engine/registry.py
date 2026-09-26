@@ -10,6 +10,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import dashboards as dashboard_items
 from . import vault
 from .found_device import Category, FoundDevice, Readiness
 
@@ -91,11 +92,12 @@ CREATE TABLE IF NOT EXISTS hotkeys (
     made_by  TEXT NOT NULL DEFAULT 'user',          -- 'user' or 'assistant'
     created  REAL NOT NULL
 );
--- Dashboards (ADR 0009): named screens the user arranges, as an ordered list of sized items.
+-- Dashboards (ADR 0010): named screens the user arranges, items placed freely on a grid.
 CREATE TABLE IF NOT EXISTS dashboards (
     uid       TEXT PRIMARY KEY,
     name      TEXT NOT NULL UNIQUE COLLATE NOCASE,
-    items     TEXT NOT NULL DEFAULT '[]',   -- JSON, in order: [{"id", "kind", "size", "target"?, "text"?}]
+    columns   INTEGER NOT NULL DEFAULT 8,   -- the grid's width: 4 phone, 6 tablet, 8 desktop
+    items     TEXT NOT NULL DEFAULT '[]',   -- JSON: [{"id", "kind", "size", "x", "y", "target"?, "text"?}]
     position  INTEGER NOT NULL,             -- order in the Dashboards list
     created   REAL NOT NULL
 );
@@ -166,7 +168,8 @@ class Hotkey:
 class Dashboard:
     uid: str
     name: str
-    items: list[dict]  # in order (engine/dashboards.py)
+    columns: int
+    items: list[dict]  # engine/dashboards.py
 
 
 @dataclass
@@ -310,6 +313,10 @@ class Registry:
         if "adb" not in columns:
             with self._db:
                 self._db.execute("ALTER TABLE streamers ADD COLUMN adb INTEGER NOT NULL DEFAULT 0")
+        columns = {r["name"] for r in self._db.execute("PRAGMA table_info(dashboards)")}
+        if "columns" not in columns:
+            with self._db:
+                self._db.execute("ALTER TABLE dashboards ADD COLUMN columns INTEGER NOT NULL DEFAULT 8")
 
     def _seal_plain_secrets(self) -> None:
         """Databases from before sealing hold plain Link secrets: seal them once."""
@@ -522,14 +529,14 @@ class Registry:
 
     # --- Dashboards ----------------------------------------------------------
 
-    def add_dashboard(self, name: str, items: list[dict]) -> str:
+    def add_dashboard(self, name: str, columns: int, items: list[dict]) -> str:
         uid = uuid.uuid4().hex[:12]
         try:
             with self._db:
                 position = self._db.execute("SELECT COALESCE(MAX(position) + 1, 0) FROM dashboards").fetchone()[0]
                 self._db.execute(
-                    "INSERT INTO dashboards (uid, name, items, position, created) VALUES (?, ?, ?, ?, ?)",
-                    (uid, name, json.dumps(items), position, time.time()),
+                    "INSERT INTO dashboards (uid, name, columns, items, position, created) VALUES (?, ?, ?, ?, ?, ?)",
+                    (uid, name, columns, json.dumps(items), position, time.time()),
                 )
         except sqlite3.IntegrityError:
             raise ValueError(f"a dashboard named '{name}' already exists") from None
@@ -545,12 +552,15 @@ class Registry:
             raise LookupError(f"no dashboard '{uid}'")
         return self._to_dashboard(row)
 
-    def update_dashboard(self, uid: str, name: str | None = None, items: list[dict] | None = None) -> None:
+    def update_dashboard(self, uid: str, name: str | None = None, columns: int | None = None,
+                         items: list[dict] | None = None) -> None:
         self.get_dashboard(uid)  # 404s early
         try:
             with self._db:
                 if name is not None:
                     self._db.execute("UPDATE dashboards SET name = ? WHERE uid = ?", (name, uid))
+                if columns is not None:
+                    self._db.execute("UPDATE dashboards SET columns = ? WHERE uid = ?", (columns, uid))
                 if items is not None:
                     self._db.execute("UPDATE dashboards SET items = ? WHERE uid = ?", (json.dumps(items), uid))
         except sqlite3.IntegrityError:
@@ -638,7 +648,10 @@ class Registry:
         return Group(uid=r["uid"], name=r["name"], members=[m["device_uid"] for m in members], made_by=r["made_by"])
 
     def _to_dashboard(self, r: sqlite3.Row) -> Dashboard:
-        return Dashboard(uid=r["uid"], name=r["name"], items=json.loads(r["items"]))
+        items = json.loads(r["items"])
+        if any("x" not in i for i in items):  # arranged before free placement (ADR 0010)
+            items = dashboard_items.from_flow(items, r["columns"])
+        return Dashboard(uid=r["uid"], name=r["name"], columns=r["columns"], items=items)
 
     def _to_hotkey(self, r: sqlite3.Row) -> Hotkey:
         return Hotkey(uid=r["uid"], keys=r["keys"], target=r["target"], action=json.loads(r["action"]),

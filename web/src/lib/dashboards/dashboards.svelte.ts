@@ -1,4 +1,4 @@
-// The Dashboards the Engine keeps (ADR 0009), shared by the Dashboards list and each Dashboard.
+// The Dashboards the Engine keeps (ADR 0010), shared by the Dashboards list and each Dashboard.
 import { api } from '$lib/api';
 import { home } from '$lib/home.svelte';
 import type { Dashboard, DashboardItem } from '$lib/types';
@@ -49,16 +49,16 @@ class Dashboards {
 	}
 
 	/** Make a Dashboard; returns it, or null if the Engine refused (already said). */
-	async create(name: string, items: DashboardItem[]): Promise<Dashboard | null> {
+	async create(name: string, columns: number, items: DashboardItem[]): Promise<Dashboard | null> {
 		return this.#run(async () => {
-			const d = await api.addDashboard(name.trim(), items);
+			const d = await api.addDashboard(name.trim(), columns, items);
 			this.list = [...this.list, d];
 			return d;
 		});
 	}
 
 	/** Change a Dashboard: shown at once, the Engine's answer taken as truth, undone if it refuses. */
-	async save(uid: string, patch: { name?: string; items?: DashboardItem[] }): Promise<boolean> {
+	async save(uid: string, patch: { name?: string; columns?: 4 | 6 | 8; items?: DashboardItem[] }): Promise<boolean> {
 		const before = this.get(uid);
 		if (!before) return false;
 		this.list = this.list.map((d) => (d.uid === uid ? { ...d, ...patch } : d));

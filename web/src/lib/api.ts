@@ -153,8 +153,9 @@ export const api = {
 
 	// Dashboards (ADR 0009): the whole item list is sent on every change
 	dashboards: () => call<Dashboard[]>('GET', '/dashboards'),
-	addDashboard: (name: string, items: DashboardItem[]) => call<Dashboard>('POST', '/dashboards', { name, items }),
-	patchDashboard: (uid: string, patch: { name?: string; items?: DashboardItem[] }) =>
+	addDashboard: (name: string, columns: number, items: DashboardItem[]) =>
+		call<Dashboard>('POST', '/dashboards', { name, columns, items }),
+	patchDashboard: (uid: string, patch: { name?: string; columns?: number; items?: DashboardItem[] }) =>
 		call<Dashboard>('PATCH', `/dashboards/${enc(uid)}`, patch),
 	deleteDashboard: (uid: string) => call<void>('DELETE', `/dashboards/${enc(uid)}`),
 	orderDashboards: (uids: string[]) => call<Dashboard[]>('PUT', '/dashboards/order', { uids }),

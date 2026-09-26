@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: superseded by ADR-0010
 ---
 
 # Dashboards are an ordered flow with Spacers, not free placement

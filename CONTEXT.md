@@ -105,12 +105,8 @@ The main screen: Scenes and Groups on top, then every controllable Device as a T
 _Avoid_: Main page
 
 **Dashboard**:
-A named screen the user arranges by hand, holding only the Tiles (and other items) they placed on it, e.g. "Phone remote". Each browser can pick one to open to instead of Home. A Dashboard is one layout that reflows on narrow screens, not separate phone and desktop layouts: its items keep their order and size and pack into however many columns fit. It starts empty or as a copy of Home. Anyone who can control the home can make and arrange Dashboards. Forgetting a Device or deleting a Group takes it off every Dashboard.
+A named screen the user arranges by hand, holding only the Tiles (and other items) they placed on it, e.g. "Phone remote". Each browser can pick one to open to instead of Home. Items sit exactly where the user put them on a grid whose width (in columns) the Dashboard has chosen for a phone, a tablet or a desktop; empty cells stay empty. It is one layout, not separate phone and desktop layouts: a screen too narrow for it shows its items in reading order. It starts empty or as a copy of Home. Anyone who can control the home can make and arrange Dashboards. Forgetting a Device or deleting a Group takes it off every Dashboard.
 _Avoid_: Custom home, board, panel, page
-
-**Spacer**:
-An empty item on a Dashboard that holds a gap where the user wants one. Visible only while arranging.
-_Avoid_: Blank, gap, filler
 
 **Tile**:
 A Device's or Group's compact presence on Home or a Dashboard. Tapping it toggles on/off; its chevron, holding it, or right-clicking it opens Device Controls. When on, it takes the Device's real colour. On a Dashboard it can also be small (icon and short name, no chevron) or large.
