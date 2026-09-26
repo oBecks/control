@@ -1,10 +1,10 @@
 <script lang="ts">
 	// One Dashboard: its items at their cells, and Edit mode to arrange them (ADR 0010).
 	// Arranging changes a draft on this screen only; Save writes it to the Dashboard, Cancel drops it.
-	import { beforeNavigate } from '$app/navigation';
+	import { beforeNavigate, goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import { Bold, GripVertical, Pencil, Plus, Trash2, X } from '@lucide/svelte';
+	import { Bold, GripVertical, Pencil, Plus, Redo2, Trash2, Undo2, X } from '@lucide/svelte';
 	import { MediaQuery } from 'svelte/reactivity';
 	import AddItems from '$lib/dashboards/AddItems.svelte';
 	import { dashboards } from '$lib/dashboards/dashboards.svelte';
@@ -30,6 +30,7 @@
 	import TargetTile from '$lib/TargetTile.svelte';
 	import type { DashboardItem, NewDashboardItem } from '$lib/types';
 	import Button from '$lib/ui/Button.svelte';
+	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
 	import Sheet from '$lib/ui/Sheet.svelte';
 	import Stepper from '$lib/ui/Stepper.svelte';
@@ -67,6 +68,11 @@
 	/** Each width's arrangement from earlier in this edit, so switching back restores it. */
 	let widths: Partial<Record<Columns, DashboardItem[]>> = {};
 	let saving = $state(false);
+	/** Earlier and undone arrangements in this edit, for Undo and Redo. */
+	let past = $state<string[]>([]);
+	let future = $state<string[]>([]);
+	/** Control's own "are you sure?", when leaving or cancelling would lose changes. */
+	let ask = $state<{ title: string; confirmLabel: string; onconfirm: () => void } | null>(null);
 	const arranging = $derived(!!draft);
 	const changed = $derived(!!draft && JSON.stringify(draft) !== original);
 	/** The item picked while arranging, by id. */
@@ -100,12 +106,58 @@
 		draft = { name: dash.name, columns: dash.columns, items: structuredClone($state.snapshot(dash.items)) };
 		original = JSON.stringify(draft);
 		widths = {};
+		past = [];
+		future = [];
 	}
 
 	function stopArranging() {
 		draft = null;
 		picked = null;
 		adding = false;
+		ask = null;
+	}
+
+	const layoutOf = () => JSON.stringify({ columns: draft?.columns, items: draft?.items });
+
+	/** Remember the arrangement before a change, for Undo. */
+	function record() {
+		past = [...past.slice(-99), layoutOf()];
+		future = [];
+	}
+
+	function restore(layout: string) {
+		if (!draft) return;
+		const { columns, items } = JSON.parse(layout);
+		draft.columns = columns;
+		draft.items = items;
+		if (!draft.items.some((i) => i.id === picked)) picked = null;
+	}
+
+	function undo() {
+		const layout = past.at(-1);
+		if (!layout) return;
+		future = [...future, layoutOf()];
+		past = past.slice(0, -1);
+		restore(layout);
+	}
+
+	function redo() {
+		const layout = future.at(-1);
+		if (!layout) return;
+		past = [...past, layoutOf()];
+		future = future.slice(0, -1);
+		restore(layout);
+	}
+
+	/** Ctrl+Z undoes, Ctrl+Shift+Z or Ctrl+Y redoes; a text field keeps its own undo. */
+	function keydown(e: KeyboardEvent) {
+		const typing = e.target instanceof Element && e.target.closest('input, textarea');
+		if (!draft || !(e.ctrlKey || e.metaKey) || typing) return;
+		const key = e.key.toLowerCase();
+		if (key === 'z' && !e.shiftKey) undo();
+		else if ((key === 'z' && e.shiftKey) || key === 'y') redo();
+		else return;
+		e.preventDefault();
 	}
 
 	async function saveDraft() {
@@ -119,20 +171,32 @@
 	}
 
 	function cancel() {
-		if (!changed || confirm('Throw away your changes to this dashboard?')) stopArranging();
+		if (!changed) return stopArranging();
+		ask = { title: 'Throw away your changes?', confirmLabel: 'Throw away', onconfirm: stopArranging };
 	}
 
-	// Leaving with unsaved changes asks first: in the app, and when the tab or Window closes.
+	// Leaving with unsaved changes asks first: in the app, and (the browser's own prompt) when the tab closes.
 	beforeNavigate((nav) => {
 		if (!changed) return;
-		if (nav.type === 'leave') nav.cancel();
-		else if (confirm('Leave without saving your changes to this dashboard?')) stopArranging();
-		else nav.cancel();
+		nav.cancel();
+		const to = nav.to?.url;
+		if (nav.type === 'leave' || !to) return;
+		ask = {
+			title: 'Leave without saving your changes?',
+			confirmLabel: 'Leave without saving',
+			onconfirm: () => {
+				stopArranging();
+				// eslint-disable-next-line svelte/no-navigation-without-resolve -- the app's own link, already resolved
+				goto(to.pathname + to.search);
+			}
+		};
 	});
 
 	/** Change the draft's items. */
 	function save(next: DashboardItem[]) {
-		if (draft) draft.items = next;
+		if (!draft) return;
+		record();
+		draft.items = next;
 	}
 
 	function resize(id: string, size: { w?: number; h?: number }) {
@@ -156,6 +220,7 @@
 
 	function setColumns(next: Columns) {
 		if (!draft || next === draft.columns) return;
+		record();
 		widths[draft.columns] = draft.items;
 		const before = widths[next];
 		draft.items = before ? recall(before, draft.items, next) : withColumns(draft.items, next);
@@ -179,6 +244,19 @@
 	}
 </script>
 
+<svelte:window onkeydown={keydown} />
+
+{#if ask}
+	<ConfirmDialog
+		title={ask.title}
+		detail="Your changes to this dashboard aren't saved yet."
+		confirmLabel={ask.confirmLabel}
+		cancelLabel="Keep editing"
+		onconfirm={ask.onconfirm}
+		oncancel={() => (ask = null)}
+	/>
+{/if}
+
 <svelte:head><title>{dash?.name ?? 'Dashboard'} · Control</title></svelte:head>
 
 <div class="dash" class:with-panel={desktop.current}>
@@ -196,6 +274,12 @@
 				{#if draft}
 					<input class="title" bind:value={draft.name} aria-label="Dashboard name" maxlength="40" />
 					<div class="actions">
+						<button class="icon" aria-label="Undo" title="Undo (Ctrl+Z)" disabled={!past.length} onclick={undo}>
+							<Undo2 size={18} strokeWidth={2.2} />
+						</button>
+						<button class="icon" aria-label="Redo" title="Redo (Ctrl+Y)" disabled={!future.length} onclick={redo}>
+							<Redo2 size={18} strokeWidth={2.2} />
+						</button>
 						<Button variant="ghost" size="sm" onclick={cancel}>Cancel</Button>
 						<Button variant="primary" size="sm" disabled={saving} onclick={saveDraft}>
 							{changed ? 'Save' : 'Done'}
@@ -426,7 +510,25 @@
 	}
 	header .actions {
 		display: flex;
+		align-items: center;
 		gap: var(--s-2);
+	}
+	header .icon {
+		display: grid;
+		place-items: center;
+		inline-size: 36px;
+		block-size: 36px;
+		border: 0;
+		border-radius: var(--r-pill);
+		background: transparent;
+		color: var(--text-2);
+	}
+	header .icon:hover:not(:disabled) {
+		background: var(--surface-2);
+	}
+	header .icon:disabled {
+		color: var(--text-3);
+		opacity: 0.5;
 	}
 	.title:focus {
 		border: 1px solid var(--accent);
