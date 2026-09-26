@@ -22,6 +22,7 @@ from mcp_types import ToolAnnotations
 from .. import __version__
 from ..engine.streamer import find_shortcut
 
+MCP_HEADER = "X-Control-MCP"  # sent with every Engine call: this server's version
 START_TIMEOUT = 30  # seconds to wait for a Control it started
 REQUEST_TIMEOUT = 30  # a device that doesn't answer takes a few seconds to give up on
 
@@ -447,5 +448,7 @@ def run(port: int) -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)  # a line per Engine call in Claude's log
     if sys.stderr is None:  # a client that doesn't collect the server's log
         sys.stderr = open(os.devnull, "w")  # noqa: SIM115 (lives as long as the server)
-    http = httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=REQUEST_TIMEOUT)
+    # The header tells the Engine which version's tools Claude has (Settings says when to restart Claude).
+    http = httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=REQUEST_TIMEOUT,
+                        headers={MCP_HEADER: __version__})
     create_server(Engine(http, start=lambda: start_control(port))).run("stdio")

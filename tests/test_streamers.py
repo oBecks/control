@@ -32,9 +32,13 @@ class FakeStreamer:
         streamer.key_code(button)  # refuses unknown buttons, like the real one
         self.calls.append(("press", button))
 
+    def wake(self):
+        self.calls.append(("wake",))
+        self.state.app = "com.google.android.tvlauncher"
+
     def open_app(self, app):
         self.calls.append(("app", app))
-        self.state.on, self.state.app = True, app
+        self.state.on, self.state.app = True, streamer.package_for(app, []) or app
 
 
 # --- Apps --------------------------------------------------------------------------------
@@ -251,7 +255,11 @@ def adb(box, monkeypatch):
     calls = []
     monkeypatch.setattr(api.android_adb, "allow", lambda ip: ["il.co.yes.yesplus", "com.netflix.ninja"])
     monkeypatch.setattr(api.android_adb, "installed", lambda ip: ["il.co.yes.yesplus"])
-    monkeypatch.setattr(api.android_adb, "launch", lambda ip, package: calls.append(("adb", package)))
+    def launch(ip, package):
+        calls.append(("adb", package))
+        fake.state.app = package
+
+    monkeypatch.setattr(api.android_adb, "launch", launch)
     return client, fake, calls
 
 
@@ -343,3 +351,40 @@ def _no_wait(sleep):
         await sleep(0)
 
     return quick
+
+
+# --- Small fixes ---------------------------------------------------------------------------
+
+
+def test_a_link_names_its_package():
+    mine = [{"name": "Mine", "app": "org.example.tv", "link": "example://"}]
+    assert streamer.package_for("https://www.youtube.com", []) == "com.google.android.youtube.tv"
+    assert streamer.package_for("example://", mine) == "org.example.tv"
+    assert streamer.package_for("il.co.yes.yesplus", []) == "il.co.yes.yesplus"
+    assert streamer.package_for("unknown://", []) is None
+
+
+def test_opening_an_app_answers_once_the_streamer_reports_it(adb, monkeypatch):
+    client, fake, _ = adb
+    client.put(f"/api/streamers/{YES}/adb")
+    reads = {"n": 0}
+    real = fake.get_state
+
+    def slow_state():  # the box reports yes+ only on the third read after adb opens it
+        reads["n"] += 1
+        state = real()
+        state.app = "il.co.yes.yesplus" if reads["n"] >= 3 else "com.google.android.tvlauncher"
+        return state
+
+    fake.get_state = slow_state
+    monkeypatch.setattr(api.time, "sleep", lambda s: None)
+    reply = client.post(f"/api/devices/{YES}/state", json={"open_app": "il.co.yes.yesplus"}).json()
+    assert reply["state"]["app_name"] == "yes+"
+
+
+def test_a_box_showing_its_screensaver_is_woken_before_an_app_opens(box):
+    client, fake, _ = box
+    linked(client)
+    fake.state.on, fake.state.app = True, "com.google.android.backdrop"
+    client.post(f"/api/devices/{YES}/state", json={"open_app": "https://www.youtube.com"})
+    assert fake.calls == [("wake",), ("app", "https://www.youtube.com")]

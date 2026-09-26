@@ -8,6 +8,7 @@ It also serves the built web UI. Listens on 127.0.0.1, and on the LAN only while
 import base64
 import mimetypes
 import os
+import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from dataclasses import asdict
@@ -41,6 +42,7 @@ from . import access, assistant, desktop
 from .deps import registry
 
 app = FastAPI(title="Control Engine", version=__version__)
+app.middleware("http")(assistant.note_mcp)
 app.middleware("http")(access.gate)
 app.include_router(access.router)
 app.include_router(desktop.router)
@@ -242,6 +244,7 @@ def _read_state(r: Registry, out: DeviceOut, desired: StateIn | None) -> dict:
         if desired:
             if desired.open_app:
                 _open_app(device, box, desired.open_app, setup["adb"])
+                _wait_for_app(box, streamer.package_for(desired.open_app, apps))
             elif desired.press:
                 box.press(desired.press)
             elif desired.on is not None:
@@ -260,9 +263,12 @@ def _read_state(r: Registry, out: DeviceOut, desired: StateIn | None) -> dict:
 
 def _open_app(device: KnownDevice, box, target: str, adb: bool) -> None:
     """A link opens directly; a package over adb when the box allows it, else via its Play Store page.
-    A sleeping box is woken first: adb would open the app behind a dark screen."""
-    if not box.get_state().on:
+    A sleeping box is woken first, and one showing its screensaver too: the app would open behind it."""
+    state = box.get_state()
+    if not state.on:
         box.set_power(True)
+    elif state.app in streamer.SCREENSAVERS:
+        box.wake()
     if "://" not in target and adb:
         try:
             android_adb.launch(device.ip, target)
@@ -270,6 +276,13 @@ def _open_app(device: KnownDevice, box, target: str, adb: bool) -> None:
         except android_adb.NotAllowed:
             pass  # debugging was turned off since: the Play Store way still works
     box.open_app(target)
+
+
+def _wait_for_app(box, package: str | None, seconds: float = 5.0) -> None:
+    """Answer once the Streamer reports the app open, so the reply (and the Assistant) says so."""
+    deadline = time.monotonic() + seconds
+    while package and box.get_state().app != package and time.monotonic() < deadline:
+        time.sleep(0.2)
 
 
 def _apply_light(light, s: StateIn) -> None:

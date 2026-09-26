@@ -32,6 +32,14 @@
 		}
 	}
 
+	async function dismiss() {
+		try {
+			status = await api.dismissRestartNote();
+		} catch (e) {
+			home.notify(e instanceof Error ? e.message : String(e));
+		}
+	}
+
 	async function copyCommand() {
 		if (!status) return;
 		try {
@@ -77,6 +85,14 @@
 		</div>
 		{#if restart}
 			<p class="note" role="status">Quit Claude from its tray icon and open it again to apply this.</p>
+		{:else if status.restart_claude}
+			<div class="note updated" role="status">
+				<p>
+					Control was updated to {status.restart_claude}. Quit Claude from its tray icon and open it again to get the
+					new Assistant tools.
+				</p>
+				<Button size="sm" variant="ghost" onclick={dismiss}>Dismiss</Button>
+			</div>
 		{/if}
 
 		<div class="code">
@@ -138,6 +154,12 @@
 		border: 1px solid color-mix(in oklab, var(--accent) 45%, var(--border));
 		background: color-mix(in oklab, var(--accent) 14%, var(--surface));
 		font-size: var(--fs-sm);
+	}
+	.updated {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--s-3);
 	}
 	.code {
 		display: flex;

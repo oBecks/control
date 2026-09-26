@@ -25,6 +25,7 @@ class Streamer(Protocol):
     def set_power(self, on: bool) -> None: ...
     def press(self, button: str) -> None: ...
     def open_app(self, app: str) -> None: ...
+    def wake(self) -> None: ...
 
 
 # Button names are shared with an infrared TV's (remote_buttons.SUGGESTED), so Hotkeys, Dashboards
@@ -95,6 +96,13 @@ def with_links(shortcuts: list[dict]) -> list[dict]:
     return [s if s.get("link") or s["app"] not in links else s | {"link": links[s["app"]]} for s in shortcuts]
 
 
+def package_for(target: str, shortcuts: list[dict]) -> str | None:
+    """The package a launch target opens: itself, or the app whose link it is (None if unknown)."""
+    if "://" not in target:
+        return target
+    return next((s["app"] for s in [*shortcuts, *CATALOGUE] if s.get("link") == target), None)
+
+
 def launch_target(shortcut: dict) -> str:
     """What to send to open it: its link, else its package."""
     return shortcut.get("link") or shortcut["app"]
@@ -108,6 +116,9 @@ def catalogue_for(model: str) -> list[dict]:
     """The catalogue as a setup shows it for this model: yes+ is ticked on yes boxes."""
     yes = is_yes_box(model)
     return [_shortcut(e) | {"default": e["default"] or (yes and e.get("yes", False))} for e in CATALOGUE]
+
+
+SCREENSAVERS = {"com.google.android.backdrop", "com.android.dreams.basic"}
 
 
 def installed_catalogue(packages: list[str], model: str) -> list[dict]:
@@ -153,7 +164,7 @@ def app_name(package: str | None, shortcuts: list[dict]) -> str | None:
         return NAMES[package]
     if "launcher" in package:  # com.google.android.tvlauncher, Google TV's ...launcherx
         return "Home screen"
-    if package in ("com.google.android.backdrop", "com.android.dreams.basic"):
+    if package in SCREENSAVERS:
         return "Screensaver"
     parts = [p for p in package.split(".") if p not in {"com", "android", "tv", "app", "google", "androidtv"}]
     return (parts[-1] if parts else package).replace("_", " ").capitalize()

@@ -67,6 +67,20 @@ Filename: "{app}\Control.exe"; Description: "Open Control"; Flags: nowait postin
 Filename: "{app}\Control.exe"; Parameters: "--disconnect-claude"; Flags: runhidden waituntilterminated; RunOnceId: "DisconnectClaude"
 
 [Code]
+// Claude runs Control.exe --mcp in the background with no window, so the "close applications" step
+// can't close it and the update stops. Stop it here; Claude starts the new one when it restarts.
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ResultCode: Integer;
+begin
+  Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+    '-NoProfile -NonInteractive -Command "Get-CimInstance Win32_Process | Where-Object { ' +
+    '$_.Name -eq ''Control.exe'' -and $_.CommandLine -like ''*--mcp*'' } | ' +
+    'ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Result := '';
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   // Unticked on a reinstall: remove what an earlier install or the Settings switch wrote.
