@@ -121,6 +121,12 @@ def test_dashboards_from_before_free_placement_are_laid_out_as_they_looked():
     assert check(placed, columns=4)
 
 
+def test_a_heading_with_a_size_that_makes_no_sense_spans_the_grid():
+    for size in ("wide", "0x1", "", None):
+        [h] = dashboards.upgrade([{"id": "h", "kind": "heading", "size": size, "x": 0, "y": 0}], 6)
+        assert (h["w"], h["h"]) == (6, 1)
+
+
 def test_placed_items_with_a_named_size_get_cells():
     named = [{"id": "t", "kind": "tile", "size": "2x2", "target": "a", "x": 0, "y": 1},
              {"id": "h", "kind": "heading", "size": "2x1", "text": "AC", "x": 0, "y": 0}]
@@ -188,6 +194,9 @@ def test_the_list_keeps_the_users_order(pc):
     assert [d["name"] for d in pc.put("/api/dashboards/order", json={"uids": [c, a]}).json()] == ["C", "A", "B"]
     d = pc.post("/api/dashboards", json={"name": "D"}).json()["uid"]
     assert pc.get("/api/dashboards").json()[-1]["uid"] == d
+    # Repeated and unknown uids are ignored rather than leaving holes in the order.
+    names = [x["name"] for x in pc.put("/api/dashboards/order", json={"uids": [b, "nope", b, d]}).json()]
+    assert names == ["B", "D", "C", "A"]
 
 
 def test_forgotten_devices_and_deleted_groups_leave_every_dashboard(pc):

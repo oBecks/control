@@ -567,8 +567,11 @@ class Registry:
             raise ValueError(f"a dashboard named '{name}' already exists") from None
 
     def order_dashboards(self, uids: list[str]) -> None:
-        """Put the Dashboards in this order; any left out keep their order after them."""
-        rest = [d.uid for d in self.dashboards() if d.uid not in uids]
+        """Put the Dashboards in this order; any left out keep their order after them. Unknown or
+        repeated uids are ignored."""
+        known = [d.uid for d in self.dashboards()]
+        uids = [u for u in dict.fromkeys(uids) if u in known]
+        rest = [u for u in known if u not in uids]
         with self._db:
             self._db.executemany(
                 "UPDATE dashboards SET position = ? WHERE uid = ?", [(i, u) for i, u in enumerate(uids + rest)]

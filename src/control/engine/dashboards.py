@@ -93,7 +93,8 @@ def _old_cells(item: dict, columns: int) -> tuple[int, int]:
     if size == "full":
         return columns, 1
     if item.get("kind") == "heading":
-        return min(int(size.split("x")[0]), columns), 1
+        head = str(size).split("x")[0]
+        return min(int(head), columns) if head.isdigit() and int(head) else columns, 1
     w, h = _OLD_SIZES.get(size, (1, 2))
     return min(w, columns), h
 
