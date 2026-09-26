@@ -9,7 +9,7 @@ from control.engine.plug import PlugState
 from control.engine.registry import Registry
 
 from .test_api import FakeLight, client  # noqa: F401 (client is a fixture)
-from .test_climate import FakeTransmitter
+from .test_climate import SIGNALS, FakeTransmitter
 
 TOGGLE_TV = {"format": "buttons", "kind": "tv", "buttons": {"power": "AAAA"}}
 ON_OFF_FAN = {"format": "buttons", "kind": "fan", "buttons": {"power_on": "AAAA", "power_off": "AAAB"}}
@@ -243,3 +243,58 @@ def test_light_state_passes_through_unchanged(home):
     state = c.get(f"/api/groups/{g['uid']}/state").json()["state"]
     assert state == {"on": True, "brightness": 70, "mode": "white", "rgb": None, "kelvin": 3000}
 
+
+
+def test_acs_that_share_nothing_are_an_on_off_group(home):
+    c = home["client"]
+    r = Registry()
+    heat_only = {**SIGNALS, "operationModes": ["heat"], "commands": {"off": SIGNALS["commands"]["off"],
+                                                                     "heat": SIGNALS["commands"]["heat"]}}
+    cool_only = {**SIGNALS, "operationModes": ["cool"]}
+    r.set_remote_signals(home["ac"], "x", cool_only)
+    other = r.add_remote("Den AC", Category.CLIMATE, "broadlink:aa", "x", heat_only)
+    r.close()
+    g = make(c, "ACs", home["ac"], other)
+    assert g["control"] == "power"
+    resp = c.post(f"/api/groups/{g['uid']}/state", json={"mode": "cool"})
+    assert resp.status_code == 422 and home["tx"].sent == []
+
+
+def test_a_value_one_ac_lacks_changes_no_ac(home):
+    c = home["client"]
+    r = Registry()
+    narrow = {**SIGNALS, "minTemperature": 18.0, "maxTemperature": 24.0}
+    other = r.add_remote("Den AC", Category.CLIMATE, "broadlink:aa", "x", narrow)
+    r.close()
+    g = make(c, "ACs", home["ac"], other)
+    assert g["control"] == "climate"
+    resp = c.post(f"/api/groups/{g['uid']}/state", json={"target_temp": 25})
+    assert resp.status_code == 422 and "every AC" in resp.json()["detail"]
+    assert home["tx"].sent == []  # neither AC was sent anything
+
+
+def test_any_member_error_is_that_members_failure(home, monkeypatch):
+    c = home["client"]
+
+    class Broken(FakePlug):
+        def get_state(self):
+            raise RuntimeError("library blew up")
+
+    monkeypatch.setattr(api, "connect_plug", lambda r, uid: (None, Broken()))
+    g = make(c, "Evening", "yeelight:1", "tuya:abc")
+    body = c.get(f"/api/groups/{g['uid']}/state").json()
+    assert body["failed"]["tuya:abc"] == {"reason": "Outlet: library blew up", "unreachable": False}
+    assert list(body["members"]) == ["yeelight:1"]
+
+
+def test_a_failed_ir_send_reads_as_not_answering():
+    from control.engine.adapters.broadlink_transmitter import BroadlinkTransmitter
+
+    class Dead:
+        def send_data(self, signal):
+            raise OSError("timed out")
+
+    tx = object.__new__(BroadlinkTransmitter)
+    tx._ip, tx._dev = "10.0.0.4", Dead()
+    with pytest.raises(DeviceUnreachable, match="Broadlink at 10.0.0.4: timed out"):
+        tx.send(b"x")

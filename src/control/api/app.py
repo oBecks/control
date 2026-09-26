@@ -29,6 +29,7 @@ from ..engine.connect import (
     control_kind,
     only_transmitter,
 )
+from ..engine.climate import features_from_signals
 from ..engine.errors import DeviceUnreachable
 from ..engine.found_device import Category
 from ..engine.links import tuya_link
@@ -268,11 +269,18 @@ class GroupOut(BaseModel):
     made_by: Literal["user", "assistant"]
 
 
+def _climate_features(r: Registry, uids: list[str]) -> list[dict]:
+    """Each AC's features, from its Signals: no need to reach the ACs."""
+    return [asdict(features_from_signals(r.resolve_remote(uid).signals)) for uid in uids]
+
+
 def _group_out(r: Registry, g: Group) -> GroupOut:
     members = [_device_out(r, uid) for uid in g.members]
+    controls = [m.control for m in members]
+    climate = _climate_features(r, g.members) if set(controls) == {"climate"} else None
     return GroupOut(
         uid=g.uid, name=g.name, members=g.members, made_by=g.made_by,
-        control=groups.control_of([m.control for m in members]),
+        control=groups.control_of(controls, climate),
         category=groups.category_of([m.category.value for m in members]),
     )
 
@@ -355,7 +363,7 @@ def _group_state(r: Registry, g: Group, desired: StateIn | None) -> dict:
     def one(uid: str) -> tuple[str, dict | None, Exception | None]:
         try:
             return uid, _member_reading(r, uid, desired), None
-        except (DeviceUnreachable, LookupError, ValueError) as exc:
+        except Exception as exc:  # one member failing, however it fails, mustn't stop the others
             return uid, None, exc
 
     with ThreadPoolExecutor(max_workers=8) as pool:
@@ -396,6 +404,9 @@ def set_group_state(uid: str, desired: StateIn, r: Registry = Depends(registry))
     if extra := asked - groups.SETTABLE[control]:
         what = {"light": "lights", "climate": "ACs", "power": "devices"}[control]
         raise ValueError(f"'{g.name}' groups {what}, which can't all take {', '.join(sorted(extra))}")
+    if control == "climate":
+        # Checked for all ACs first, so a value one of them lacks never changes only the others.
+        groups.check_climate(groups.shared_climate(_climate_features(r, g.members)), desired.model_dump())
     return _group_state(r, g, desired)
 
 

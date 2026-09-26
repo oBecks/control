@@ -18,12 +18,13 @@ SETTABLE: dict[str, set[str]] = {
 }
 
 
-def control_of(member_controls: list[str | None]) -> GroupControl:
-    """The control surface a Group gets from its members' (e.g. ["light", "light"] → "light")."""
+def control_of(member_controls: list[str | None], climate_features: list[dict] | None = None) -> GroupControl:
+    """The control surface a Group gets from its members' (e.g. ["light", "light"] → "light").
+    ACs that share no mode or temperature (`climate_features`: each AC's) are on/off only."""
     kinds = set(member_controls)
     if kinds == {"light"}:
         return "light"
-    if kinds == {"climate"}:
+    if kinds == {"climate"} and (climate_features is None or shared_climate(climate_features) is not None):
         return "climate"
     return "power"
 
@@ -64,7 +65,7 @@ def merge(control: GroupControl, readings: list[dict]) -> dict:
         features = _light_features([m["features"] for m in readings])
         return {"control": "light", "features": features, "state": {**lead["state"], "on": on}, "assumed": assumed}
     if control == "climate":
-        features = _climate_features([m["features"] for m in readings])
+        features = shared_climate([m["features"] for m in readings])
         if features is not None:
             return {"control": "climate", "features": features, "state": {**lead["state"], "on": on}, "assumed": True}
     return {"control": "power", "features": {}, "state": {"on": on}, "assumed": assumed}
@@ -87,7 +88,7 @@ def _shared(lists: list[list[str]]) -> list[str]:
     return [v for v in lists[0] if all(v in other for other in lists[1:])]
 
 
-def _climate_features(all_features: list[dict]) -> dict | None:
+def shared_climate(all_features: list[dict]) -> dict | None:
     """What every AC accepts; None when they share no mode or temperature (the Group is on/off only)."""
     modes = _shared([f["modes"] for f in all_features])
     lo = max(f["min_temp"] for f in all_features)
@@ -103,3 +104,15 @@ def _climate_features(all_features: list[dict]) -> dict | None:
         "max_temp": hi,
         "step": max(f["step"] for f in all_features),
     }
+
+
+def check_climate(shared: dict, change: dict) -> None:
+    """Refuse a change some AC in the Group couldn't take, before any AC is sent anything."""
+    if change.get("mode") is not None and change["mode"] not in shared["modes"]:
+        raise ValueError(f"mode must be one of {shared['modes']}, which every AC in the group has")
+    for key, options in (("fan", shared["fan_modes"]), ("swing", shared["swing_modes"])):
+        if change.get(key) is not None and options and change[key] not in options:
+            raise ValueError(f"{key} must be one of {options}, which every AC in the group has")
+    temp = change.get("target_temp")
+    if temp is not None and not shared["min_temp"] <= temp <= shared["max_temp"]:
+        raise ValueError(f"temperature must be {shared['min_temp']:g}-{shared['max_temp']:g} for every AC in the group")

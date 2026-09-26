@@ -96,7 +96,12 @@ class Home {
 			if (this.groups.find((x) => x.uid === g.uid)?.members.join() !== g.members.join()) return;
 			this.#takeGroup(g.uid, s);
 		} catch (e) {
-			if (e instanceof ApiError && e.unreachable) for (const m of g.members) this.unreachable[m] = true;
+			if (e instanceof ApiError && e.unreachable) {
+				for (const m of g.members) this.unreachable[m] = true;
+				return;
+			}
+			// Refused for another reason: its members, which refresh skips, still get their own readings.
+			await Promise.all(g.members.map((m) => this.#readState(m)));
 			return;
 		}
 		// Members the Group couldn't read for another reason still get their own reading.
