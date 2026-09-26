@@ -1,5 +1,7 @@
 <script lang="ts">
 	// One Dashboard: its items at their cells, and Edit mode to arrange them (ADR 0010).
+	// Arranging changes a draft on this screen only; Save writes it to the Dashboard, Cancel drops it.
+	import { beforeNavigate } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { Bold, GripVertical, Pencil, Plus, Trash2, X } from '@lucide/svelte';
@@ -16,6 +18,7 @@
 		fits,
 		place,
 		readingOrder,
+		recall,
 		ROWS,
 		tileLook,
 		withColumns,
@@ -57,19 +60,27 @@
 	const uid = $derived(page.params.uid ?? '');
 	const dash = $derived(dashboards.get(uid));
 
-	let arranging = $state(false);
+	/** The Dashboard as it's being arranged; null when not arranging. */
+	let draft = $state<{ name: string; columns: Columns; items: DashboardItem[] } | null>(null);
+	/** The draft as it started, to tell whether anything changed. */
+	let original = '';
+	/** Each width's arrangement from earlier in this edit, so switching back restores it. */
+	let widths: Partial<Record<Columns, DashboardItem[]>> = {};
+	let saving = $state(false);
+	const arranging = $derived(!!draft);
+	const changed = $derived(!!draft && JSON.stringify(draft) !== original);
 	/** The item picked while arranging, by id. */
 	let picked = $state<string | null>(null);
 	let adding = $state(false);
-	/** Where things are while an item is being dragged; saved when it's let go. */
+	/** Where things are while an item is being dragged; kept in the draft when it's let go. */
 	let dragged = $state<DashboardItem[] | null>(null);
 	let draggingId = $state<string | null>(null);
 	let width = $state(0);
 
-	const columns = $derived(dash?.columns ?? 8);
-	const items = $derived(dragged ?? dash?.items ?? []);
-	/** Too narrow for its columns: shown in reading order, and not arranged here. */
-	const placed = $derived(!width || fits(columns, width));
+	const columns = $derived(draft?.columns ?? dash?.columns ?? 8);
+	const items = $derived(dragged ?? draft?.items ?? dash?.items ?? []);
+	/** Too narrow for its columns: shown in reading order, and not arranged here (a draft always shows its grid). */
+	const placed = $derived(!width || arranging || fits(columns, width));
 	const flowColumns = $derived(columnsFor(width || 375));
 	const rows = $derived(bottomOf(items, columns) + (arranging ? ROOM_BELOW : 0));
 	const pickedItem = $derived(items.find((i) => i.id === picked));
@@ -84,18 +95,44 @@
 	});
 
 	function startArranging() {
+		if (!dash) return;
 		panel.close();
-		arranging = true;
+		draft = { name: dash.name, columns: dash.columns, items: structuredClone($state.snapshot(dash.items)) };
+		original = JSON.stringify(draft);
+		widths = {};
 	}
 
-	function done() {
-		arranging = false;
+	function stopArranging() {
+		draft = null;
 		picked = null;
 		adding = false;
 	}
 
+	async function saveDraft() {
+		if (!dash || !draft) return;
+		if (!changed) return stopArranging();
+		saving = true;
+		const name = draft.name.trim() || dash.name;
+		const ok = await dashboards.save(dash.uid, { name, columns: draft.columns, items: draft.items });
+		saving = false;
+		if (ok) stopArranging();
+	}
+
+	function cancel() {
+		if (!changed || confirm('Throw away your changes to this dashboard?')) stopArranging();
+	}
+
+	// Leaving with unsaved changes asks first: in the app, and when the tab or Window closes.
+	beforeNavigate((nav) => {
+		if (!changed) return;
+		if (nav.type === 'leave') nav.cancel();
+		else if (confirm('Leave without saving your changes to this dashboard?')) stopArranging();
+		else nav.cancel();
+	});
+
+	/** Change the draft's items. */
 	function save(next: DashboardItem[]) {
-		if (dash) dashboards.save(dash.uid, { items: next });
+		if (draft) draft.items = next;
 	}
 
 	function resize(id: string, size: { w?: number; h?: number }) {
@@ -118,11 +155,11 @@
 	}
 
 	function setColumns(next: Columns) {
-		if (dash && next !== dash.columns) dashboards.save(dash.uid, { columns: next, items: withColumns(items, next) });
-	}
-
-	function rename(name: string) {
-		if (dash && name.trim() && name.trim() !== dash.name) dashboards.save(dash.uid, { name: name.trim() });
+		if (!draft || next === draft.columns) return;
+		widths[draft.columns] = draft.items;
+		const before = widths[next];
+		draft.items = before ? recall(before, draft.items, next) : withColumns(draft.items, next);
+		draft.columns = next;
 	}
 
 	function itemName(item: DashboardItem): string {
@@ -156,15 +193,14 @@
 			{/if}
 		{:else}
 			<header>
-				{#if arranging}
-					<input
-						class="title"
-						value={dash.name}
-						aria-label="Dashboard name"
-						maxlength="40"
-						onchange={(e) => rename(e.currentTarget.value)}
-					/>
-					<Button variant="primary" size="sm" onclick={done}>Done</Button>
+				{#if draft}
+					<input class="title" bind:value={draft.name} aria-label="Dashboard name" maxlength="40" />
+					<div class="actions">
+						<Button variant="ghost" size="sm" onclick={cancel}>Cancel</Button>
+						<Button variant="primary" size="sm" disabled={saving} onclick={saveDraft}>
+							{changed ? 'Save' : 'Done'}
+						</Button>
+					</div>
 				{:else}
 					<h1>{dash.name}</h1>
 					{#if placed}
@@ -200,7 +236,7 @@
 					columns,
 					onmove: (id, x, y) => {
 						draggingId = id;
-						dragged = place(dash.items, id, { x, y }, columns);
+						dragged = place(draft?.items ?? dash.items, id, { x, y }, columns);
 					},
 					onend: () => {
 						if (dragged) save(dragged);
@@ -387,6 +423,10 @@
 		background: transparent;
 		color: var(--text);
 		font-family: inherit;
+	}
+	header .actions {
+		display: flex;
+		gap: var(--s-2);
 	}
 	.title:focus {
 		border: 1px solid var(--accent);

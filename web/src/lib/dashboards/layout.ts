@@ -97,6 +97,17 @@ export function withColumns(items: DashboardItem[], columns: number): DashboardI
 	return settled;
 }
 
+/** Back to a width arranged earlier in this edit: items keep where they were at that width, items
+ * added since go under them, and items removed since stay gone. */
+export function recall(remembered: DashboardItem[], current: DashboardItem[], columns: number): DashboardItem[] {
+	const kept = current.flatMap((item) => {
+		const was = remembered.find((r) => r.id === item.id);
+		return was ? [{ ...item, x: was.x, y: was.y, w: was.w, h: was.h } as DashboardItem] : [];
+	});
+	const added = current.filter((item) => !remembered.some((r) => r.id === item.id));
+	return addBelow(kept, added, columns);
+}
+
 /** The first row under every item. */
 export function bottomOf(items: DashboardItem[], columns: number): number {
 	return Math.max(0, ...items.map((i) => i.y + cellsOf(i, columns).h));

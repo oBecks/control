@@ -10,6 +10,7 @@ import {
 	moveItem,
 	place,
 	readingOrder,
+	recall,
 	tileLook,
 	withColumns
 } from './layout';
@@ -100,6 +101,15 @@ describe('withColumns', () => {
 		expect(at(withColumns(items, 4))).toEqual({ a: [0, 0], b: [2, 0] });
 		const crowded = [tile('a', 2, 0), tile('b', 6, 0)];
 		expect(at(withColumns(crowded, 4))).toEqual({ a: [2, 0], b: [2, 2] });
+	});
+});
+
+describe('recall', () => {
+	it('brings back a width arranged earlier, keeping what was added or removed since', () => {
+		const desktop = [tile('a', 6, 0), tile('b', 0, 0), tile('c', 2, 0)];
+		const phone = withColumns(desktop, 4).filter((i) => i.id !== 'c');
+		const now = [...phone, tile('d', 0, 9)];
+		expect(at(recall(desktop, now, 8))).toEqual({ a: [6, 0], b: [0, 0], d: [0, 2] });
 	});
 });
 
