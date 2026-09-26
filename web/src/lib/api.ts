@@ -9,6 +9,10 @@ import type {
 	PlugState,
 	RemoteFeatures,
 	RemoteState,
+	CatalogueApp,
+	AppShortcut,
+	StreamerFeatures,
+	StreamerState,
 	StateChange
 } from './types';
 
@@ -31,6 +35,8 @@ export interface Device {
 	via: string | null;
 	/** Why it can't join a Group (e.g. only a Power Toggle); null if it can. */
 	group_problem: string | null;
+	/** Streamers: a TV running Android TV itself rather than a box plugged into one. */
+	is_tv: boolean | null;
 }
 
 /** A named set of Devices controlled as one. */
@@ -50,7 +56,8 @@ export type DeviceState =
 	| { control: 'light'; features: LightFeatures; state: LightState }
 	| { control: 'plug'; features: Record<string, never>; state: PlugState }
 	| { control: 'climate'; features: ClimateFeatures; state: ClimateState; assumed: true }
-	| { control: 'remote'; features: RemoteFeatures; state: RemoteState; assumed: true };
+	| { control: 'remote'; features: RemoteFeatures; state: RemoteState; assumed: true }
+	| { control: 'streamer'; features: StreamerFeatures; state: StreamerState };
 
 /** A Group's members merged into one reading: only what every member supports, on while any is on. */
 export type GroupState = (
@@ -65,6 +72,14 @@ export type GroupState = (
 	/** Members that didn't answer, or refused the change. */
 	failed: Record<string, { reason: string; unreachable: boolean }>;
 };
+
+/** Apps to pick from: those installed (read with adb) or Control's catalogue. */
+export interface AppChoices {
+	installed: boolean;
+	apps: CatalogueApp[];
+	/** Why the installed list couldn't be read. */
+	problem?: string;
+}
 
 export interface ScanResult {
 	added: string[];
@@ -168,6 +183,19 @@ export const api = {
 			'GET',
 			`/links/tuya/${enc(token)}`
 		),
+
+	// Streamers: the Android TV Link (the TV shows a code) and setup
+	androidTvLinkStart: (uid: string) => call<void>('POST', `/links/androidtv/${enc(uid)}`),
+	androidTvLinkCode: (uid: string, code: string) =>
+		call<{ device: Device; is_tv_guess: boolean; apps: CatalogueApp[] }>('POST', `/links/androidtv/${enc(uid)}/code`, {
+			code
+		}),
+	androidTvLinkCancel: (uid: string) => call<void>('DELETE', `/links/androidtv/${enc(uid)}`),
+	streamerCatalogue: (uid: string) => call<AppChoices>('GET', `/streamers/${enc(uid)}/catalogue`),
+	/** Waits up to a minute for Allow on the TV. */
+	streamerAllowAdb: (uid: string) => call<AppChoices>('PUT', `/streamers/${enc(uid)}/adb`),
+	setStreamer: (uid: string, setup: { is_tv?: boolean; apps?: AppShortcut[] }) =>
+		call<Device>('PUT', `/streamers/${enc(uid)}`, setup),
 
 	// Phone access & Approved Browsers
 	access: () => call<{ access: Access; browser_id: string | null }>('GET', '/access/me'),

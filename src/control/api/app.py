@@ -19,12 +19,14 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from .. import __version__
-from ..engine import code_set_finder, groups, remote_buttons, signal_library
+from ..engine import code_set_finder, groups, remote_buttons, signal_library, streamer
+from ..engine.adapters import android_adb, androidtv_streamer
 from ..engine.connect import (
     connect_buttons,
     connect_climate,
     connect_light,
     connect_plug,
+    connect_streamer,
     connect_transmitter,
     control_kind,
     only_transmitter,
@@ -68,7 +70,7 @@ class DeviceOut(BaseModel):
     name: str
     category: Category
     kind: Literal["network", "remote"]
-    control: Literal["light", "plug", "climate", "remote"] | None = Field(
+    control: Literal["light", "plug", "climate", "remote", "streamer"] | None = Field(
         description="which control surface to show; null if the app can't control it yet"
     )
     brand: str
@@ -83,14 +85,18 @@ class DeviceOut(BaseModel):
     group_problem: str | None = Field(
         None, description="why it can't join a Group (e.g. only a Power Toggle); null if it can"
     )
+    is_tv: bool | None = Field(
+        None, description="Streamers: a TV running Android TV itself rather than a box plugged into one"
+    )
 
 
 def _network_out(r: Registry, d: KnownDevice) -> DeviceOut:
     control = control_kind(r, d)
+    setup = r.streamer(d.uid) if control == "streamer" else None
     return DeviceOut(
         uid=d.uid, name=d.name, category=d.category, kind="network", control=control,
         brand=d.brand, model=d.model, ip=d.ip, readiness=d.readiness.value, online=d.online, is_new=d.is_new,
-        note=d.note, group_problem=groups.power_problem(control),
+        note=d.note, group_problem=groups.power_problem(control), is_tv=setup["is_tv"] if setup else None,
     )
 
 
@@ -158,6 +164,7 @@ def patch_device(uid: str, patch: DevicePatch, r: Registry = Depends(registry)):
 def forget_device(uid: str, r: Registry = Depends(registry)):
     _device_out(r, uid)
     (r.forget_remote if uid.startswith("remote:") else r.forget)(uid)
+    androidtv_streamer.forget(uid)
 
 
 # --- Scan ------------------------------------------------------------------
@@ -195,7 +202,8 @@ class StateIn(BaseModel):
     target_temp: float | None = Field(None, description="climate")
     fan: str | None = Field(None, description="climate")
     swing: str | None = Field(None, description="climate")
-    press: str | None = Field(None, description="remote: name of a button to press")
+    press: str | None = Field(None, description="remote or streamer: name of a button to press")
+    open_app: str | None = Field(None, description="streamer: package name or link of an app to open")
 
 
 def _read_state(r: Registry, out: DeviceOut, desired: StateIn | None) -> dict:
@@ -227,7 +235,41 @@ def _read_state(r: Registry, out: DeviceOut, desired: StateIn | None) -> dict:
                 r.set_assumed_state(remote.uid, {"on": pad.on})
         # on is null for a Power Toggle: the app never claims whether it's on.
         return {"control": "remote", "features": asdict(pad.features), "state": {"on": pad.on}, "assumed": True}
+    if out.control == "streamer":
+        device, box = connect_streamer(r, out.uid)
+        setup = r.streamer(device.uid) or {"apps": [], "adb": False}
+        apps = streamer.with_links(setup["apps"])
+        if desired:
+            if desired.open_app:
+                _open_app(device, box, desired.open_app, setup["adb"])
+            elif desired.press:
+                box.press(desired.press)
+            elif desired.on is not None:
+                box.set_power(desired.on)
+        state = asdict(box.get_state())
+        features = {
+            "buttons": [{"name": n, "label": label} for n, (label, _) in streamer.BUTTONS.items()],
+            "apps": apps,
+            "is_tv": bool(out.is_tv),
+            "adb": setup["adb"],
+        }
+        return {"control": "streamer", "features": features,
+                "state": state | {"app_name": streamer.app_name(state["app"], apps)}}
     raise LookupError(f"'{out.name}' can't be controlled yet")
+
+
+def _open_app(device: KnownDevice, box, target: str, adb: bool) -> None:
+    """A link opens directly; a package over adb when the box allows it, else via its Play Store page.
+    A sleeping box is woken first: adb would open the app behind a dark screen."""
+    if not box.get_state().on:
+        box.set_power(True)
+    if "://" not in target and adb:
+        try:
+            android_adb.launch(device.ip, target)
+            return
+        except android_adb.NotAllowed:
+            pass  # debugging was turned off since: the Play Store way still works
+    box.open_app(target)
 
 
 def _apply_light(light, s: StateIn) -> None:
@@ -617,6 +659,95 @@ def tuya_poll(token: str, r: Registry = Depends(registry)):
                     {"tuya_category": d.tuya_category, "product_name": d.product_name, **d.extra})
     del _pending_tuya[token]
     return {"status": "linked", "devices": [{"uid": d.uid, "name": d.name, "category": d.category} for d in linked]}
+
+
+# --- Streamers: Android TV Link and setup --------------------------------------------
+
+
+def _android_tv(r: Registry, uid: str) -> KnownDevice:
+    d = r.get(uid)
+    if d is None or d.brand != "Android TV":
+        raise LookupError(f"no Android TV '{uid}'")
+    return d
+
+
+@app.post("/api/links/androidtv/{uid}", status_code=204)
+def androidtv_link_start(uid: str, r: Registry = Depends(registry)):
+    """Start a Link: the TV shows a code, which the user then sends to .../code."""
+    d = _android_tv(r, uid)
+    androidtv_streamer.start_link(d.uid, d.ip)
+
+
+class CodeIn(BaseModel):
+    code: str = Field(min_length=4, max_length=8)
+
+
+@app.post("/api/links/androidtv/{uid}/code")
+def androidtv_link_finish(uid: str, body: CodeIn, r: Registry = Depends(registry)):
+    """Finish the Link with the code the TV shows. Returns what setup offers next: whether it looks
+    like a TV, and the catalogue of apps with the suggested ones ticked. The Streamer is usable
+    right away with that guess and the suggested apps; setup can change both."""
+    d = _android_tv(r, uid)
+    info = androidtv_streamer.finish_link(d.uid, d.ip, body.code)
+    r.save_link(d.uid, d.brand_name, Category.MEDIA, {}, info | {"cast_model": d.model})
+    is_tv = streamer.guess_is_tv(info["manufacturer"], info["model"] or d.model)
+    if r.streamer(d.uid) is None:
+        r.set_streamer(d.uid, is_tv=is_tv, apps=streamer.default_shortcuts(d.model))
+    return {"device": _device_out(r, uid), "is_tv_guess": is_tv, "apps": streamer.catalogue_for(d.model)}
+
+
+@app.delete("/api/links/androidtv/{uid}", status_code=204)
+def androidtv_link_cancel(uid: str):
+    androidtv_streamer.cancel_link(uid)
+
+
+@app.get("/api/streamers/{uid}/catalogue")
+def streamer_catalogue(uid: str, r: Registry = Depends(registry)):
+    """Apps to pick from: those really installed when the box allows adb, otherwise Control's catalogue.
+    `problem` says why the installed list couldn't be read."""
+    d = _android_tv(r, uid)
+    if (r.streamer(uid) or {}).get("adb"):
+        try:
+            return {"installed": True, "apps": streamer.installed_catalogue(android_adb.installed(d.ip), d.model)}
+        except (android_adb.NotAllowed, DeviceUnreachable) as exc:
+            return {"installed": False, "apps": streamer.catalogue_for(d.model), "problem": str(exc)}
+    return {"installed": False, "apps": streamer.catalogue_for(d.model)}
+
+
+@app.put("/api/streamers/{uid}/adb")
+def streamer_allow_adb(uid: str, r: Registry = Depends(registry)):
+    """The Link's optional second step: connect over adb, waiting up to a minute for Allow on the TV.
+    Returns the installed apps to pick from."""
+    d = _android_tv(r, uid)
+    if r.get_link(uid) is None:
+        raise ValueError(f"Link '{d.name}' first")
+    try:
+        packages = android_adb.allow(d.ip)
+    except android_adb.NotAllowed as exc:
+        raise ValueError(str(exc)) from None
+    r.set_streamer(uid, adb=True)
+    return {"installed": True, "apps": streamer.installed_catalogue(packages, d.model)}
+
+
+@app.delete("/api/streamers/{uid}/adb", status_code=204)
+def streamer_stop_adb(uid: str, r: Registry = Depends(registry)):
+    _android_tv(r, uid)
+    r.set_streamer(uid, adb=False)
+
+
+class StreamerIn(BaseModel):
+    is_tv: bool | None = None
+    apps: list[dict] | None = Field(None, description='Streamer App Shortcuts in order: [{"name", "app"}]')
+
+
+@app.put("/api/streamers/{uid}", response_model=DeviceOut)
+def set_streamer(uid: str, body: StreamerIn, r: Registry = Depends(registry)):
+    out = _device_out(r, uid)
+    if out.control != "streamer":
+        raise ValueError(f"'{out.name}' isn't a Streamer")
+    apps = streamer.check_shortcuts(body.apps) if body.apps is not None else None
+    r.set_streamer(uid, is_tv=body.is_tv, apps=apps)
+    return _device_out(r, uid)
 
 
 # --- Web UI ------------------------------------------------------------------

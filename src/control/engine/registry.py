@@ -69,6 +69,13 @@ CREATE TABLE IF NOT EXISTS groups (
     made_by   TEXT NOT NULL DEFAULT 'user',   -- 'user' or 'assistant'
     created   REAL NOT NULL
 );
+-- Streamers (and TVs with network control of their own): set up after their Link.
+CREATE TABLE IF NOT EXISTS streamers (
+    uid     TEXT PRIMARY KEY,
+    is_tv   INTEGER NOT NULL DEFAULT 0,   -- a TV running Android TV itself, not a box plugged into one
+    apps    TEXT NOT NULL DEFAULT '[]',   -- Streamer App Shortcuts, in order: [{"name", "app", "link"?}]
+    adb     INTEGER NOT NULL DEFAULT 0    -- the Link's optional second step: adb allowed (ADR 0008)
+);
 CREATE TABLE IF NOT EXISTS group_members (
     group_uid   TEXT NOT NULL,
     device_uid  TEXT NOT NULL,
@@ -153,6 +160,7 @@ class Registry:
         self._db = sqlite3.connect(path, check_same_thread=False)
         self._db.row_factory = sqlite3.Row
         self._db.executescript(_SCHEMA)
+        self._add_missing_columns()
         self._seal_plain_secrets()
 
     def close(self) -> None:
@@ -239,6 +247,7 @@ class Registry:
     def forget(self, uid: str) -> None:
         with self._db:
             self._db.execute("DELETE FROM devices WHERE uid = ?", (uid,))
+            self._db.execute("DELETE FROM streamers WHERE uid = ?", (uid,))
             self._leave_groups(uid)
 
     # --- Links ---------------------------------------------------------------
@@ -260,6 +269,13 @@ class Registry:
         return {"name": row["name"], "category": Category(row["category"]),
                 "secret": json.loads(vault.unseal(row["secret"])), "info": json.loads(row["info"])}
 
+    def _add_missing_columns(self) -> None:
+        """Columns added after a table was first made (CREATE TABLE IF NOT EXISTS keeps the old one)."""
+        columns = {r["name"] for r in self._db.execute("PRAGMA table_info(streamers)")}
+        if "adb" not in columns:
+            with self._db:
+                self._db.execute("ALTER TABLE streamers ADD COLUMN adb INTEGER NOT NULL DEFAULT 0")
+
     def _seal_plain_secrets(self) -> None:
         """Databases from before sealing hold plain Link secrets: seal them once."""
         rows = self._db.execute("SELECT uid, secret FROM links").fetchall()
@@ -276,6 +292,30 @@ class Registry:
             """UPDATE devices SET category = links.category, brand_name = links.name, readiness = 'ready', note = ''
                FROM links WHERE devices.uid = links.uid"""
         )
+
+    # --- Streamers -----------------------------------------------------------
+
+    def streamer(self, uid: str) -> dict | None:
+        """{"is_tv", "apps", "adb"} for a Streamer that has been set up, else None."""
+        row = self._db.execute("SELECT * FROM streamers WHERE uid = ?", (uid,)).fetchone()
+        if row is None:
+            return None
+        return {"is_tv": bool(row["is_tv"]), "apps": json.loads(row["apps"]), "adb": bool(row["adb"])}
+
+    def set_streamer(
+        self, uid: str, is_tv: bool | None = None, apps: list[dict] | None = None, adb: bool | None = None
+    ) -> None:
+        """Save a Streamer's setup; a field left as None keeps its current value."""
+        current = self.streamer(uid) or {"is_tv": False, "apps": [], "adb": False}
+        is_tv = current["is_tv"] if is_tv is None else is_tv
+        apps = current["apps"] if apps is None else apps
+        adb = current["adb"] if adb is None else adb
+        with self._db:
+            self._db.execute(
+                """INSERT INTO streamers (uid, is_tv, apps, adb) VALUES (?, ?, ?, ?)
+                   ON CONFLICT(uid) DO UPDATE SET is_tv=excluded.is_tv, apps=excluded.apps, adb=excluded.adb""",
+                (uid, int(is_tv), json.dumps(apps), int(adb)),
+            )
 
     # --- Remote Devices ----------------------------------------------------
 

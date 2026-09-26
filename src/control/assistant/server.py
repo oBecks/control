@@ -20,19 +20,23 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ToolAnnotations
 
 from .. import __version__
+from ..engine.streamer import find_shortcut
 
 START_TIMEOUT = 30  # seconds to wait for a Control it started
 REQUEST_TIMEOUT = 30  # a device that doesn't answer takes a few seconds to give up on
 
 INSTRUCTIONS = """\
-Control reads and controls the Devices in the user's home: lights, plugs, and Remote Devices (ACs,
-TVs, fans) that Control drives through an infrared Hub. Refer to a Device by its name or uid.
+Control reads and controls the Devices in the user's home: lights, plugs, Streamers (Android TV
+boxes such as an NVIDIA Shield, and TVs running Android TV), and Remote Devices (ACs, TVs, fans) that
+Control drives through an infrared Hub. Refer to a Device by its name or uid.
 
 Be honest about state:
 - An Assumed State (ACs, TVs and fans) is what Control last sent. Someone may have used the physical
   remote since, so say "Control last set it to…", not "it is…".
 - When power is "unknown", the Device only has a Power Toggle: nobody knows whether it's on.
 - An Offline Device wasn't seen in the last scan, so controlling it may fail.
+- A Streamer reports its real state (power, the open app, volume). A Streamer's power is the box's:
+  the TV it's plugged into usually follows it, but may not.
 
 Groups: a Group is a named set of Devices controlled as one (e.g. "Living room lights"). get_device,
 set_power, set_light and set_climate take a Group's name too, and change every member at once. A
@@ -225,6 +229,14 @@ def describe(d: dict, reading: dict) -> dict:
             out["power"] = "on" if s["on"] else "off"
             out["assumed"] = ASSUMED
         out["buttons"] = [b["label"] for b in f["buttons"]]
+    elif control == "streamer":
+        out["power"] = "on" if s["on"] else "off"
+        if s["on"] and s.get("app_name"):
+            out["open_app"] = s["app_name"]
+        if s.get("volume") is not None and s.get("volume_max"):
+            out["volume"] = f"{s['volume']} of {s['volume_max']}" + (" (muted)" if s.get("muted") else "")
+        out["buttons"] = [b["label"] for b in f["buttons"]]
+        out["apps"] = [a["name"] for a in f["apps"]]
     return out
 
 
@@ -236,6 +248,11 @@ def find_button(features: dict, ref: str) -> str:
             return b["name"]
     labels = ", ".join(b["label"] for b in features["buttons"]) or "none yet"
     raise ToolError(f"No '{ref}' button. Buttons: {labels}.")
+
+
+def find_app(apps: list[dict], ref: str) -> str:
+    """An app's package from its name: one of the Streamer's apps, or a well-known one."""
+    return find_shortcut(ref, apps)
 
 
 def parse_color(text: str) -> list[int]:
@@ -361,14 +378,28 @@ def create_server(engine: Engine) -> MCPServer:
 
     @server.tool(title="Press a remote button", annotations=PRESS)
     def press_button(device: str, button: str) -> dict:
-        """Press one button of a TV's, fan's or other Remote Device's remote, e.g. "Volume +", "Mute",
-        "HDMI 1". get_device lists its buttons."""
+        """Press one button of a TV's, fan's or other Remote Device's remote, or of a Streamer's, e.g.
+        "Volume +", "Mute", "HDMI 1", "Home". get_device lists its buttons."""
         d = controllable(lookup(device))
-        if d["control"] != "remote":
+        if d["control"] not in ("remote", "streamer"):
             what = "is a Group, which has" if is_group(d) else "has"
             raise ToolError(f"'{d['name']}' {what} no remote buttons. Use set_power, set_light or set_climate.")
         features = engine.call("GET", f"/devices/{d['uid']}/state")["features"]
         return change(d, {"press": find_button(features, button)})
+
+    @server.tool(title="Open an app", annotations=PRESS)
+    def open_app(device: str, app: str) -> dict:
+        """Open an app on a Streamer (e.g. "Netflix", "YouTube"), by the name of one of its apps
+        (get_device lists them) or of another well-known app. Opening an app also wakes the Streamer."""
+        d = controllable(lookup(device))
+        if d["control"] != "streamer":
+            raise ToolError(f"'{d['name']}' isn't a Streamer, so it can't open apps.")
+        apps = engine.call("GET", f"/devices/{d['uid']}/state")["features"]["apps"]
+        try:
+            package = find_app(apps, app)
+        except ValueError as exc:
+            raise ToolError(str(exc)) from None
+        return change(d, {"open_app": package})
 
     @server.tool(title="Create a Group", annotations=CREATE)
     def create_group(name: str, devices: list[str]) -> dict:

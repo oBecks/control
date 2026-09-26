@@ -8,6 +8,7 @@ import Lightbulb from '@lucide/svelte/icons/lightbulb';
 import LightbulbOff from '@lucide/svelte/icons/lightbulb-off';
 import Plug from '@lucide/svelte/icons/plug';
 import Tv from '@lucide/svelte/icons/tv';
+import TvMinimalPlay from '@lucide/svelte/icons/tv-minimal-play';
 import type { Device, DeviceState, Group, GroupState } from './api';
 import { glowFor } from './color';
 
@@ -28,6 +29,8 @@ export function iconFor(d: Device, s?: DeviceState): typeof Lightbulb {
 			return AirVent;
 		case 'plug':
 			return Plug;
+		case 'streamer':
+			return d.is_tv ? Tv : TvMinimalPlay;
 		default:
 			return d.category === 'media' ? Tv : d.category === 'climate' ? Fan : Gamepad2;
 	}
@@ -40,6 +43,7 @@ export function statusFor(s?: DeviceState): string {
 	if (!s.state.on) return 'Off';
 	if (s.control === 'light') return `On · ${s.state.brightness}%`;
 	if (s.control === 'climate') return `${MODE_LABEL[s.state.mode] ?? s.state.mode} ${s.state.target_temp}°`;
+	if (s.control === 'streamer') return s.state.app_name ?? 'On';
 	return 'On';
 }
 
@@ -51,6 +55,7 @@ export function isOn(s?: DeviceState): boolean {
 export function glowOf(d: Device, s?: DeviceState): string | undefined {
 	if (!s) return undefined;
 	if (s.control === 'remote') return d.category === 'climate' ? 'var(--fan)' : 'var(--accent)';
+	if (s.control === 'streamer') return 'var(--accent)';
 	return glowFor(
 		s.control,
 		s.state as { mode?: string; rgb?: [number, number, number] | null; kelvin?: number | null }
@@ -89,6 +94,18 @@ export const SECTIONS: { category: string; title: string }[] = [
 	{ category: 'plug', title: 'Plugs' },
 	{ category: 'unknown', title: 'Other' }
 ];
+
+/** The name a Streamer's setup suggests, so it doesn't read like the TV (or, for a TV, does):
+ * "TV – Living room" becomes "Streamer – Living room"; any other name gets "Streamer " in front. */
+export function streamerName(networkName: string, isTv: boolean): string {
+	const want = isTv ? 'TV' : 'Streamer';
+	const other = isTv ? 'Streamer' : 'TV';
+	const name = networkName.trim();
+	if (name.toLowerCase().startsWith(want.toLowerCase())) return name;
+	const rest = name.slice(other.length);
+	if (name.toLowerCase().startsWith(other.toLowerCase()) && !/^[a-z]/i.test(rest)) return want + rest;
+	return `${want} ${name}`.trim();
+}
 
 export function greeting(now = new Date()): string {
 	const h = now.getHours();

@@ -2,6 +2,7 @@
 
 from typing import Callable, TypeVar
 
+from .adapters.androidtv_streamer import AndroidTVStreamer
 from .adapters.broadlink_transmitter import BroadlinkTransmitter
 from .adapters.tuya_plug import TuyaPlug
 from .adapters.yeelight_light import YeelightLight
@@ -13,6 +14,7 @@ from .plug import Plug
 from .registry import KnownDevice, Registry, RemoteDevice
 from .remote_buttons import RemoteButtons
 from .scan import scan_and_remember
+from .streamer import Streamer
 
 T = TypeVar("T")
 
@@ -46,6 +48,8 @@ def control_kind(registry: Registry, device: KnownDevice) -> str | None:
         return "light"
     if device.category is Category.PLUG and device.brand == "Tuya" and registry.get_link(device.uid):
         return "plug"
+    if device.category is Category.MEDIA and device.brand == "Android TV" and registry.get_link(device.uid):
+        return "streamer"
     return None
 
 
@@ -70,6 +74,13 @@ def connect_plug(registry: Registry, ref: str) -> tuple[KnownDevice, Plug]:
         device,
         lambda d: TuyaPlug(d.uid.removeprefix("tuya:"), d.ip, link["secret"]["local_key"], d.raw.get("version", "3.3")),
     )
+
+
+def connect_streamer(registry: Registry, ref: str) -> tuple[KnownDevice, Streamer]:
+    device = registry.resolve(ref)
+    if control_kind(registry, device) != "streamer":
+        raise LookupError(f"'{device.name}' is not a Streamer this app can control yet")
+    return _with_refind(registry, device, lambda d: AndroidTVStreamer(d.uid, d.ip))
 
 
 def connect_transmitter(registry: Registry, ref: str) -> tuple[KnownDevice, BroadlinkTransmitter]:

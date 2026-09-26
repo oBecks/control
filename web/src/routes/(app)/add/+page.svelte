@@ -3,6 +3,7 @@
 	import { resolve } from '$app/paths';
 	import { AirVent, CircleAlert, Fan, Gamepad2, Lightbulb, Plug, Radar, Radio, CircleHelp, Tv } from '@lucide/svelte';
 	import AcFinder from '$lib/add/AcFinder.svelte';
+	import StreamerSetup from '$lib/add/StreamerSetup.svelte';
 	import ButtonSetup from '$lib/add/ButtonSetup.svelte';
 	import TuyaLink from '$lib/add/TuyaLink.svelte';
 	import { api, type Device, type RemoteKind, type ScanResult } from '$lib/api';
@@ -56,6 +57,20 @@
 	const needsLink = $derived(network.filter((d) => d.readiness === 'needs_link'));
 	const needsSetup = $derived(network.filter((d) => d.readiness === 'needs_setup'));
 	const tuyaWaiting = $derived(needsLink.filter((d) => d.brand === 'Tuya').length);
+	// An Android TV's card stays until its setup is done: after the Link it no longer needs one.
+	let streamerCards = $state<string[]>([]);
+	$effect(() => {
+		const waiting = needsLink.filter((d) => d.brand === 'Android TV' && d.online).map((d) => d.uid);
+		const add = waiting.filter((uid) => !streamerCards.includes(uid));
+		if (add.length) streamerCards = [...streamerCards, ...add];
+	});
+	const androidTvs = $derived(
+		streamerCards.map((uid) => home.devices.find((d) => d.uid === uid)).filter((d): d is Device => !!d)
+	);
+	function streamerDone(d: Device) {
+		streamerCards = streamerCards.filter((uid) => uid !== d.uid);
+		finished(d);
+	}
 
 	function status(d: Device): { label: string; tone: 'ok' | 'warn' | 'muted' } {
 		if (!d.online) return { label: 'Offline', tone: 'muted' };
@@ -66,7 +81,7 @@
 		return d.control ? { label: 'On Home', tone: 'ok' } : { label: 'Not supported yet', tone: 'muted' };
 	}
 
-	const ICON = { light: Lightbulb, plug: Plug, climate: AirVent, transmitter: Radio } as Record<
+	const ICON = { light: Lightbulb, plug: Plug, climate: AirVent, transmitter: Radio, media: Tv } as Record<
 		string,
 		typeof Lightbulb
 	>;
@@ -101,13 +116,16 @@
 		{/each}
 	{/if}
 
-	{#if tuyaWaiting || needsSetup.length}
+	{#if tuyaWaiting || androidTvs.length || needsSetup.length}
 		<section>
 			<SectionHeader title="Needs your attention" />
 			<div class="stack">
 				{#if tuyaWaiting}
 					<TuyaLink waiting={tuyaWaiting} onlinked={() => home.refresh()} />
 				{/if}
+				{#each androidTvs as d (d.uid)}
+					<StreamerSetup device={d} ondone={streamerDone} />
+				{/each}
 				{#each needsSetup as d (d.uid)}
 					<div class="setup">
 						<CircleAlert size={20} strokeWidth={2.3} />

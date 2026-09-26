@@ -35,8 +35,9 @@ a = Analysis(
     [str(root / "packaging" / "control_app.py")],
     pathex=[str(root / "src")],
     datas=[(str(ui), "web"), (str(icon), "control/desktop")],
-    # uvicorn picks its loop and protocol implementations at run time.
-    hiddenimports=collect_submodules("uvicorn"),
+    # uvicorn picks its loop and protocol implementations at run time; zeroconf imports its compiled
+    # parts by name.
+    hiddenimports=collect_submodules("uvicorn") + collect_submodules("zeroconf"),
     excludes=["tkinter", "pytest"],
 )
 pyz = PYZ(a.pure)
