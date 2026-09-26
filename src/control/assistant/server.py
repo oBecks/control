@@ -22,9 +22,9 @@ from mcp_types import ToolAnnotations
 
 from .. import __version__
 from ..engine import hotkeys
+from . import MCP_HEADER
 from ..engine.streamer import CATALOGUE, find_shortcut
 
-MCP_HEADER = "X-Control-MCP"  # sent with every Engine call: this server's version
 START_TIMEOUT = 30  # seconds to wait for a Control it started
 REQUEST_TIMEOUT = 30  # a device that doesn't answer takes a few seconds to give up on
 

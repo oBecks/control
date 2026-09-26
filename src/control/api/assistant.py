@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from .. import __version__
 from ..assistant import claude
-from ..assistant.server import MCP_HEADER
+from ..assistant import MCP_HEADER
 from ..engine.registry import Registry
 
 router = APIRouter(prefix="/api/assistant")

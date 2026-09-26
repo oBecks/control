@@ -401,6 +401,19 @@ def test_while_recording_the_listener_lets_go_of_every_hotkey(hk, monkeypatch):
     assert not answer["recording"] and len(answer["keys"]) == 1
 
 
+def test_the_watch_answers_when_recording_runs_out_and_sleeps_otherwise():
+    listener = hotkeys_api.Listener()
+    listener.recording_until = time.monotonic() + 0.2
+    start = time.monotonic()
+    listener.watch(listener.revision, recording=True, timeout=5)
+    assert time.monotonic() - start < 1  # takes the Hotkeys back once recording runs out
+    waits = []
+    real_wait = listener._cond.wait
+    listener._cond.wait = lambda timeout=None: waits.append(timeout) or real_wait(timeout)
+    listener.watch(listener.revision, recording=False, timeout=0.8)
+    assert waits[0] > 0.7  # nothing to notice meanwhile: it sleeps until the timeout
+
+
 def test_a_stopping_engine_answers_the_listener_at_once(hk):
     listener = hotkeys_api.listener
     listener.close()

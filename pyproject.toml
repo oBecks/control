@@ -21,7 +21,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest", "httpx"]
 # The Desktop App (ADR 0004): Window, tray icon, and the tools that package it.
-desktop = ["pywebview>=6", "pystray>=0.19"]
+desktop = ["pywebview>=6.2,<7", "pystray>=0.19"]  # app.py reaches into pywebview 6's WinForms internals
 build = ["pyinstaller>=6"]
 
 [project.scripts]

@@ -1,6 +1,7 @@
 """Control.exe (ADR 0004): runs the Engine, shows the Window (pywebview, i.e. Edge WebView2, on the
 Engine's own UI) and keeps a tray icon. Closing the Window hides it; only Quit Control in the tray
-stops the Engine, so phones keep working meanwhile.
+stops the Engine, so phones keep working meanwhile. A Window left closed for KEEP_WINDOW is released
+(its WebView2 processes are most of the app's memory) and made again when the user opens Control.
 
 One instance per user: a second launch brings the running Window forward. If an Engine already
 answers on the port (e.g. `control serve` while developing), the app is only a Window on it and
@@ -31,7 +32,9 @@ SHOW_EVENT = "ControlDesktopShow"  # a second launch sets it to bring the Window
 CLOSE_HINT_SHOWN = "desktop_close_hint_shown"  # setting: bool
 # The UI listens for it and checks whether to show the "still running" note.
 SHOWN_EVENT = "window.dispatchEvent(new Event('control:window-shown'))"
-STATUS_EVERY = 5  # seconds between tray status refreshes
+# Seconds a closed Window stays loaded, so reopening it soon after is instant. Made again, it takes
+# about half a second.
+KEEP_WINDOW = 5 * 60
 
 _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True) if sys.platform == "win32" else None
 _user32 = ctypes.WinDLL("user32", use_last_error=True) if sys.platform == "win32" else None
@@ -143,6 +146,11 @@ class DesktopApp:
         self.update: updates.Update | None = None
         self._status = ""
         self._minimized = False
+        self._closed = hidden  # the Window is hidden: the user closed it, or it started in the tray
+        self._releasing = False
+        self._release_timer: threading.Timer | None = None
+        self._lock = threading.Lock()  # making and releasing the Window
+        self._keeper = None  # a plain form, never shown: see _start_keeper
         self.window = self._create_window(hidden)
         self.tray = self._create_tray()
 
@@ -155,11 +163,33 @@ class DesktopApp:
             "Control", f"http://127.0.0.1:{self.port}", width=1200, height=800, min_size=(380, 560),
             hidden=hidden, background_color=_page_background(),
         )
-        window.events.before_show += self._hook_close
+        if window.native is None:  # the first Window: pywebview makes it once webview.start runs
+            window.events.before_show += self._start_keeper
+            window.events.before_show += self._hook_close
+        else:  # made again after a release, already there
+            self._hook_close(window)
         window.events.minimized += lambda: setattr(self, "_minimized", True)
         window.events.restored += lambda: setattr(self, "_minimized", False)
         window.events.maximized += lambda: setattr(self, "_minimized", False)
+        if hidden:
+            self._release_later()
         return window
+
+    def _start_keeper(self, window) -> None:
+        """On the GUI thread, as the first Window is made. pywebview ends its GUI loop when its last
+        window closes and makes new windows through an open one, so a plain form, which costs
+        nothing, stands in for the Window while it's released."""
+        import System.Windows.Forms as WinForms  # type: ignore[import-not-found]  # pythonnet
+        import webview
+        from webview.platforms.winforms import BrowserView
+
+        keeper = WinForms.Form()
+        _ = keeper.Handle  # makes the native window, so other threads can Invoke on it
+        # Windows signing out with the Window released: nothing else would end the GUI loop.
+        keeper.FormClosing += lambda form, args: None if self.quitting else self._exit()
+        BrowserView.instances["keeper"] = keeper
+        webview.windows.insert(0, None)  # so no later window is taken for the first ('master') one
+        self._keeper = keeper
 
     def _hook_close(self, window) -> None:
         # Hooked on the form itself rather than pywebview's `closing` event, which doesn't say why the
@@ -169,15 +199,51 @@ class DesktopApp:
         let_through = (CloseReason.WindowsShutDown, CloseReason.TaskManagerClosing, CloseReason.ApplicationExitCall)
 
         def closing(form, args):
-            if self.quitting or args.CloseReason in let_through:
+            if self.quitting or self._releasing:
+                return
+            if args.CloseReason in let_through:
+                self._exit()  # the keeper would keep the app running
                 return
             args.Cancel = True
             form.Hide()
+            self._closed = True
+            self._release_later()
             self._tell_still_running()
 
         window.native.FormClosing += closing
 
+        form = window.native  # the event's sender is the plain .NET Form, without pywebview's `webview`
+        form.VisibleChanged += lambda sender, args: _tell_page_visible(form)
+
+    def _release_later(self) -> None:
+        if self._release_timer:
+            self._release_timer.cancel()
+        self._release_timer = threading.Timer(KEEP_WINDOW, self._release)
+        self._release_timer.daemon = True
+        self._release_timer.start()
+
+    def _release(self) -> None:
+        """Closes the hidden Window for real, which ends its WebView2 processes."""
+        with self._lock:
+            if not self._closed or self.window is None or self._keeper is None or self.quitting:
+                return
+            self._releasing = True
+            try:
+                self.window.destroy()
+            finally:
+                self._releasing = False
+            self.window = None
+            self._minimized = False
+
     def show(self) -> None:
+        with self._lock:
+            if self._release_timer:
+                self._release_timer.cancel()
+            self._closed = False
+            if self.window is None:
+                # A new page checks the "still running" note as it loads.
+                self.window = self._create_window(hidden=False)
+                return
         self.window.show()
         if self._minimized:
             self.window.restore()
@@ -205,6 +271,16 @@ class DesktopApp:
     def _create_tray(self):
         import pystray
         from PIL import Image
+        from pystray._util import win32
+
+        app = self
+
+        class Tray(pystray.Icon):
+            def _on_notify(self, wparam, lparam):
+                # The status line is read as the menu opens, rather than by a timer while idle.
+                if lparam == win32.WM_RBUTTONUP:
+                    app._refresh_status()
+                super()._on_notify(wparam, lparam)
 
         item = pystray.MenuItem
         menu = pystray.Menu(
@@ -215,19 +291,17 @@ class DesktopApp:
             pystray.Menu.SEPARATOR,
             item("Quit Control", lambda: self.quit()),
         )
-        return pystray.Icon("Control", Image.open(ICON), "Control", menu)
+        return Tray("Control", Image.open(ICON), "Control", menu)
 
     def _open_update(self) -> None:
         if self.update:
             webbrowser.open(self.update.url)
 
     def _refresh_status(self) -> None:
-        while not self.quitting:
-            status = phone_status(self.port, self.owned)
-            if status != self._status:
-                self._status = status
-                self.tray.update_menu()
-            time.sleep(STATUS_EVERY)
+        status = phone_status(self.port, self.owned)
+        if status != self._status:
+            self._status = status
+            self.tray.update_menu()
 
     def _check_updates(self) -> None:
         from ..api import desktop
@@ -246,19 +320,45 @@ class DesktopApp:
 
         self._status = phone_status(self.port, self.owned)
         self.tray.run_detached()
-        threading.Thread(target=self._refresh_status, name="tray-status", daemon=True).start()
         threading.Thread(target=self._check_updates, name="update-check", daemon=True).start()
         hotkeys.HotkeyListener(self.port).start()
         data = default_db_path().parent
         # Not private: the UI keeps its theme choice in localStorage.
         webview.start(private_mode=False, storage_path=str(data / "webview"), icon=str(ICON))
-        # The Window closed for good: Quit Control, or Windows signing out.
+        # The GUI loop ended: Quit Control, or Windows signing out.
         self.quitting = True
+        if self._release_timer:
+            self._release_timer.cancel()
         self.tray.stop()
 
     def quit(self) -> None:
+        self._exit()
+
+    def _exit(self) -> None:
+        """Ends webview.start(), from any thread."""
         self.quitting = True
-        self.window.destroy()
+        if self._keeper is None:  # the GUI isn't up yet: the Window is its only form
+            self.window.destroy()
+            return
+        import System.Windows.Forms as WinForms  # type: ignore[import-not-found]  # pythonnet
+        from System import Action  # type: ignore[import-not-found]
+
+        self._keeper.BeginInvoke(Action(WinForms.Application.Exit))  # closes the Window, if any
+
+
+def _tell_page_visible(form) -> None:
+    """WebView2's WinForms control doesn't pass its form hiding on, so a closed Window's page would
+    think it's still on screen and keep polling (the UI stops while hidden) and animating. Its
+    controller, which it keeps to itself, can say so."""
+    try:
+        from System.Reflection import BindingFlags  # type: ignore[import-not-found]  # pythonnet
+
+        field = form.webview.GetType().GetField("_coreWebView2Controller", BindingFlags.NonPublic | BindingFlags.Instance)
+        controller = field.GetValue(form.webview) if field else None
+        if controller is not None:
+            controller.IsVisible = form.Visible
+    except Exception as e:  # a newer WebView2 SDK: the page then just keeps running while hidden
+        print(f"Couldn't tell the page it's {'shown' if form.Visible else 'hidden'}: {e!r}", file=sys.stderr)
 
 
 def _notifications_on() -> bool:
