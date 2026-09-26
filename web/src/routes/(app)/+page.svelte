@@ -3,97 +3,25 @@
 	import { resolve } from '$app/paths';
 	import { Plus, Radar } from '@lucide/svelte';
 	import { MediaQuery } from 'svelte/reactivity';
-	import DeviceControls from '$lib/DeviceControls.svelte';
-	import GroupControls from '$lib/groups/GroupControls.svelte';
-	import GroupEditor from '$lib/groups/GroupEditor.svelte';
-	import HotkeyEditor from '$lib/hotkeys/HotkeyEditor.svelte';
-	import { hotkeys } from '$lib/hotkeys/hotkeys.svelte';
-	import TargetHotkeys from '$lib/hotkeys/TargetHotkeys.svelte';
 	import { home } from '$lib/home.svelte';
-	import {
-		glowOf,
-		greeting,
-		groupGlow,
-		groupIcon,
-		groupStatus,
-		iconFor,
-		isOn,
-		SECTIONS,
-		statusFor
-	} from '$lib/present';
+	import { Panel } from '$lib/panel.svelte';
+	import { greeting, isOn, SECTIONS } from '$lib/present';
+	import TargetPanel from '$lib/TargetPanel.svelte';
+	import TargetTile from '$lib/TargetTile.svelte';
 	import Banner from '$lib/ui/Banner.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import SectionHeader from '$lib/ui/SectionHeader.svelte';
 	import Sheet from '$lib/ui/Sheet.svelte';
-	import Tile from '$lib/ui/Tile.svelte';
 
 	const desktop = new MediaQuery('min-width: 960px');
+	const panel = new Panel();
 
-	/** A Device's or a Group's uid. */
-	let selectedUid = $state<string | null>(null);
-	const selected = $derived(home.controllable.find((d) => d.uid === selectedUid));
-	const selectedGroup = $derived(home.groups.find((g) => g.uid === selectedUid));
-	/** The Group editor, open on a Group (uid) or on a new one (null). */
-	let editor = $state<{ uid: string | null } | null>(null);
-	const editing = $derived(editor?.uid ? home.groups.find((g) => g.uid === editor?.uid) : undefined);
-	/** The Hotkey editor, open on a Hotkey (uid) or a new one (null) for the selected Device or Group. */
-	let hotkeyEditor = $state<{ uid: string | null; target: string } | null>(null);
-	const editingHotkey = $derived(hotkeyEditor?.uid ? hotkeys.list.find((h) => h.uid === hotkeyEditor?.uid) : undefined);
-	$effect(() => {
-		hotkeys.load();
-	});
 	const canGroup = $derived(home.controllable.filter((d) => !d.group_problem).length >= 2);
 
 	const groupSummary = $derived.by(() => {
 		const on = home.groups.filter((g) => !home.isGroupOffline(g) && home.groupStates[g.uid]?.state.on).length;
 		return on ? `${on} on` : undefined;
 	});
-
-	const memberRows = $derived(
-		(selectedGroup?.members ?? []).flatMap((uid) => {
-			const d = home.devices.find((x) => x.uid === uid);
-			if (!d) return [];
-			const st = home.states[uid];
-			return [
-				{ uid, name: d.name, status: statusFor(st), icon: iconFor(d, st), on: isOn(st), offline: home.isOffline(d) }
-			];
-		})
-	);
-
-	function openEditor(uid: string | null) {
-		hotkeyEditor = null;
-		editor = { uid };
-	}
-
-	/** Open a Device's or Group's controls. */
-	function open(uid: string) {
-		editor = null;
-		hotkeyEditor = null;
-		selectedUid = uid;
-	}
-
-	async function saveGroup(name: string, members: string[]) {
-		if (editing) {
-			const same = members.join() === editing.members.join();
-			return home.editGroup(editing.uid, { name, members: same ? undefined : members });
-		}
-		const g = await home.createGroup(name, members);
-		if (g) selectedUid = g.uid;
-		return !!g;
-	}
-
-	async function deleteGroup() {
-		const uid = editor?.uid;
-		if (!uid || !(await home.deleteGroup(uid))) return false;
-		if (selectedUid === uid) selectedUid = null;
-		return true;
-	}
-
-	function close() {
-		editor = null;
-		hotkeyEditor = null;
-		selectedUid = null;
-	}
 
 	const sections = $derived(
 		SECTIONS.map((s) => {
@@ -121,7 +49,7 @@
 				<h1>Home</h1>
 			</div>
 			{#if canGroup}
-				<Button variant="ghost" size="sm" onclick={() => openEditor(null)}
+				<Button variant="ghost" size="sm" onclick={() => panel.openEditor(null)}
 					><Plus size={16} strokeWidth={2.4} /> New group</Button
 				>
 			{/if}
@@ -161,18 +89,10 @@
 					<SectionHeader title="Groups" summary={groupSummary} />
 					<div class="grid">
 						{#each home.groups as g (g.uid)}
-							{@const st = home.groupStates[g.uid]}
-							<Tile
-								name={g.name}
-								status={groupStatus(st)}
-								icon={groupIcon(g, st)}
-								on={!!st?.state.on}
-								glow={groupGlow(st)}
-								offline={home.isGroupOffline(g)}
-								assumed={!!st?.assumed}
-								selected={desktop.current && g.uid === selectedUid && !editor && !hotkeyEditor}
-								ontoggle={() => home.toggleGroup(g.uid)}
-								onopen={() => open(g.uid)}
+							<TargetTile
+								uid={g.uid}
+								selected={desktop.current && panel.highlighted(g.uid)}
+								onopen={(uid) => panel.open(uid)}
 							/>
 						{/each}
 					</div>
@@ -183,20 +103,10 @@
 					<SectionHeader title={s.title} summary={s.summary} />
 					<div class="grid">
 						{#each s.devices as d (d.uid)}
-							{@const st = home.states[d.uid]}
-							<Tile
-								name={d.name}
-								status={statusFor(st)}
-								icon={iconFor(d, st)}
-								on={isOn(st)}
-								glow={glowOf(d, st)}
-								pulse={home.pulses[d.uid] ?? 0}
-								offline={home.isOffline(d)}
-								assumed={d.kind === 'remote'}
-								isNew={d.is_new}
-								selected={desktop.current && d.uid === selectedUid && !editor && !hotkeyEditor}
-								ontoggle={() => home.toggle(d.uid)}
-								onopen={() => open(d.uid)}
+							<TargetTile
+								uid={d.uid}
+								selected={desktop.current && panel.highlighted(d.uid)}
+								onopen={(uid) => panel.open(uid)}
 							/>
 						{/each}
 					</div>
@@ -205,75 +115,17 @@
 		{/if}
 	</main>
 
-	{#snippet panel()}
-		{#if hotkeyEditor}
-			{#key hotkeyEditor.uid}
-				<HotkeyEditor hotkey={editingHotkey} target={hotkeyEditor.target} onclose={() => (hotkeyEditor = null)} />
-			{/key}
-		{:else if editor}
-			{#key editor.uid}
-				<GroupEditor
-					group={editing}
-					devices={home.controllable}
-					onsave={saveGroup}
-					ondelete={editing ? deleteGroup : undefined}
-					onclose={() => (editor = null)}
-				/>
-			{/key}
-		{:else if selectedGroup}
-			<GroupControls
-				group={selectedGroup}
-				value={home.groupStates[selectedGroup.uid]}
-				members={memberRows}
-				offline={home.isGroupOffline(selectedGroup)}
-				onchange={(c) => home.changeGroup(selectedGroup.uid, c)}
-				onclose={close}
-				onedit={() => openEditor(selectedGroup.uid)}
-				onopenmember={(uid) => (selectedUid = uid)}
-			/>
-			{@render targetHotkeys(selectedGroup.uid)}
-		{:else if selected}
-			<DeviceControls
-				device={selected}
-				value={home.states[selected.uid]}
-				offline={home.isOffline(selected)}
-				scanning={home.scanning}
-				onchange={(c) => home.change(selected.uid, c)}
-				onfindagain={() => home.findAgain()}
-				onclose={close}
-				onteach={() => {
-					home.teachTarget = selected.uid;
-					goto(resolve('/add'));
-				}}
-				onrename={(name) => home.rename(selected.uid, name)}
-				onapps={(apps) => home.setStreamer(selected.uid, { apps })}
-			/>
-			{@render targetHotkeys(selected.uid)}
-		{/if}
-	{/snippet}
-
-	{#snippet targetHotkeys(target: string)}
-		<TargetHotkeys
-			uid={target}
-			onadd={() => (hotkeyEditor = { uid: null, target })}
-			onopen={(uid) => (hotkeyEditor = { uid, target })}
-		/>
-	{/snippet}
-
 	{#if desktop.current}
 		<aside class="panel" aria-label="Device controls">
-			{#if hotkeyEditor || editor || selectedGroup || selected}
-				{@render panel()}
+			{#if panel.showing}
+				<TargetPanel {panel} />
 			{:else}
 				<p class="hint">Select a device's <b>›</b> to see all its controls here.</p>
 			{/if}
 		</aside>
-	{:else if hotkeyEditor || editor || selectedGroup || selected}
-		<Sheet
-			label={hotkeyEditor ? 'Hotkey' : editor ? 'Group' : `${(selectedGroup ?? selected)?.name} controls`}
-			onclose={close}
-		>
-			{@render panel()}
+	{:else if panel.showing}
+		<Sheet label={panel.label} onclose={() => panel.close()}>
+			<TargetPanel {panel} />
 		</Sheet>
 	{/if}
 </div>

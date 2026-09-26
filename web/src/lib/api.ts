@@ -17,7 +17,9 @@ import type {
 	Hotkey,
 	HotkeyAction,
 	KeysCheck,
-	PickableKey
+	PickableKey,
+	Dashboard,
+	DashboardItem
 } from './types';
 
 export interface Device {
@@ -148,6 +150,15 @@ export const api = {
 	deleteGroup: (uid: string) => call<void>('DELETE', `/groups/${enc(uid)}`),
 	groupState: (uid: string) => call<GroupState>('GET', `/groups/${enc(uid)}/state`),
 	setGroupState: (uid: string, change: StateChange) => call<GroupState>('POST', `/groups/${enc(uid)}/state`, change),
+
+	// Dashboards (ADR 0009): the whole item list is sent on every change
+	dashboards: () => call<Dashboard[]>('GET', '/dashboards'),
+	addDashboard: (name: string, columns: number, items: DashboardItem[]) =>
+		call<Dashboard>('POST', '/dashboards', { name, columns, items }),
+	patchDashboard: (uid: string, patch: { name?: string; columns?: number; items?: DashboardItem[] }) =>
+		call<Dashboard>('PATCH', `/dashboards/${enc(uid)}`, patch),
+	deleteDashboard: (uid: string) => call<void>('DELETE', `/dashboards/${enc(uid)}`),
+	orderDashboards: (uids: string[]) => call<Dashboard[]>('PUT', '/dashboards/order', { uids }),
 
 	// Hotkeys (ADR 0007): set up only on the computer running Control
 	hotkeys: () => call<HotkeyList>('GET', '/hotkeys'),

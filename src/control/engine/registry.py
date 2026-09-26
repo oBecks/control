@@ -10,6 +10,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import dashboards as dashboard_items
 from . import vault
 from .found_device import Category, FoundDevice, Readiness
 
@@ -91,6 +92,15 @@ CREATE TABLE IF NOT EXISTS hotkeys (
     made_by  TEXT NOT NULL DEFAULT 'user',          -- 'user' or 'assistant'
     created  REAL NOT NULL
 );
+-- Dashboards (ADR 0010): named screens the user arranges, items placed freely on a grid.
+CREATE TABLE IF NOT EXISTS dashboards (
+    uid       TEXT PRIMARY KEY,
+    name      TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    columns   INTEGER NOT NULL DEFAULT 8,   -- the grid's width: 4 phone, 6 tablet, 8 desktop
+    items     TEXT NOT NULL DEFAULT '[]',   -- JSON: [{"id", "kind", "x", "y", "w", "h", "target"?, "text"?...}]
+    position  INTEGER NOT NULL,             -- order in the Dashboards list
+    created   REAL NOT NULL
+);
 """
 
 
@@ -152,6 +162,14 @@ class Hotkey:
     target: str  # a Device's or Group's uid
     action: dict
     made_by: str  # "user" or "assistant"
+
+
+@dataclass
+class Dashboard:
+    uid: str
+    name: str
+    columns: int
+    items: list[dict]  # engine/dashboards.py
 
 
 @dataclass
@@ -268,6 +286,7 @@ class Registry:
             self._db.execute("DELETE FROM streamers WHERE uid = ?", (uid,))
             self._leave_groups(uid)
             self._drop_hotkeys(uid)
+            self._drop_dashboard_items()
 
     # --- Links ---------------------------------------------------------------
 
@@ -294,6 +313,10 @@ class Registry:
         if "adb" not in columns:
             with self._db:
                 self._db.execute("ALTER TABLE streamers ADD COLUMN adb INTEGER NOT NULL DEFAULT 0")
+        columns = {r["name"] for r in self._db.execute("PRAGMA table_info(dashboards)")}
+        if "columns" not in columns:
+            with self._db:
+                self._db.execute("ALTER TABLE dashboards ADD COLUMN columns INTEGER NOT NULL DEFAULT 8")
 
     def _seal_plain_secrets(self) -> None:
         """Databases from before sealing hold plain Link secrets: seal them once."""
@@ -400,6 +423,7 @@ class Registry:
             self._db.execute("DELETE FROM remote_devices WHERE uid = ?", (uid,))
             self._leave_groups(uid)
             self._drop_hotkeys(uid)
+            self._drop_dashboard_items()
 
     # --- Groups --------------------------------------------------------------
 
@@ -443,6 +467,7 @@ class Registry:
             if self._db.execute("DELETE FROM groups WHERE uid = ?", (uid,)).rowcount == 0:
                 raise LookupError(f"no group '{uid}'")
             self._drop_hotkeys(uid)
+            self._drop_dashboard_items()
 
     def _set_members(self, uid: str, members: list[str]) -> None:
         self._db.execute("DELETE FROM group_members WHERE group_uid = ?", (uid,))
@@ -502,6 +527,77 @@ class Registry:
         self._db.execute("DELETE FROM hotkeys WHERE target = ?", (target,))
         self._db.execute("DELETE FROM hotkeys WHERE target LIKE 'group:%' AND target NOT IN (SELECT uid FROM groups)")
 
+    # --- Dashboards ----------------------------------------------------------
+
+    def add_dashboard(self, name: str, columns: int, items: list[dict]) -> str:
+        uid = uuid.uuid4().hex[:12]
+        try:
+            with self._db:
+                position = self._db.execute("SELECT COALESCE(MAX(position) + 1, 0) FROM dashboards").fetchone()[0]
+                self._db.execute(
+                    "INSERT INTO dashboards (uid, name, columns, items, position, created) VALUES (?, ?, ?, ?, ?, ?)",
+                    (uid, name, columns, json.dumps(items), position, time.time()),
+                )
+        except sqlite3.IntegrityError:
+            raise ValueError(f"a dashboard named '{name}' already exists") from None
+        return uid
+
+    def dashboards(self) -> list[Dashboard]:
+        rows = self._db.execute("SELECT * FROM dashboards ORDER BY position, created").fetchall()
+        return [self._to_dashboard(r) for r in rows]
+
+    def get_dashboard(self, uid: str) -> Dashboard:
+        row = self._db.execute("SELECT * FROM dashboards WHERE uid = ?", (uid,)).fetchone()
+        if row is None:
+            raise LookupError(f"no dashboard '{uid}'")
+        return self._to_dashboard(row)
+
+    def update_dashboard(self, uid: str, name: str | None = None, columns: int | None = None,
+                         items: list[dict] | None = None) -> None:
+        self.get_dashboard(uid)  # 404s early
+        try:
+            with self._db:
+                if name is not None:
+                    self._db.execute("UPDATE dashboards SET name = ? WHERE uid = ?", (name, uid))
+                if columns is not None:
+                    self._db.execute("UPDATE dashboards SET columns = ? WHERE uid = ?", (columns, uid))
+                if items is not None:
+                    self._db.execute("UPDATE dashboards SET items = ? WHERE uid = ?", (json.dumps(items), uid))
+        except sqlite3.IntegrityError:
+            raise ValueError(f"a dashboard named '{name}' already exists") from None
+
+    def order_dashboards(self, uids: list[str]) -> None:
+        """Put the Dashboards in this order; any left out keep their order after them. Unknown or
+        repeated uids are ignored."""
+        known = [d.uid for d in self.dashboards()]
+        uids = [u for u in dict.fromkeys(uids) if u in known]
+        rest = [u for u in known if u not in uids]
+        with self._db:
+            self._db.executemany(
+                "UPDATE dashboards SET position = ? WHERE uid = ?", [(i, u) for i, u in enumerate(uids + rest)]
+            )
+
+    def forget_dashboard(self, uid: str) -> None:
+        with self._db:
+            if self._db.execute("DELETE FROM dashboards WHERE uid = ?", (uid,)).rowcount == 0:
+                raise LookupError(f"no dashboard '{uid}'")
+
+    def targets(self) -> set[str]:
+        """Every uid a Dashboard item or Hotkey can point at: Devices, Remote Devices and Groups."""
+        rows = self._db.execute(
+            "SELECT uid FROM devices UNION SELECT uid FROM remote_devices UNION SELECT uid FROM groups"
+        ).fetchall()
+        return {r["uid"] for r in rows}
+
+    def _drop_dashboard_items(self) -> None:
+        """Forgetting a Device or deleting a Group takes it off every Dashboard."""
+        targets = self.targets()
+        for r in self._db.execute("SELECT uid, items FROM dashboards").fetchall():
+            items = json.loads(r["items"])
+            kept = [i for i in items if "target" not in i or i["target"] in targets]
+            if len(kept) != len(items):
+                self._db.execute("UPDATE dashboards SET items = ? WHERE uid = ?", (json.dumps(kept), r["uid"]))
+
     # --- Settings ------------------------------------------------------------
 
     def setting(self, key: str, default=None):
@@ -553,6 +649,10 @@ class Registry:
             "SELECT device_uid FROM group_members WHERE group_uid = ? ORDER BY position", (r["uid"],)
         ).fetchall()
         return Group(uid=r["uid"], name=r["name"], members=[m["device_uid"] for m in members], made_by=r["made_by"])
+
+    def _to_dashboard(self, r: sqlite3.Row) -> Dashboard:
+        items = dashboard_items.upgrade(json.loads(r["items"]), r["columns"])
+        return Dashboard(uid=r["uid"], name=r["name"], columns=r["columns"], items=items)
 
     def _to_hotkey(self, r: sqlite3.Row) -> Hotkey:
         return Hotkey(uid=r["uid"], keys=r["keys"], target=r["target"], action=json.loads(r["action"]),

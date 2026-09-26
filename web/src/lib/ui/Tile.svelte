@@ -15,6 +15,10 @@
 		selected?: boolean;
 		/** Increment to flash a "sent" confirmation (remotes, whose state can't be shown). */
 		pulse?: number;
+		/** On a Dashboard: small is icon and name only (opened by holding it or right-clicking); large is 2×2. */
+		size?: 'small' | 'normal' | 'large';
+		/** Shown but not usable, e.g. while a Dashboard is being arranged. */
+		inert?: boolean;
 		ontoggle?: () => void;
 		onopen?: () => void;
 	}
@@ -30,9 +34,14 @@
 		isNew = false,
 		selected = false,
 		pulse = 0,
+		size = 'normal',
+		inert = false,
 		ontoggle,
 		onopen
 	}: Props = $props();
+
+	const small = $derived(size === 'small');
+	const large = $derived(size === 'large');
 
 	// Press-and-hold opens Device Controls (phone); the click that follows is swallowed.
 	const HOLD_MS = 450;
@@ -70,7 +79,16 @@
 	}
 </script>
 
-<div class="tile" class:on={on && !offline} class:offline class:selected style:--glow={glow}>
+<div
+	class="tile"
+	class:on={on && !offline}
+	class:offline
+	class:selected
+	class:small
+	class:large
+	{inert}
+	style:--glow={glow}
+>
 	{#key pulse}{#if pulse}<span class="sent" aria-hidden="true"></span>{/if}{/key}
 	<button
 		class="hit"
@@ -86,22 +104,26 @@
 
 	<div class="top">
 		<span class="badge" aria-hidden="true">
-			{#if offline}<WifiOff size={18} strokeWidth={2.2} />{:else}<Icon size={20} strokeWidth={2.2} />{/if}
+			{#if offline}<WifiOff size={18} strokeWidth={2.2} />{:else}<Icon size={large ? 30 : 20} strokeWidth={2.2} />{/if}
 		</span>
 		{#if isNew}<span class="new">New</span>{/if}
 	</div>
 
 	<div class="text">
 		<span class="name">{name}</span>
-		<span class="status num">
-			{offline ? 'Offline' : status}
-			{#if assumed && !offline}<span class="assumed" title="Assumed state: last set by Control">≈</span>{/if}
-		</span>
+		{#if !small}
+			<span class="status num">
+				{offline ? 'Offline' : status}
+				{#if assumed && !offline}<span class="assumed" title="Assumed state: last set by Control">≈</span>{/if}
+			</span>
+		{/if}
 	</div>
 
-	<button class="more" aria-label="Open {name} controls" onclick={() => onopen?.()}>
-		<ChevronRight size={16} strokeWidth={2.4} />
-	</button>
+	{#if !small}
+		<button class="more" aria-label="Open {name} controls" onclick={() => onopen?.()}>
+			<ChevronRight size={16} strokeWidth={2.4} />
+		</button>
+	{/if}
 </div>
 
 <style>
@@ -262,6 +284,60 @@
 
 	.more:hover {
 		background: color-mix(in oklab, var(--text) 12%, transparent);
+	}
+
+	/* Large: the same Tile, read from across the room */
+	.large {
+		min-block-size: calc(var(--tile-h) * 2 + var(--s-3));
+		padding: var(--s-5);
+	}
+	.large .badge {
+		inline-size: 60px;
+		block-size: 60px;
+	}
+	.large .name {
+		font-size: var(--fs-xl);
+		font-weight: var(--fw-bold);
+	}
+	.large .status {
+		font-size: var(--fs-lg);
+	}
+
+	/* Small: icon above a name of up to two lines */
+	.small {
+		align-items: center;
+		justify-content: center;
+		gap: var(--s-2);
+		padding: var(--s-3) var(--s-2);
+		text-align: center;
+	}
+	.small .top {
+		justify-content: center;
+	}
+	.small .new {
+		position: absolute;
+		inset-block-start: calc(-1 * var(--s-2));
+		inset-inline-end: calc(-1 * var(--s-2));
+	}
+	.small .text {
+		padding: 0;
+		max-inline-size: 100%;
+	}
+	.small .name {
+		display: -webkit-box;
+		-webkit-box-orient: vertical;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		white-space: normal;
+		font-size: var(--fs-sm);
+		overflow-wrap: anywhere;
+	}
+
+	.tile[inert] {
+		box-shadow: none;
+	}
+	.tile[inert] .more {
+		visibility: hidden;
 	}
 
 	/* RTL: the chevron points toward the end edge */
