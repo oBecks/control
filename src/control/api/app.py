@@ -38,7 +38,7 @@ from ..engine.found_device import Category
 from ..engine.links import tuya_link
 from ..engine.registry import Group, KnownDevice, Registry, RemoteDevice
 from ..engine.scan import DEFAULT_TIMEOUT, scan_and_remember
-from . import access, assistant, desktop
+from . import access, assistant, desktop, hotkeys
 from .deps import registry
 
 app = FastAPI(title="Control Engine", version=__version__)
@@ -47,6 +47,7 @@ app.middleware("http")(access.gate)
 app.include_router(access.router)
 app.include_router(desktop.router)
 app.include_router(assistant.router)
+app.include_router(hotkeys.router)
 
 
 @app.exception_handler(LookupError)
@@ -167,6 +168,7 @@ def forget_device(uid: str, r: Registry = Depends(registry)):
     _device_out(r, uid)
     (r.forget_remote if uid.startswith("remote:") else r.forget)(uid)
     androidtv_streamer.forget(uid)
+    hotkeys.listener.bump()  # its Hotkeys went with it
 
 
 # --- Scan ------------------------------------------------------------------
@@ -396,6 +398,7 @@ def patch_group(uid: str, patch: GroupPatch, r: Registry = Depends(registry)):
 @app.delete("/api/groups/{uid}", status_code=204)
 def forget_group(uid: str, r: Registry = Depends(registry)):
     r.forget_group(uid)
+    hotkeys.listener.bump()  # its Hotkeys went with it
 
 
 def _member_reading(r: Registry, uid: str, desired: StateIn | None) -> dict:

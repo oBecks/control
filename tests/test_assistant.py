@@ -150,11 +150,11 @@ def test_read_tools_are_marked_read_only(home):
             return (await c.list_tools()).tools
 
     tools = {t.name: t.annotations for t in anyio.run(go)}
-    assert {n for n, a in tools.items() if a.read_only_hint} == {"list_devices", "get_device"}
+    assert {n for n, a in tools.items() if a.read_only_hint} == {"list_devices", "get_device", "list_hotkeys"}
     # Pressing a button again (e.g. a Power Toggle) undoes it; creating a Group twice makes two.
     assert {n for n, a in tools.items() if a.idempotent_hint} == {
-        "set_power", "set_light", "set_climate", "edit_group", "delete_group"}
-    assert {n for n, a in tools.items() if a.destructive_hint} == {"delete_group"}
+        "set_power", "set_light", "set_climate", "edit_group", "delete_group", "delete_hotkey"}
+    assert {n for n, a in tools.items() if a.destructive_hint} == {"delete_group", "delete_hotkey"}
 
 
 # --- Groups --------------------------------------------------------------------------
@@ -210,6 +210,43 @@ def test_edit_and_delete_a_group(home):
     assert ok(srv, "delete_group", group="Night") == {"deleted": "Night"}
     assert "No Group called 'Night'" in error(srv, "delete_group", group="Night")
     assert "groups" not in ok(srv, "list_devices")
+
+
+# --- Hotkeys -------------------------------------------------------------------------
+
+
+@pytest.fixture
+def no_listener(monkeypatch):
+    from control.api import hotkeys as hotkeys_api
+    from control.desktop import hotkeys as desktop_hotkeys
+
+    monkeypatch.setattr(hotkeys_api, "listener", hotkeys_api.Listener())
+    monkeypatch.setattr(desktop_hotkeys, "can_register", lambda keys: True)
+
+
+def test_create_list_and_delete_hotkeys(home, client, no_listener):  # noqa: F811
+    srv, *_ = home
+    made = ok(srv, "create_hotkey", keys="ctrl+alt+l", device="yeelight", action="toggle")
+    assert made == {"keys": "Ctrl+Alt+L", "does": "Yeelight color: Toggle", "device": "Yeelight color",
+                    "made_by": "assistant", "problem": server.HOTKEYS_OFF}
+    ok(srv, "create_hotkey", keys="F13", device="Yeelight color", action="brightness_down", step=20)
+    ok(srv, "create_hotkey", keys="F14", device="AC", action="set", mode="heat", temperature=24)
+    ok(srv, "create_hotkey", keys="F15", device="Living room TV", action="press", button="Volume +")
+    listed = ok(srv, "list_hotkeys")
+    assert [h["does"] for h in listed["hotkeys"]] == [
+        "Yeelight color: Toggle", "Yeelight color: Brightness down 20%", "AC: Set heat, 24°", "Living room TV: Press Volume +"]
+    assert listed["note"] == server.HOTKEYS_OFF
+    assert ok(srv, "delete_hotkey", keys="Alt+Ctrl+L") == {"deleted": "Ctrl+Alt+L", "was": "Yeelight color: Toggle"}
+    assert "No Hotkey uses Ctrl+Alt+L" in error(srv, "delete_hotkey", keys="Ctrl+Alt+L")
+
+
+def test_hotkeys_the_engine_refuses_say_why(home, no_listener):
+    srv, *_ = home
+    assert "used for typing" in error(srv, "create_hotkey", keys="L", device="yeelight", action="toggle")
+    assert "only an AC" in error(srv, "create_hotkey", keys="F13", device="yeelight", action="temperature_up")
+    assert "has no remote buttons" in error(srv, "create_hotkey", keys="F13", device="AC", action="press", button="x")
+    warned = ok(srv, "create_hotkey", keys="Play/Pause", device="yeelight", action="toggle")
+    assert "only for Control" in warned["warning"]
 
 
 def test_starts_control_when_no_engine_answers():

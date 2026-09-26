@@ -102,3 +102,48 @@ export interface StateChange {
 	/** Streamers: an app's package name or link. */
 	open_app?: string;
 }
+
+/** What a Hotkey does (see engine/hotkeys.py). */
+export type HotkeyAction =
+	| { do: 'toggle' }
+	| { do: 'set'; state: StateChange }
+	| { do: 'step'; field: 'brightness' | 'target_temp'; by: number }
+	| { do: 'press'; button: string }
+	| { do: 'open_app'; app: string };
+
+/** Keys on the PC running Control that do one thing to one Device or Group (ADR 0007). */
+export interface Hotkey {
+	uid: string;
+	/** e.g. "Ctrl+Alt+L", "F13", "Volume Up" */
+	keys: string;
+	/** A Device's or Group's uid. */
+	target: string;
+	target_name: string;
+	action: HotkeyAction;
+	/** e.g. "Toggle", "Brightness up 10%" */
+	action_label: string;
+	/** Holding the keys repeats it. */
+	repeats: boolean;
+	made_by: 'user' | 'assistant';
+	/** taken: another app has the keys. off: the Desktop App isn't running, so no Hotkey works. */
+	status: 'active' | 'taken' | 'pending' | 'off';
+}
+
+/** Whether keys can be a Hotkey. */
+export interface KeysCheck {
+	/** The keys as Control writes them, e.g. "Ctrl+Alt+L". */
+	keys: string;
+	/** Why they can't. */
+	problem: string | null;
+	/** What they'd take from other apps. */
+	warning: string | null;
+}
+
+/** A key to pick when the Window can't see it pressed. */
+export interface PickableKey {
+	code: string;
+	label: string;
+	group: 'spare' | 'media' | 'function' | 'letters' | 'numpad' | 'other';
+	/** Types text, so it needs Ctrl, Alt or Win. */
+	types: boolean;
+}

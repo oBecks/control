@@ -6,6 +6,9 @@
 	import DeviceControls from '$lib/DeviceControls.svelte';
 	import GroupControls from '$lib/groups/GroupControls.svelte';
 	import GroupEditor from '$lib/groups/GroupEditor.svelte';
+	import HotkeyEditor from '$lib/hotkeys/HotkeyEditor.svelte';
+	import { hotkeys } from '$lib/hotkeys/hotkeys.svelte';
+	import TargetHotkeys from '$lib/hotkeys/TargetHotkeys.svelte';
 	import { home } from '$lib/home.svelte';
 	import {
 		glowOf,
@@ -33,6 +36,12 @@
 	/** The Group editor, open on a Group (uid) or on a new one (null). */
 	let editor = $state<{ uid: string | null } | null>(null);
 	const editing = $derived(editor?.uid ? home.groups.find((g) => g.uid === editor?.uid) : undefined);
+	/** The Hotkey editor, open on a Hotkey (uid) or a new one (null) for the selected Device or Group. */
+	let hotkeyEditor = $state<{ uid: string | null; target: string } | null>(null);
+	const editingHotkey = $derived(hotkeyEditor?.uid ? hotkeys.list.find((h) => h.uid === hotkeyEditor?.uid) : undefined);
+	$effect(() => {
+		hotkeys.load();
+	});
 	const canGroup = $derived(home.controllable.filter((d) => !d.group_problem).length >= 2);
 
 	const groupSummary = $derived.by(() => {
@@ -52,7 +61,15 @@
 	);
 
 	function openEditor(uid: string | null) {
+		hotkeyEditor = null;
 		editor = { uid };
+	}
+
+	/** Open a Device's or Group's controls. */
+	function open(uid: string) {
+		editor = null;
+		hotkeyEditor = null;
+		selectedUid = uid;
 	}
 
 	async function saveGroup(name: string, members: string[]) {
@@ -74,6 +91,7 @@
 
 	function close() {
 		editor = null;
+		hotkeyEditor = null;
 		selectedUid = null;
 	}
 
@@ -152,12 +170,9 @@
 								glow={groupGlow(st)}
 								offline={home.isGroupOffline(g)}
 								assumed={!!st?.assumed}
-								selected={desktop.current && g.uid === selectedUid && !editor}
+								selected={desktop.current && g.uid === selectedUid && !editor && !hotkeyEditor}
 								ontoggle={() => home.toggleGroup(g.uid)}
-								onopen={() => {
-									editor = null;
-									selectedUid = g.uid;
-								}}
+								onopen={() => open(g.uid)}
 							/>
 						{/each}
 					</div>
@@ -179,12 +194,9 @@
 								offline={home.isOffline(d)}
 								assumed={d.kind === 'remote'}
 								isNew={d.is_new}
-								selected={desktop.current && d.uid === selectedUid && !editor}
+								selected={desktop.current && d.uid === selectedUid && !editor && !hotkeyEditor}
 								ontoggle={() => home.toggle(d.uid)}
-								onopen={() => {
-									editor = null;
-									selectedUid = d.uid;
-								}}
+								onopen={() => open(d.uid)}
 							/>
 						{/each}
 					</div>
@@ -194,7 +206,11 @@
 	</main>
 
 	{#snippet panel()}
-		{#if editor}
+		{#if hotkeyEditor}
+			{#key hotkeyEditor.uid}
+				<HotkeyEditor hotkey={editingHotkey} target={hotkeyEditor.target} onclose={() => (hotkeyEditor = null)} />
+			{/key}
+		{:else if editor}
 			{#key editor.uid}
 				<GroupEditor
 					group={editing}
@@ -215,6 +231,7 @@
 				onedit={() => openEditor(selectedGroup.uid)}
 				onopenmember={(uid) => (selectedUid = uid)}
 			/>
+			{@render targetHotkeys(selectedGroup.uid)}
 		{:else if selected}
 			<DeviceControls
 				device={selected}
@@ -231,19 +248,31 @@
 				onrename={(name) => home.rename(selected.uid, name)}
 				onapps={(apps) => home.setStreamer(selected.uid, { apps })}
 			/>
+			{@render targetHotkeys(selected.uid)}
 		{/if}
+	{/snippet}
+
+	{#snippet targetHotkeys(target: string)}
+		<TargetHotkeys
+			uid={target}
+			onadd={() => (hotkeyEditor = { uid: null, target })}
+			onopen={(uid) => (hotkeyEditor = { uid, target })}
+		/>
 	{/snippet}
 
 	{#if desktop.current}
 		<aside class="panel" aria-label="Device controls">
-			{#if editor || selectedGroup || selected}
+			{#if hotkeyEditor || editor || selectedGroup || selected}
 				{@render panel()}
 			{:else}
 				<p class="hint">Select a device's <b>›</b> to see all its controls here.</p>
 			{/if}
 		</aside>
-	{:else if editor || selectedGroup || selected}
-		<Sheet label={editor ? 'Group' : `${(selectedGroup ?? selected)?.name} controls`} onclose={close}>
+	{:else if hotkeyEditor || editor || selectedGroup || selected}
+		<Sheet
+			label={hotkeyEditor ? 'Hotkey' : editor ? 'Group' : `${(selectedGroup ?? selected)?.name} controls`}
+			onclose={close}
+		>
 			{@render panel()}
 		</Sheet>
 	{/if}

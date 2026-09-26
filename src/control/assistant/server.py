@@ -13,6 +13,7 @@ import sys
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from typing import Literal
 
 import httpx
 from mcp.server.mcpserver import MCPServer
@@ -20,7 +21,8 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ToolAnnotations
 
 from .. import __version__
-from ..engine.streamer import find_shortcut
+from ..engine import hotkeys
+from ..engine.streamer import CATALOGUE, find_shortcut
 
 MCP_HEADER = "X-Control-MCP"  # sent with every Engine call: this server's version
 START_TIMEOUT = 30  # seconds to wait for a Control it started
@@ -44,6 +46,13 @@ set_power, set_light and set_climate take a Group's name too, and change every m
 Group of lights takes what every one of its lights can do, a Group of ACs likewise, any other Group
 only on/off. You can create, edit and delete Groups when the user asks; the app marks them as made
 by the Assistant.
+
+Hotkeys: keys on this PC (e.g. Ctrl+Alt+L, F13, or a media key such as Play/Pause) that do one thing
+to one Device or Group: toggle it, turn it on or off, step brightness or temperature, set it, press
+one of its buttons, or open a Streamer's app. You can list, create and delete them when the user
+asks; the app marks them as made by the Assistant. They work only while the Control app runs on this
+PC, and the keys then reach only Control, never the app in front: suggest spare keys (F13-F24, or
+Ctrl+Alt with a letter) rather than keys the user types or uses elsewhere.
 
 Setting things up (scanning, adding Devices, Learning buttons, renaming Devices) happens in the
 Control app itself; point the user there."""
@@ -436,7 +445,121 @@ def create_server(engine: Engine) -> MCPServer:
         engine.call("DELETE", f"/groups/{g['uid']}")
         return {"deleted": g["name"]}
 
+    @server.tool(title="List Hotkeys", annotations=READ)
+    def list_hotkeys() -> dict:
+        """List the Hotkeys: keys on this PC that do one thing to a Device or Group."""
+        body = engine.call("GET", "/hotkeys")
+        out: dict = {"hotkeys": [hotkey_summary(h) for h in body["hotkeys"]]}
+        if not body["listening"]:
+            out["note"] = HOTKEYS_OFF
+        return out
+
+    @server.tool(title="Create a Hotkey", annotations=CREATE)
+    def create_hotkey(keys: str, device: str, action: HotkeyAction, step: float | None = None,
+                      button: str | None = None, app: str | None = None, brightness: int | None = None,
+                      color: str | None = None, kelvin: int | None = None, mode: str | None = None,
+                      temperature: float | None = None, fan: str | None = None) -> dict:
+        """Create a Hotkey: keys on this PC (e.g. "Ctrl+Alt+L", "F13", "Play/Pause") that do one thing
+        to a Device or Group. action:
+        - toggle, on, off
+        - brightness_up / brightness_down (a light, by `step` %, default 10), temperature_up /
+          temperature_down (an AC, by `step` degrees, default 1); holding the keys keeps stepping
+        - set: any of brightness, color (#RRGGBB), kelvin, mode, temperature, fan
+        - press: one of a remote's or Streamer's buttons (`button`, e.g. "Volume +"); holding repeats
+        - open_app: a Streamer's app (`app`, e.g. "Netflix")
+        Keys that type text need Ctrl, Alt or Win. The keys then reach only Control."""
+        d = controllable(lookup(device))
+        action_body = hotkey_action(d, action, step, button, app,
+                                    {"brightness": brightness, "kelvin": kelvin, "mode": mode,
+                                     "target_temp": temperature, "fan": fan, "color": color})
+        h = engine.call("POST", "/hotkeys", {"keys": keys, "target": d["uid"], "action": action_body,
+                                             "by_assistant": True})
+        out = hotkey_summary(h)
+        check = engine.call("POST", "/hotkeys/check", {"keys": h["keys"], "uid": h["uid"]})
+        if check.get("warning"):
+            out["warning"] = check["warning"]
+        return out
+
+    @server.tool(title="Delete a Hotkey", annotations=DELETE)
+    def delete_hotkey(keys: str) -> dict:
+        """Delete a Hotkey, by its keys (e.g. "Ctrl+Alt+L"). The keys go back to other apps."""
+        try:
+            label = hotkeys.parse(keys).label
+        except ValueError as exc:
+            raise ToolError(str(exc)) from None
+        found = [h for h in engine.call("GET", "/hotkeys")["hotkeys"] if h["keys"].casefold() == label.casefold()]
+        if not found:
+            raise ToolError(f"No Hotkey uses {label}. list_hotkeys lists them.")
+        engine.call("DELETE", f"/hotkeys/{found[0]['uid']}")
+        return {"deleted": label, "was": f"{found[0]['target_name']}: {found[0]['action_label']}"}
+
+    def hotkey_action(d: dict, action: str, step: float | None, button: str | None, app: str | None,
+                      settings: dict) -> dict:
+        if action == "toggle":
+            return {"do": "toggle"}
+        if action in ("on", "off"):
+            return {"do": "set", "state": {"on": action == "on"}}
+        if action in ("brightness_up", "brightness_down", "temperature_up", "temperature_down"):
+            field = "brightness" if action.startswith("brightness") else "target_temp"
+            by = abs(step) if step else hotkeys.DEFAULT_STEP[field]
+            return {"do": "step", "field": field, "by": by if action.endswith("_up") else -by}
+        if action == "press":
+            if not button:
+                raise ToolError("Say which button to press.")
+            if is_group(d) or d["control"] not in ("remote", "streamer"):
+                raise ToolError(f"'{d['name']}' has no remote buttons.")
+            features = engine.call("GET", f"/devices/{d['uid']}/state")["features"]
+            return {"do": "press", "button": find_button(features, button)}
+        if action == "open_app":
+            if not app:
+                raise ToolError("Say which app to open.")
+            if d["control"] != "streamer":
+                raise ToolError(f"'{d['name']}' isn't a Streamer, so it can't open apps.")
+            apps = engine.call("GET", f"/devices/{d['uid']}/state")["features"]["apps"]
+            return {"do": "open_app", "app": app_package(apps, app)}
+        if action == "set":
+            color = settings.pop("color")
+            state = {k: v for k, v in settings.items() if v is not None}
+            if color is not None:
+                state["rgb"] = parse_color(color)
+            if not state:
+                raise ToolError("Say what to set: brightness, color, kelvin, mode, temperature or fan.")
+            return {"do": "set", "state": state}
+        raise ToolError(f"Unknown action '{action}'.")
+
     return server
+
+
+HotkeyAction = Literal["toggle", "on", "off", "brightness_up", "brightness_down", "temperature_up",
+                       "temperature_down", "set", "press", "open_app"]
+HOTKEYS_OFF = "The Control app isn't running on this PC, so Hotkeys don't work until it starts."
+HOTKEY_PROBLEMS = {
+    "off": HOTKEYS_OFF,
+    "taken": "Another app has these keys, so this Hotkey doesn't work. Pick other keys.",
+}
+
+
+def hotkey_summary(h: dict) -> dict:
+    out = {"keys": h["keys"], "does": f"{h['target_name']}: {h['action_label']}", "device": h["target_name"]}
+    if h["made_by"] == "assistant":
+        out["made_by"] = "assistant"
+    if h["status"] in HOTKEY_PROBLEMS:
+        out["problem"] = HOTKEY_PROBLEMS[h["status"]]
+    return out
+
+
+def app_package(apps: list[dict], ref: str) -> str:
+    """A Streamer app's package from its name: one of its apps, or one Control knows."""
+    key = ref.strip().casefold()
+    for pool in (apps, CATALOGUE):
+        exact = [a for a in pool if a["name"].casefold() == key or a["app"] == ref]
+        if exact:
+            return exact[0]["app"]
+        partial = [a for a in pool if key and key in a["name"].casefold()]
+        if len(partial) == 1:
+            return partial[0]["app"]
+    names = ", ".join(a["name"] for a in apps) or "none yet"
+    raise ToolError(f"No app '{ref}' on this Streamer. Its apps: {names}.")
 
 
 def run(port: int) -> None:

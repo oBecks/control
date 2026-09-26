@@ -82,6 +82,15 @@ CREATE TABLE IF NOT EXISTS group_members (
     position    INTEGER NOT NULL,
     PRIMARY KEY (group_uid, device_uid)
 );
+-- Hotkeys (ADR 0007): keys on the PC that do one thing to one Device or Group.
+CREATE TABLE IF NOT EXISTS hotkeys (
+    uid      TEXT PRIMARY KEY,
+    keys     TEXT NOT NULL UNIQUE COLLATE NOCASE,   -- e.g. "Ctrl+Alt+L" (engine/hotkeys.py)
+    target   TEXT NOT NULL,                         -- a Device's or Group's uid
+    action   TEXT NOT NULL,                         -- JSON, e.g. {"do": "toggle"}
+    made_by  TEXT NOT NULL DEFAULT 'user',          -- 'user' or 'assistant'
+    created  REAL NOT NULL
+);
 """
 
 
@@ -133,6 +142,15 @@ class Group:
     uid: str
     name: str
     members: list[str]  # device uids, in the order the user picked them
+    made_by: str  # "user" or "assistant"
+
+
+@dataclass
+class Hotkey:
+    uid: str
+    keys: str  # e.g. "Ctrl+Alt+L"
+    target: str  # a Device's or Group's uid
+    action: dict
     made_by: str  # "user" or "assistant"
 
 
@@ -249,6 +267,7 @@ class Registry:
             self._db.execute("DELETE FROM devices WHERE uid = ?", (uid,))
             self._db.execute("DELETE FROM streamers WHERE uid = ?", (uid,))
             self._leave_groups(uid)
+            self._drop_hotkeys(uid)
 
     # --- Links ---------------------------------------------------------------
 
@@ -380,6 +399,7 @@ class Registry:
         with self._db:
             self._db.execute("DELETE FROM remote_devices WHERE uid = ?", (uid,))
             self._leave_groups(uid)
+            self._drop_hotkeys(uid)
 
     # --- Groups --------------------------------------------------------------
 
@@ -422,6 +442,7 @@ class Registry:
             self._db.execute("DELETE FROM group_members WHERE group_uid = ?", (uid,))
             if self._db.execute("DELETE FROM groups WHERE uid = ?", (uid,)).rowcount == 0:
                 raise LookupError(f"no group '{uid}'")
+            self._drop_hotkeys(uid)
 
     def _set_members(self, uid: str, members: list[str]) -> None:
         self._db.execute("DELETE FROM group_members WHERE group_uid = ?", (uid,))
@@ -434,6 +455,52 @@ class Registry:
         """A forgotten Device leaves its Groups; a Group left with nobody in it goes too."""
         self._db.execute("DELETE FROM group_members WHERE device_uid = ?", (device_uid,))
         self._db.execute("DELETE FROM groups WHERE uid NOT IN (SELECT group_uid FROM group_members)")
+
+    # --- Hotkeys -------------------------------------------------------------
+
+    def add_hotkey(self, keys: str, target: str, action: dict, made_by: str = "user") -> str:
+        uid = f"hotkey:{uuid.uuid4().hex[:12]}"
+        try:
+            with self._db:
+                self._db.execute(
+                    "INSERT INTO hotkeys (uid, keys, target, action, made_by, created) VALUES (?, ?, ?, ?, ?, ?)",
+                    (uid, keys, target, json.dumps(action), made_by, time.time()),
+                )
+        except sqlite3.IntegrityError:
+            raise ValueError(f"another Hotkey already uses {keys}") from None
+        return uid
+
+    def hotkeys(self) -> list[Hotkey]:
+        rows = self._db.execute("SELECT * FROM hotkeys ORDER BY created").fetchall()
+        return [self._to_hotkey(r) for r in rows]
+
+    def get_hotkey(self, uid: str) -> Hotkey:
+        row = self._db.execute("SELECT * FROM hotkeys WHERE uid = ?", (uid,)).fetchone()
+        if row is None:
+            raise LookupError(f"no Hotkey '{uid}'")
+        return self._to_hotkey(row)
+
+    def update_hotkey(self, uid: str, keys: str | None = None, target: str | None = None,
+                      action: dict | None = None) -> None:
+        self.get_hotkey(uid)  # 404s early
+        try:
+            with self._db:
+                for column, value in (("keys", keys), ("target", target),
+                                      ("action", json.dumps(action) if action is not None else None)):
+                    if value is not None:
+                        self._db.execute(f"UPDATE hotkeys SET {column} = ? WHERE uid = ?", (value, uid))  # noqa: S608
+        except sqlite3.IntegrityError:
+            raise ValueError(f"another Hotkey already uses {keys}") from None
+
+    def forget_hotkey(self, uid: str) -> None:
+        with self._db:
+            if self._db.execute("DELETE FROM hotkeys WHERE uid = ?", (uid,)).rowcount == 0:
+                raise LookupError(f"no Hotkey '{uid}'")
+
+    def _drop_hotkeys(self, target: str) -> None:
+        """Forgetting a Device or Group deletes its Hotkeys, and those of a Group that went with it."""
+        self._db.execute("DELETE FROM hotkeys WHERE target = ?", (target,))
+        self._db.execute("DELETE FROM hotkeys WHERE target LIKE 'group:%' AND target NOT IN (SELECT uid FROM groups)")
 
     # --- Settings ------------------------------------------------------------
 
@@ -486,6 +553,10 @@ class Registry:
             "SELECT device_uid FROM group_members WHERE group_uid = ? ORDER BY position", (r["uid"],)
         ).fetchall()
         return Group(uid=r["uid"], name=r["name"], members=[m["device_uid"] for m in members], made_by=r["made_by"])
+
+    def _to_hotkey(self, r: sqlite3.Row) -> Hotkey:
+        return Hotkey(uid=r["uid"], keys=r["keys"], target=r["target"], action=json.loads(r["action"]),
+                      made_by=r["made_by"])
 
     def _to_browser(self, r: sqlite3.Row) -> ApprovedBrowser:
         return ApprovedBrowser(id=r["id"], name=r["name"], approved_at=r["approved_at"], last_seen=r["last_seen"])
