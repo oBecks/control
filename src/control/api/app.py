@@ -38,7 +38,7 @@ from ..engine.found_device import Category
 from ..engine.links import tuya_link
 from ..engine.registry import Group, KnownDevice, Registry, RemoteDevice
 from ..engine.scan import DEFAULT_TIMEOUT, scan_and_remember
-from . import access, assistant, desktop, hotkeys
+from . import access, assistant, dashboards, desktop, hotkeys
 from .deps import registry
 
 app = FastAPI(title="Control Engine", version=__version__)
@@ -48,6 +48,7 @@ app.include_router(access.router)
 app.include_router(desktop.router)
 app.include_router(assistant.router)
 app.include_router(hotkeys.router)
+app.include_router(dashboards.router)
 
 
 @app.exception_handler(LookupError)

@@ -26,6 +26,7 @@ Settled in the design grilling session (2026-09-25). Terms follow [CONTEXT.md](.
 ## Where things live
 - **Scenes**: chip row at the top of Home. "+" creates one, long-press edits.
 - **Add Devices**: separate screen for Scans, Links (Tuya QR), Setup hints, and adding Remote Devices (AC code-set finder).
+- **Dashboards** ([ADR 0009](adr/0009-dashboards-ordered-flow-with-spacers.md)): a Dashboards entry in the sidebar and tab bar opens their list (open, new, rename, delete, reorder, "open this browser to it"). A Dashboard is a grid of 4 / 6 / 8 columns by its own width; items keep their order and size. An Edit button (never a long-press) starts arranging: Tiles stop responding, each item gets a drag handle (top-end), a × (top-start), and a tap selects it for the bar at the bottom (size, heading text, Remove, Add item). Spacers show as dashed boxes only while arranging.
 - **Transmitters**: hidden from Home. Listed in Settings → Hubs & Bridges.
 
 ## Review process

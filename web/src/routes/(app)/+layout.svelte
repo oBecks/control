@@ -1,7 +1,9 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import { House, Keyboard, Radar, Settings } from '@lucide/svelte';
+	import { House, Keyboard, LayoutDashboard, Radar, Settings } from '@lucide/svelte';
+	import { dashboards } from '$lib/dashboards/dashboards.svelte';
 	import { home } from '$lib/home.svelte';
 	import AccessRequestBanner from '$lib/access/AccessRequestBanner.svelte';
 	import WaitingScreen from '$lib/access/WaitingScreen.svelte';
@@ -13,6 +15,7 @@
 
 	const NAV = [
 		{ href: resolve('/'), label: 'Home', icon: House },
+		{ href: resolve('/dashboards'), label: 'Dashboards', icon: LayoutDashboard },
 		{ href: resolve('/add'), label: 'Add devices', short: 'Add', icon: Radar },
 		// Hotkeys are keys on this computer, so phones don't get the page.
 		...(onThisComputer ? [{ href: resolve('/hotkeys'), label: 'Hotkeys', icon: Keyboard }] : []),
@@ -20,6 +23,26 @@
 	];
 
 	$effect(() => home.start());
+
+	/** A Dashboard's own page counts as Dashboards. */
+	const isActive = (href: string) =>
+		page.url.pathname === href || (href !== resolve('/') && page.url.pathname.startsWith(`${href}/`));
+
+	// Opening Control lands on this browser's Dashboard instead of Home, if it picked one and it still exists.
+	// Home stays hidden meanwhile, so it doesn't flash first.
+	const landsOn = page.url.pathname === resolve('/') ? dashboards.openTo : null;
+	let landing = $state(!!landsOn);
+	if (landsOn) {
+		const uid = landsOn;
+		dashboards
+			.load()
+			.then(async () => {
+				if (!dashboards.loaded || page.url.pathname !== resolve('/')) return;
+				if (dashboards.get(uid)) await goto(resolve('/(app)/dashboards/[uid]', { uid }), { replaceState: true });
+				else dashboards.setOpenTo(null);
+			})
+			.finally(() => (landing = false));
+	}
 </script>
 
 {#if home.lock === 'approval_required'}
@@ -35,11 +58,7 @@
 			<span class="brand">Control</span>
 			<nav aria-label="Main">
 				{#each NAV as n (n.href)}
-					<a
-						href={n.href}
-						class:active={page.url.pathname === n.href}
-						aria-current={page.url.pathname === n.href ? 'page' : undefined}
-					>
+					<a href={n.href} class:active={isActive(n.href)} aria-current={isActive(n.href) ? 'page' : undefined}>
 						<n.icon size={18} strokeWidth={2.2} />
 						{n.label}
 						{#if n.href === '/add' && home.newCount}<span class="count">{home.newCount}</span>{/if}
@@ -73,17 +92,13 @@
 						{/each}
 					</div>
 				{/if}
-				{@render children()}
+				{#if !landing}{@render children()}{/if}
 			{/if}
 		</div>
 
 		<nav class="tabbar" aria-label="Main">
 			{#each NAV as n (n.href)}
-				<a
-					href={n.href}
-					class:active={page.url.pathname === n.href}
-					aria-current={page.url.pathname === n.href ? 'page' : undefined}
-				>
+				<a href={n.href} class:active={isActive(n.href)} aria-current={isActive(n.href) ? 'page' : undefined}>
 					<n.icon size={22} strokeWidth={2.1} />
 					<small>{n.short ?? n.label}</small>
 					{#if n.href === '/add' && home.newCount}<span class="dot" aria-label="{home.newCount} new"></span>{/if}
