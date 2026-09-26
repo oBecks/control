@@ -1,4 +1,5 @@
 import threading
+import time
 
 import pytest
 
@@ -62,6 +63,8 @@ def test_actions_are_checked_against_what_the_target_can_do():
     check = hotkeys.check_action
     assert check({"do": "toggle"}, "light", LIGHT, {}, [], False) == {"do": "toggle"}
     assert check({"do": "step", "field": "brightness"}, "light", LIGHT, {}, [], False)["by"] == 10
+    with pytest.raises(ValueError, match="small amount"):
+        check({"do": "step", "field": "brightness", "by": 0.4}, "light", LIGHT, {}, [], False)
     with pytest.raises(ValueError, match="only an AC steps its temperature"):
         check({"do": "step", "field": "target_temp", "by": 1}, "light", LIGHT, {}, [], False)
     with pytest.raises(ValueError, match="can't be set: mode"):
@@ -283,6 +286,14 @@ def test_while_recording_the_listener_lets_go_of_every_hotkey(hk, monkeypatch):
     c.put("/api/hotkeys/recording", json={"on": False})
     answer = c.get(f"/api/hotkeys/watch?revision={answer['revision']}&recording=true").json()
     assert not answer["recording"] and len(answer["hotkeys"]) == 1
+
+
+def test_a_stopping_engine_answers_the_listener_at_once(hk):
+    listener = hotkeys_api.listener
+    listener.close()
+    started = time.monotonic()
+    listener.watch(listener.revision, False, timeout=5)
+    assert time.monotonic() - started < 1
 
 
 def test_forgetting_a_device_tells_the_listener(hk):

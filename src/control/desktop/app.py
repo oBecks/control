@@ -107,9 +107,10 @@ class Engine:
         return self._server.started
 
     def stop(self) -> None:
-        from ..api import lan
+        from ..api import hotkeys, lan
 
         lan.listener.stop()
+        hotkeys.listener.close()  # the Hotkey listener's long poll would hold up the exit
         self._server.should_exit = True
         self._thread.join(timeout=5)
 

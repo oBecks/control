@@ -40,6 +40,7 @@ class Listener:
         self.reported = 0  # the revision it last registered
         self.taken: set[str] = set()  # Hotkeys whose keys Windows refused
         self.recording_until = 0.0
+        self.closing = False  # the Engine is stopping: answer watches now, or they hold up its exit
 
     def bump(self) -> int:
         with self._cond:
@@ -63,13 +64,18 @@ class Listener:
         try:
             deadline = time.monotonic() + timeout
             with self._cond:
-                while (self.revision == revision and self.recording == recording
+                while (self.revision == revision and self.recording == recording and not self.closing
                        and (left := deadline - time.monotonic()) > 0):
                     self._cond.wait(min(left, 0.5))  # wakes to notice recording running out
         finally:
             with self._cond:
                 self.watching -= 1
                 self.last_contact = time.monotonic()
+
+    def close(self) -> None:
+        with self._cond:
+            self.closing = True
+            self._cond.notify_all()
 
     def report(self, revision: int, taken: set[str]) -> None:
         with self._cond:

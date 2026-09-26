@@ -195,7 +195,9 @@ def check_action(action: dict, control: str | None, settable: set[str], buttons:
             what = "a light" if field == "brightness" else "an AC"
             raise ValueError(f"only {what} steps its {'brightness' if field == 'brightness' else 'temperature'}")
         by = action.get("by", DEFAULT_STEP[field])
-        if not isinstance(by, int | float) or by == 0 or abs(by) > (50 if field == "brightness" else 5):
+        if isinstance(by, int | float) and field == "brightness":
+            by = round(by)  # whole percents
+        if not isinstance(by, int | float) or isinstance(by, bool) or by == 0 or abs(by) > (50 if field == "brightness" else 5):
             raise ValueError("step by a small amount, e.g. 10 (%) or 1 (°); negative steps down")
         return {"do": "step", "field": field, "by": int(by) if field == "brightness" else by}
     if do == "press":
