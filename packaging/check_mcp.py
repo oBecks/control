@@ -2,11 +2,14 @@
 The release workflow runs it so a Control.exe missing a module is never published (ADR 0005)."""
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
 
-TOOLS = {"list_devices", "get_device", "set_power", "set_light", "set_climate", "press_button"}
+# Every tool the source defines, so this check never needs updating when a tool is added.
+SERVER = Path(__file__).resolve().parents[1] / "src" / "control" / "assistant" / "server.py"
+TOOLS = set(re.findall(r"@server\.tool\([^)]*\)\s*def (\w+)", SERVER.read_text(encoding="utf-8")))
 
 
 def main(exe: str) -> None:
