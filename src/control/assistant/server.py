@@ -16,6 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Literal
 
 import httpx
+from pydantic import BaseModel, Field
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ToolAnnotations
@@ -53,6 +54,16 @@ one of its buttons, or open a Streamer's app. You can list, create and delete th
 asks; the app marks them as made by the Assistant. They work only while the Control app runs on this
 PC, and the keys then reach only Control, never the app in front: suggest spare keys (F13-F24, or
 Ctrl+Alt with a letter) rather than keys the user types or uses elsewhere.
+
+Automations: When (Triggers: a time on some days, or sunrise/sunset with an offset) → Only if
+(Conditions: a Device or Group is on/off, a Streamer has an app open, a time window, some days, dark
+or light; all of them or any one) → Then (Actions in order: control a Device or Group the way a
+Hotkey does, wait, notify). Control runs them itself while it's running on this PC. You can list,
+read (with recent Runs), create, edit, delete, run, and switch them on and off when the user asks;
+they're active right away and the app marks them as made by the Assistant. After creating one, tell
+the user its `summary` so they can check it. A timed Trigger missed while the PC was off or asleep
+is skipped, never run late. Running one by hand skips its Conditions. Sunrise and sunset need the
+home's location, set in Control (Settings or the Automation builder).
 
 Setting things up (scanning, adding Devices, Learning buttons, renaming Devices) happens in the
 Control app itself; point the user there."""
@@ -273,6 +284,102 @@ def parse_color(text: str) -> list[int]:
         return [int(hex_[i : i + 2], 16) for i in (0, 2, 4)]
     except ValueError:
         raise ToolError(f"'{text}' isn't a colour. Give it as #RRGGBB, e.g. #ff8800.") from None
+
+
+# --- Automations -----------------------------------------------------------------
+
+DAY_NAMES = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+
+class TriggerIn(BaseModel):
+    """What starts an Automation."""
+
+    type: Literal["time", "sun"]
+    at: str | None = Field(None, description='time: "HH:MM", 24-hour, the PC\'s local time')
+    event: Literal["sunrise", "sunset"] | None = Field(None, description="sun")
+    offset_minutes: int = Field(0, description="sun: minutes before (negative) or after, at most 180")
+    days: list[str] | None = Field(None, description='e.g. ["mon", "tue"]; left out: every day')
+
+
+class ConditionIn(BaseModel):
+    """Something that must be true when a Trigger fires."""
+
+    type: Literal["state", "app", "time", "days", "sun"]
+    device: str | None = Field(None, description="state, app: a Device's or Group's name or uid")
+    on: bool | None = Field(None, description="state: true while it's on (a Group: any member), false while off")
+    app: str | None = Field(None, description="app: the app a Streamer has open, e.g. Netflix")
+    after: str | None = Field(None, description='time: from "HH:MM"')
+    before: str | None = Field(None, description='time: until "HH:MM" (may be past midnight)')
+    days: list[str] | None = Field(None, description='days: e.g. ["fri", "sat"]')
+    dark: bool | None = Field(None, description="sun: true between sunset and sunrise, false in daylight")
+
+
+class ActionIn(BaseModel):
+    """One step of an Automation, done in order."""
+
+    action: Literal["toggle", "on", "off", "brightness_up", "brightness_down", "temperature_up",
+                    "temperature_down", "set", "press", "open_app", "wait", "notify"]
+    device: str | None = Field(None, description="a Device's or Group's name or uid, for all but wait and notify")
+    step: float | None = Field(None, description="brightness_* (%, default 10) or temperature_* (degrees, default 1)")
+    button: str | None = Field(None, description='press: e.g. "Volume +"')
+    app: str | None = Field(None, description='open_app: e.g. "Netflix"')
+    brightness: int | None = Field(None, description="set: 1-100")
+    color: str | None = Field(None, description="set: #RRGGBB")
+    kelvin: int | None = Field(None, description="set: white temperature")
+    mode: str | None = Field(None, description="set: an AC's mode")
+    temperature: float | None = Field(None, description="set: an AC's temperature")
+    fan: str | None = Field(None, description="set: an AC's fan speed")
+    minutes: float | None = Field(None, description="wait: how long, e.g. 10 or 0.5")
+    text: str | None = Field(None, description="notify: what the notification says")
+
+
+def automation_trigger(t: TriggerIn) -> dict:
+    if t.type == "time":
+        return {"type": "time", "at": t.at, "days": day_numbers(t.days)}
+    return {"type": "sun", "event": t.event, "offset": t.offset_minutes, "days": day_numbers(t.days)}
+
+
+def day_numbers(days: list[str] | None) -> list[int] | None:
+    if days is None:
+        return None
+    out = []
+    for d in days:
+        key = d.strip().casefold()[:3]
+        if key not in DAY_NAMES:
+            raise ToolError(f"'{d}' isn't a day. Days: {', '.join(DAY_NAMES)}.")
+        out.append(DAY_NAMES.index(key))
+    return out
+
+
+def _when(ts: float) -> str:
+    return time.strftime("%a %d %b %H:%M", time.localtime(ts))
+
+
+def automation_summary(a: dict) -> dict:
+    out = {"name": a["name"], "uid": a["uid"], "on": a["enabled"], "summary": a["summary"]}
+    if a["next_run"]:
+        out["next_run"] = _when(a["next_run"])
+    if a["running"]:
+        out["running"] = True
+    if a["last_run"]:
+        out["last_run"] = run_summary(a["last_run"])
+    if a["attention"]:
+        out["needs_attention"] = a["attention"]
+    if a["made_by"] == "assistant":
+        out["made_by"] = "assistant"
+    return out
+
+
+def run_summary(run: dict) -> dict:
+    out = {"when": _when(run["started"]), "started_by": run["cause"], "outcome": run["outcome"].replace("_", " ")}
+    if run["note"]:
+        out["note"] = run["note"]
+    if run["outcome"] not in ("missed", "skipped"):
+        out["actions"] = [
+            f"{s['label']}: {s['result'].replace('_', ' ')}" + (f" ({s['detail']})" if s.get("detail") else "")
+            for s in run["steps"]
+        ]
+    return out
 
 
 # --- The server ------------------------------------------------------------------
@@ -497,6 +604,126 @@ def create_server(engine: Engine) -> MCPServer:
             raise ToolError(f"No Hotkey uses {label}. list_hotkeys lists them.")
         engine.call("DELETE", f"/hotkeys/{found[0]['uid']}")
         return {"deleted": label, "was": f"{found[0]['target_name']}: {found[0]['action_label']}"}
+
+    # Automations
+
+    def lookup_automation(ref: str) -> dict:
+        found = [a | {"category": "automation"} for a in engine.call("GET", "/automations")]
+        return find(found, ref, "Automation")
+
+    def automation_body(triggers: list[TriggerIn] | None, conditions: list[ConditionIn] | None,
+                        actions: list[ActionIn] | None) -> dict:
+        body = {}
+        if triggers is not None:
+            body["triggers"] = [automation_trigger(t) for t in triggers]
+        if conditions is not None:
+            body["conditions"] = [automation_condition(c) for c in conditions]
+        if actions is not None:
+            body["actions"] = [automation_action(a) for a in actions]
+        return body
+
+    def automation_condition(c: ConditionIn) -> dict:
+        if c.type in ("state", "app"):
+            if not c.device:
+                raise ToolError("A state or app Condition says which Device or Group (`device`).")
+            d = controllable(lookup(c.device))
+            if c.type == "state":
+                if c.on is None:
+                    raise ToolError("A state Condition says `on`: true (on) or false (off).")
+                return {"type": "state", "target": d["uid"], "on": c.on}
+            if not c.app:
+                raise ToolError("Say which app (`app`).")
+            if d["control"] != "streamer":
+                raise ToolError(f"'{d['name']}' isn't a Streamer, so it has no apps open.")
+            apps = engine.call("GET", f"/devices/{d['uid']}/state")["features"]["apps"]
+            return {"type": "app", "target": d["uid"], "app": app_package(apps, c.app)}
+        if c.type == "time":
+            return {"type": "time", "after": c.after, "before": c.before}
+        if c.type == "days":
+            return {"type": "days", "days": day_numbers(c.days)}
+        return {"type": "sun", "is": "dark" if c.dark else "light"}
+
+    def automation_action(a: ActionIn) -> dict:
+        if a.action == "wait":
+            if not a.minutes:
+                raise ToolError("Say how long to wait (`minutes`, e.g. 10 or 0.5).")
+            return {"do": "wait", "seconds": round(a.minutes * 60)}
+        if a.action == "notify":
+            return {"do": "notify", "text": a.text or ""}
+        if not a.device:
+            raise ToolError(f"Say which Device or Group to {a.action} (`device`).")
+        d = controllable(lookup(a.device))
+        body = hotkey_action(d, a.action, a.step, a.button, a.app,
+                             {"brightness": a.brightness, "kelvin": a.kelvin, "mode": a.mode,
+                              "target_temp": a.temperature, "fan": a.fan, "color": a.color})
+        return body | {"target": d["uid"]}
+
+    @server.tool(title="List Automations", annotations=READ)
+    def list_automations() -> dict:
+        """List the Automations: each one's name, whether it's on, what it does in plain language,
+        when it runs next and how its last Run went."""
+        return {"automations": [automation_summary(a) for a in engine.call("GET", "/automations")]}
+
+    @server.tool(title="Get an Automation", annotations=READ)
+    def get_automation(automation: str) -> dict:
+        """One Automation, by name or uid, with its recent Runs (newest first): what started each,
+        how it ended, and what each Action did."""
+        a = lookup_automation(automation)
+        out = automation_summary(engine.call("GET", f"/automations/{a['uid']}"))
+        out["recent_runs"] = [run_summary(run) for run in engine.call("GET", f"/automations/{a['uid']}/runs")[:10]]
+        return out
+
+    @server.tool(title="Create an Automation", annotations=CREATE)
+    def create_automation(name: str, actions: list[ActionIn], triggers: list[TriggerIn] | None = None,
+                          conditions: list[ConditionIn] | None = None, match: Literal["all", "any"] = "all",
+                          enabled: bool = True) -> dict:
+        """Create an Automation. It's active right away. Triggers (any one starts it; none: it runs
+        only by hand): a time ("07:00") on some days, or sunrise/sunset with an offset in minutes.
+        Conditions (checked once when a Trigger fires; `match`: all of them, or any one): a Device or
+        Group on/off, a Streamer's open app, a time window (may cross midnight), days, dark/light.
+        Actions, in order: what a Hotkey can do to a Device or Group (on, off, toggle, set, step,
+        press a button, open an app), wait some minutes, or notify (a Windows notification on this PC
+        and a notice in the app). Tell the user the returned `summary`."""
+        body = {"name": name, "match": match, "enabled": enabled, "by_assistant": True}
+        body |= automation_body(triggers or [], conditions or [], actions)
+        return automation_summary(engine.call("POST", "/automations", body))
+
+    @server.tool(title="Edit an Automation", annotations=SET)
+    def edit_automation(automation: str, name: str | None = None, triggers: list[TriggerIn] | None = None,
+                        conditions: list[ConditionIn] | None = None, actions: list[ActionIn] | None = None,
+                        match: Literal["all", "any"] | None = None) -> dict:
+        """Change an Automation. Triggers, conditions and actions, when given, replace the whole list
+        (get_automation shows the current ones); an empty list of triggers makes it run only by hand."""
+        a = lookup_automation(automation)
+        body = automation_body(triggers, conditions, actions)
+        if name is not None:
+            body["name"] = name
+        if match is not None:
+            body["match"] = match
+        if not body:
+            raise ToolError("Say what to change.")
+        return automation_summary(engine.call("PATCH", f"/automations/{a['uid']}", body))
+
+    @server.tool(title="Switch an Automation on or off", annotations=SET)
+    def set_automation_enabled(automation: str, enabled: bool) -> dict:
+        """Switch an Automation on (its Triggers start it) or off (it runs only by hand)."""
+        a = lookup_automation(automation)
+        return automation_summary(engine.call("PATCH", f"/automations/{a['uid']}", {"enabled": enabled}))
+
+    @server.tool(title="Run an Automation", annotations=PRESS)
+    def run_automation(automation: str) -> dict:
+        """Run an Automation now, skipping its Conditions (the user asked). A Run still going starts
+        again. Answers as it starts: get_automation shows how it went."""
+        a = lookup_automation(automation)
+        run = engine.call("POST", f"/automations/{a['uid']}/run")
+        return {"started": a["name"], "actions": [s["label"] for s in run["steps"]]}
+
+    @server.tool(title="Delete an Automation", annotations=DELETE)
+    def delete_automation(automation: str) -> dict:
+        """Delete an Automation and its history."""
+        a = lookup_automation(automation)
+        engine.call("DELETE", f"/automations/{a['uid']}")
+        return {"deleted": a["name"]}
 
     def hotkey_action(d: dict, action: str, step: float | None, button: str | None, app: str | None,
                       settings: dict) -> dict:

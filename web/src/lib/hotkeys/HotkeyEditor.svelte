@@ -2,21 +2,18 @@
 	// Make or change a Hotkey: its keys, the Device or Group, and what it does to it.
 	import { Trash2, X } from '@lucide/svelte';
 	import { api } from '$lib/api';
-	import { home } from '$lib/home.svelte';
 	import type { Hotkey, KeysCheck } from '$lib/types';
 	import Button from '$lib/ui/Button.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
+	import ActionFields from './ActionFields.svelte';
 	import { hotkeys } from './hotkeys.svelte';
 	import KeyRecorder from './KeyRecorder.svelte';
 	import {
 		actionOf,
 		choiceOf,
-		choicesFor,
 		DEFAULT_PARAMS,
 		parseTrigger,
-		stepOf,
 		triggerText,
-		type Abilities,
 		type Choice,
 		type Params,
 		type Press
@@ -44,64 +41,10 @@
 	let target = $state(initial.hotkey?.target ?? initial.preset ?? '');
 	let choice = $state<Choice>(start.choice);
 	let params = $state<Params>({ ...DEFAULT_PARAMS, ...start.params });
+	let fieldsReady = $state(false);
 	let saving = $state(false);
 	let confirmDelete = $state(false);
 
-	const targets = $derived([
-		...home.groups.map((g) => ({ uid: g.uid, name: g.name, group: true })),
-		...home.controllable.map((d) => ({ uid: d.uid, name: d.name, group: false }))
-	]);
-	const targetName = $derived(targets.find((t) => t.uid === target)?.name ?? '');
-
-	/** The target's features have been read (a Device's buttons and apps come with its state). */
-	const known = $derived(home.groups.some((g) => g.uid === target) || !!home.states[target]);
-	const abilities = $derived.by((): Abilities => {
-		const group = home.groups.find((g) => g.uid === target);
-		if (group) {
-			const st = home.groupStates[group.uid];
-			return {
-				control: group.control,
-				toggle: true,
-				onOff: true,
-				color: st?.control === 'light' ? st.features.color : false,
-				buttons: [],
-				apps: [],
-				modes: st?.control === 'climate' ? st.features.modes : []
-			};
-		}
-		const d = home.controllable.find((x) => x.uid === target);
-		const st = home.states[target];
-		const base = {
-			control: d?.control ?? null,
-			toggle: true,
-			onOff: true,
-			color: false,
-			buttons: [],
-			apps: [],
-			modes: []
-		};
-		if (!d || !st) return { ...base, onOff: !d?.group_problem };
-		switch (st.control) {
-			case 'light':
-				return { ...base, color: st.features.color };
-			case 'climate':
-				return { ...base, modes: st.features.modes };
-			case 'remote':
-				return {
-					...base,
-					toggle: st.features.can_power,
-					onOff: st.features.discrete_power,
-					buttons: st.features.buttons
-				};
-			case 'streamer':
-				return { ...base, buttons: st.features.buttons, apps: st.features.apps };
-			default:
-				return base;
-		}
-	});
-
-	const choices = $derived(choicesFor(abilities));
-	const step = $derived(stepOf(choice));
 	const action = $derived(actionOf(choice, params));
 
 	const PRESSES: { value: Press; label: string }[] = [
@@ -155,33 +98,7 @@
 			});
 	});
 
-	// Another target may not offer the choice: fall back to its first one.
-	$effect(() => {
-		if (known && choices.length && !choices.some((c) => c.value === choice)) pick(choices[0].value);
-	});
-
-	function pick(next: Choice) {
-		const before = stepOf(choice);
-		const after = stepOf(next);
-		if (after && after.unit !== before?.unit) params.step = after.normal;
-		if (next === 'press' && !abilities.buttons.some((b) => b.name === params.button))
-			params.button = abilities.buttons[0]?.name ?? '';
-		if (next === 'open_app' && !abilities.apps.some((a) => a.app === params.app))
-			params.app = abilities.apps[0]?.app ?? '';
-		if (next === 'climate' && !params.mode) params.mode = abilities.modes[0] ?? '';
-		choice = next;
-	}
-
-	const ready = $derived(
-		!!text &&
-			!checking &&
-			!!check &&
-			!check.problem &&
-			!!target &&
-			choices.some((c) => c.value === choice) &&
-			(choice !== 'press' || !!params.button) &&
-			(choice !== 'open_app' || !!params.app)
-	);
+	const ready = $derived(!!text && !checking && !!check && !check.problem && fieldsReady);
 
 	async function save(e: SubmitEvent) {
 		e.preventDefault();
@@ -227,89 +144,14 @@
 		{/if}
 	</div>
 
-	{#if initial.preset && !hotkey}
-		<div class="field">
-			<span>For</span>
-			<p class="fixed">{targetName}</p>
-		</div>
-	{:else}
-		<label class="field">
-			<span>For</span>
-			<select bind:value={target} required>
-				<option value="" disabled>Pick a device or group</option>
-				{#if home.groups.length}
-					<optgroup label="Groups">
-						{#each targets.filter((t) => t.group) as t (t.uid)}<option value={t.uid}>{t.name}</option>{/each}
-					</optgroup>
-				{/if}
-				<optgroup label="Devices">
-					{#each targets.filter((t) => !t.group) as t (t.uid)}<option value={t.uid}>{t.name}</option>{/each}
-				</optgroup>
-			</select>
-		</label>
-	{/if}
-
-	{#if target}
-		<label class="field">
-			<span>Does</span>
-			<select value={choice} onchange={(e) => pick(e.currentTarget.value as Choice)}>
-				{#each choices as c (c.value)}<option value={c.value}>{c.label}</option>{/each}
-			</select>
-		</label>
-
-		{#if step}
-			<label class="field inline">
-				<span>By</span>
-				<span class="amount">
-					<input type="number" min="1" max={step.max} step="1" bind:value={params.step} required />
-					{step.unit}
-				</span>
-			</label>
-			{#if holdRepeats}<p class="hint">Hold the keys to keep going.</p>{/if}
-		{:else if choice === 'brightness'}
-			<label class="field inline">
-				<span>Brightness</span>
-				<span class="amount"><input type="number" min="1" max="100" bind:value={params.brightness} required /> %</span>
-			</label>
-		{:else if choice === 'color'}
-			<label class="field inline">
-				<span>Colour</span>
-				<input type="color" bind:value={params.color} />
-			</label>
-		{:else if choice === 'climate'}
-			<div class="row">
-				{#if abilities.modes.length}
-					<label class="field">
-						<span>Mode</span>
-						<select bind:value={params.mode}>
-							{#each abilities.modes as m (m)}<option value={m}>{m[0].toUpperCase() + m.slice(1)}</option>{/each}
-						</select>
-					</label>
-				{/if}
-				<label class="field">
-					<span>Temperature</span>
-					<span class="amount"
-						><input type="number" min="10" max="35" step="0.5" bind:value={params.temp} required /> °</span
-					>
-				</label>
-			</div>
-		{:else if choice === 'press'}
-			<label class="field">
-				<span>Button</span>
-				<select bind:value={params.button}>
-					{#each abilities.buttons as b (b.name)}<option value={b.name}>{b.label}</option>{/each}
-				</select>
-			</label>
-			{#if holdRepeats}<p class="hint">Hold the keys to keep pressing it.</p>{/if}
-		{:else if choice === 'open_app'}
-			<label class="field">
-				<span>App</span>
-				<select bind:value={params.app}>
-					{#each abilities.apps as a (a.app)}<option value={a.app}>{a.name}</option>{/each}
-				</select>
-			</label>
-		{/if}
-	{/if}
+	<ActionFields
+		bind:target
+		bind:choice
+		bind:params
+		fixedTarget={!!initial.preset && !hotkey}
+		holdHint={holdRepeats}
+		onready={(r) => (fieldsReady = r)}
+	/>
 
 	<div class="actions">
 		<Button type="submit" variant="primary" disabled={saving || !ready}>{hotkey ? 'Save' : 'Add Hotkey'}</Button>
@@ -371,52 +213,6 @@
 	}
 	.field > span:first-child {
 		font-weight: var(--fw-medium);
-	}
-	.field.inline {
-		flex-direction: row;
-		align-items: center;
-		justify-content: space-between;
-	}
-	.row {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: var(--s-3);
-	}
-	select,
-	input[type='number'] {
-		min-block-size: 44px;
-		padding-inline: var(--s-3);
-		border-radius: var(--r-md);
-		border: 1px solid var(--border);
-		background: var(--surface-2);
-		font-size: var(--fs-md);
-	}
-	select:focus,
-	input:focus {
-		border-color: var(--accent);
-		outline: none;
-	}
-	.amount {
-		display: flex;
-		align-items: center;
-		gap: var(--s-2);
-		color: var(--text-2);
-	}
-	.amount input {
-		inline-size: 5.5em;
-		color: var(--text);
-	}
-	input[type='color'] {
-		inline-size: 64px;
-		block-size: 40px;
-		padding: 2px;
-		border-radius: var(--r-md);
-		border: 1px solid var(--border);
-		background: var(--surface-2);
-	}
-	.fixed {
-		margin: 0;
-		font-size: var(--fs-md);
 	}
 	.hint {
 		margin: calc(-1 * var(--s-3)) 0 0;

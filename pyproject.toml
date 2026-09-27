@@ -17,6 +17,7 @@ dependencies = [
     "mcp>=2.2",
     "psutil>=5.9",  # the network adapters Phone access listens on
     "httpx>=0.27",  # the MCP server's Engine client; mcp itself depends on httpx2, not httpx
+    "astral>=3.2",  # sunrise and sunset for Automations, with its offline list of cities (ADR 0006)
 ]
 
 [project.optional-dependencies]

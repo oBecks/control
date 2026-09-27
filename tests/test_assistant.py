@@ -151,11 +151,13 @@ def test_read_tools_are_marked_read_only(home):
             return (await c.list_tools()).tools
 
     tools = {t.name: t.annotations for t in anyio.run(go)}
-    assert {n for n, a in tools.items() if a.read_only_hint} == {"list_devices", "get_device", "list_hotkeys"}
+    assert {n for n, a in tools.items() if a.read_only_hint} == {
+        "list_devices", "get_device", "list_hotkeys", "list_automations", "get_automation"}
     # Pressing a button again (e.g. a Power Toggle) undoes it; creating a Group twice makes two.
     assert {n for n, a in tools.items() if a.idempotent_hint} == {
-        "set_power", "set_light", "set_climate", "edit_group", "delete_group", "delete_hotkey"}
-    assert {n for n, a in tools.items() if a.destructive_hint} == {"delete_group", "delete_hotkey"}
+        "set_power", "set_light", "set_climate", "edit_group", "delete_group", "delete_hotkey", "edit_automation",
+        "set_automation_enabled", "delete_automation"}
+    assert {n for n, a in tools.items() if a.destructive_hint} == {"delete_group", "delete_hotkey", "delete_automation"}
 
 
 # --- Groups --------------------------------------------------------------------------
@@ -440,3 +442,63 @@ def test_the_restart_note_can_be_dismissed_and_needs_claude(client, monkeypatch)
     assert client.get("/api/assistant").json()["restart_claude"] is not None
     assert client.delete("/api/assistant/restart-note").json()["restart_claude"] is None
     assert client.get("/api/assistant").json()["restart_claude"] is None
+
+
+# --- Automations ---------------------------------------------------------------------
+
+
+@pytest.fixture
+def runner(monkeypatch):
+    from control.api import automations as automations_api
+
+    r = automations_api.Runner()
+    monkeypatch.setattr(automations_api, "runner", r)
+    yield r
+    r.stop()
+
+
+def test_create_run_and_read_an_automation(home, client, runner):  # noqa: F811
+    srv, light, tx = home
+    made = ok(srv, "create_automation", name="Evening",
+              triggers=[{"type": "time", "at": "19:30", "days": ["Sun", "mon"]}],
+              conditions=[{"type": "time", "after": "18:00", "before": "23:00"}],
+              actions=[{"action": "on", "device": "yeelight"}, {"action": "wait", "minutes": 0.5},
+                       {"action": "set", "device": "AC", "mode": "heat", "temperature": 24},
+                       {"action": "notify", "text": "Evening on"}])
+    assert made["summary"] == ("When: at 19:30, on Mon, Sun. Only if between 18:00 and 23:00. Then: Turn on "
+                               "Yeelight color, then Wait 30 s, then Set AC to heat, 24°, then Notify: Evening on.")
+    assert (made["on"], made["made_by"]) == (True, "assistant") and "next_run" in made
+    assert client.get("/api/automations").json()[0]["made_by"] == "assistant"
+
+    started = ok(srv, "run_automation", automation="evening")
+    assert started["actions"][0] == "Turn on Yeelight color"
+    runner.join(made["uid"], timeout=0.5)  # it's waiting now
+    assert light.state.on
+    got = ok(srv, "get_automation", automation="Evening")
+    assert got["running"] and got["recent_runs"][0]["started_by"] == "Run by hand"
+    assert got["recent_runs"][0]["actions"][0] == "Turn on Yeelight color: done"
+
+
+def test_edit_switch_off_and_delete_an_automation(home, runner):
+    srv, *_ = home
+    ok(srv, "create_automation", name="Night", actions=[{"action": "off", "device": "Yeelight color"}])
+    out = ok(srv, "edit_automation", automation="night", triggers=[{"type": "time", "at": "23:00"}], name="Late")
+    assert out["summary"].startswith("When: at 23:00, every day.")
+    assert ok(srv, "set_automation_enabled", automation="Late", enabled=False)["on"] is False
+    assert "Say what to change" in error(srv, "edit_automation", automation="Late")
+    assert ok(srv, "list_automations")["automations"][0]["name"] == "Late"
+    assert ok(srv, "delete_automation", automation="Late") == {"deleted": "Late"}
+    assert "No Automation called 'Late'" in error(srv, "delete_automation", automation="Late")
+
+
+def test_automations_the_engine_refuses_say_why(home, runner):
+    srv, *_ = home
+    assert "set your location first" in error(srv, "create_automation", name="Dusk",
+                                              triggers=[{"type": "sun", "event": "sunset"}],
+                                              actions=[{"action": "on", "device": "yeelight"}])
+    assert "Power Toggle" in error(srv, "create_automation", name="TV",
+                                   conditions=[{"type": "state", "device": "Living room TV", "on": True}],
+                                   actions=[{"action": "on", "device": "yeelight"}])
+    assert "'someday' isn't a day" in error(srv, "create_automation", name="x",
+                                            triggers=[{"type": "time", "at": "07:00", "days": ["someday"]}],
+                                            actions=[{"action": "on", "device": "yeelight"}])

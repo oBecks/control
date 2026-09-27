@@ -7,7 +7,8 @@ One instance per user: a second launch brings the running Window forward. If an 
 answers on the port (e.g. `control serve` while developing), the app is only a Window on it and
 leaves it running on quit.
 
-It also listens for Hotkeys (ADR 0007, `hotkeys.py`), whichever Engine it runs on."""
+It also listens for Hotkeys (ADR 0007, `hotkeys.py`) and shows Automations' notifications from the
+tray, whichever Engine it runs on."""
 
 import argparse
 import ctypes
@@ -110,10 +111,11 @@ class Engine:
         return self._server.started
 
     def stop(self) -> None:
-        from ..api import hotkeys, lan
+        from ..api import automations, hotkeys, lan
 
         lan.listener.stop()
         hotkeys.listener.close()  # the Hotkey listener's long poll would hold up the exit
+        automations.runner.close_watches()  # and so would the notifications' one
         self._server.should_exit = True
         self._thread.join(timeout=5)
 
@@ -313,6 +315,23 @@ class DesktopApp:
                 self.tray.update_menu()
             time.sleep(updates.CHECK_EVERY)
 
+    def _show_notices(self) -> None:
+        """Automations' notifications (ADR 0012), as Windows notifications from the tray icon. Those
+        from before the app started were shown then, or are in the UI."""
+        started, after = time.time(), 0
+        while not self.quitting:
+            try:
+                url = f"http://127.0.0.1:{self.port}/api/notices/watch?after={after}"
+                with urllib.request.urlopen(url, timeout=60) as resp:
+                    notices = json.load(resp)
+            except (OSError, ValueError):
+                time.sleep(5)  # the Engine is starting or stopping
+                continue
+            for n in notices:
+                if n["time"] >= started - 5:
+                    self.tray.notify(n["text"], n["title"])
+            after = max([n["id"] for n in notices], default=after)
+
     # Running
 
     def run(self) -> None:
@@ -321,6 +340,7 @@ class DesktopApp:
         self._status = phone_status(self.port, self.owned)
         self.tray.run_detached()
         threading.Thread(target=self._check_updates, name="update-check", daemon=True).start()
+        threading.Thread(target=self._show_notices, name="notices", daemon=True).start()
         hotkeys.HotkeyListener(self.port).start()
         data = default_db_path().parent
         # Not private: the UI keeps its theme choice in localStorage.

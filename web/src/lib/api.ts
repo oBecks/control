@@ -19,7 +19,15 @@ import type {
 	KeysCheck,
 	PickableKey,
 	Dashboard,
-	DashboardItem
+	DashboardItem,
+	Automation,
+	AutomationAction,
+	Condition,
+	HomeLocation,
+	Labelled,
+	Notice,
+	Run,
+	Trigger
 } from './types';
 
 export interface Device {
@@ -174,6 +182,25 @@ export const api = {
 	/** While on, the Desktop App lets go of every Hotkey, so pressing one reaches the Window. */
 	recordingKeys: (on: boolean) => call<void>('PUT', '/hotkeys/recording', { on }),
 
+	// Automations (ADR 0006, 0012)
+	automations: () => call<Automation[]>('GET', '/automations'),
+	automation: (uid: string) => call<Automation>('GET', `/automations/${enc(uid)}`),
+	runs: (uid: string) => call<Run[]>('GET', `/automations/${enc(uid)}/runs`),
+	addAutomation: (body: AutomationDraft) => call<Automation>('POST', '/automations', body),
+	patchAutomation: (uid: string, patch: Partial<AutomationDraft> & { enabled?: boolean }) =>
+		call<Automation>('PATCH', `/automations/${enc(uid)}`, patch),
+	deleteAutomation: (uid: string) => call<void>('DELETE', `/automations/${enc(uid)}`),
+	/** Runs it now, skipping its Conditions; answers as it starts. */
+	runAutomation: (uid: string) => call<Run>('POST', `/automations/${enc(uid)}/run`),
+	/** The builder's draft checked and labelled, without saving it. */
+	previewAutomation: (draft: Omit<AutomationDraft, 'name' | 'enabled'>) =>
+		call<AutomationPreview>('POST', '/automations/preview', draft),
+	location: () => call<HomeLocation | null>('GET', '/location'),
+	setLocation: (where: { name?: string; lat: number; lon: number }) => call<HomeLocation>('PUT', '/location', where),
+	cities: (q: string) => call<{ name: string; lat: number; lon: number }[]>('GET', `/location/cities?q=${enc(q)}`),
+	notices: () => call<Notice[]>('GET', '/notices'),
+	noticesSeen: (ids?: number[]) => call<void>('POST', '/notices/seen', { ids }),
+
 	// Remote Devices & the Code Set Finder
 	searchCodeSets: (brand: string, domain: LibraryDomain = 'climate') =>
 		call<CodeSet[]>('GET', `/signal-library/${domain}?brand=${enc(brand)}`),
@@ -284,6 +311,22 @@ export interface PhoneAccess {
 	can_change: boolean;
 	/** What Windows' "Allow access?" prompt calls Control: "Control", or "Python" when run from source. */
 	program: string;
+}
+
+export interface AutomationDraft {
+	name: string;
+	enabled?: boolean;
+	match: 'all' | 'any';
+	triggers: Trigger[];
+	conditions: Condition[];
+	actions: AutomationAction[];
+}
+
+export interface AutomationPreview {
+	triggers: Labelled<Trigger>[];
+	conditions: Labelled<Condition>[];
+	actions: Labelled<AutomationAction>[];
+	summary: string;
 }
 
 export interface HotkeyList {

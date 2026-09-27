@@ -2,10 +2,11 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import { House, Keyboard, LayoutDashboard, Radar, Settings } from '@lucide/svelte';
+	import { House, Keyboard, LayoutDashboard, Radar, Settings, Workflow } from '@lucide/svelte';
 	import { dashboards } from '$lib/dashboards/dashboards.svelte';
 	import { home } from '$lib/home.svelte';
 	import AccessRequestBanner from '$lib/access/AccessRequestBanner.svelte';
+	import Notices from '$lib/automations/Notices.svelte';
 	import WaitingScreen from '$lib/access/WaitingScreen.svelte';
 	import StillRunningNote from '$lib/desktop/StillRunningNote.svelte';
 
@@ -16,6 +17,7 @@
 	const NAV = [
 		{ href: resolve('/'), label: 'Home', icon: House },
 		{ href: resolve('/dashboards'), label: 'Dashboards', icon: LayoutDashboard },
+		{ href: resolve('/automations'), label: 'Automations', short: 'Automate', icon: Workflow },
 		{ href: resolve('/add'), label: 'Add devices', short: 'Add', icon: Radar },
 		// Hotkeys are keys on this computer, so phones don't get the page.
 		...(onThisComputer ? [{ href: resolve('/hotkeys'), label: 'Hotkeys', icon: Keyboard }] : []),
@@ -24,7 +26,7 @@
 
 	$effect(() => home.start());
 
-	/** A Dashboard's own page counts as Dashboards. */
+	/** A Dashboard's (or an Automation's) own page counts as Dashboards (or Automations). */
 	const isActive = (href: string) =>
 		page.url.pathname === href || (href !== resolve('/') && page.url.pathname.startsWith(`${href}/`));
 
@@ -101,6 +103,7 @@
 				</div>
 			{:else}
 				{#if onThisComputer}<StillRunningNote />{/if}
+				<Notices />
 				{#if home.accessRequests.length}
 					<div class="asks">
 						{#each home.accessRequests as request (request.ref)}
