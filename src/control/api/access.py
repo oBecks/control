@@ -35,7 +35,7 @@ router = APIRouter(prefix="/api/access")
 
 
 def _allowed_hosts() -> set[str]:
-    return _LOCAL_NAMES | ({lan.listener.ip} if lan.listener.ip else set())
+    return _LOCAL_NAMES | set(lan.listener.ips)
 
 
 def _is_public(request: Request) -> bool:
@@ -225,6 +225,7 @@ def revoke(browser_id: str, r: Registry = Depends(registry)):
 class PhoneAccessOut(BaseModel):
     on: bool
     url: str | None  # what phones open, while the LAN listener runs
+    moved_from: str | None  # what phones opened before this computer's address changed
     error: str | None
     warning: str | None  # e.g. Windows blocks phones on a Public network; for this machine only
     can_change: bool  # only on the machine running the Engine
@@ -237,7 +238,8 @@ class PhoneAccessIn(BaseModel):
 
 def _phone_status(request: Request, r: Registry) -> PhoneAccessOut:
     local = request.state.local
-    return PhoneAccessOut(on=r.setting(PHONE_ACCESS, False), url=lan.listener.url, error=lan.listener.error,
+    return PhoneAccessOut(on=r.setting(PHONE_ACCESS, False), url=lan.listener.url,
+                          moved_from=lan.listener.moved_from, error=lan.listener.error,
                           warning=lan.listener.warning if local else None, can_change=local,
                           program="Control" if getattr(sys, "frozen", False) else "Python")
 
