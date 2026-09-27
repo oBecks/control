@@ -33,3 +33,23 @@ export function glowFor(
 	}
 	return 'var(--accent)';
 }
+
+/** A colour from its hue (0–360°) and saturation (0–1), at full brightness: a colour wheel's point. */
+export function hsToRgb(hue: number, sat: number): RGB {
+	const f = (n: number) => {
+		const k = (n + hue / 60) % 6;
+		return Math.round(255 * (1 - sat * Math.max(0, Math.min(k, 4 - k, 1))));
+	};
+	return [f(5), f(3), f(1)];
+}
+
+/** Where a colour sits on a colour wheel: its hue (0–360°) and saturation (0–1). */
+export function rgbToHs([r, g, b]: RGB): { hue: number; sat: number } {
+	const max = Math.max(r, g, b);
+	const min = Math.min(r, g, b);
+	const d = max - min;
+	const sat = max ? d / max : 0;
+	if (!d) return { hue: 0, sat };
+	const hue = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+	return { hue: (hue * 60 + 360) % 360, sat };
+}

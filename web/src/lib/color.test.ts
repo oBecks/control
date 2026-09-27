@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { glowFor, hexToRgb, kelvinToRgb } from './color';
+import { glowFor, hexToRgb, hsToRgb, kelvinToRgb, rgbToHs } from './color';
 
 describe('kelvinToRgb', () => {
 	it('is warm at low kelvin and cool at high kelvin', () => {
@@ -36,4 +36,25 @@ describe('glowFor', () => {
 
 it('hexToRgb', () => {
 	expect(hexToRgb('#007aff')).toEqual([0, 122, 255]);
+});
+
+describe('colour wheel', () => {
+	it('puts red, green and blue a third of the way round each, and white in the middle', () => {
+		expect(hsToRgb(0, 1)).toEqual([255, 0, 0]);
+		expect(hsToRgb(120, 1)).toEqual([0, 255, 0]);
+		expect(hsToRgb(240, 1)).toEqual([0, 0, 255]);
+		expect(hsToRgb(200, 0)).toEqual([255, 255, 255]);
+	});
+
+	it('finds a colour where it put it', () => {
+		for (const [hue, sat] of [
+			[30, 1],
+			[200, 0.5],
+			[330, 0.8]
+		]) {
+			const back = rgbToHs(hsToRgb(hue, sat));
+			expect(back.hue).toBeCloseTo(hue, 0);
+			expect(back.sat).toBeCloseTo(sat, 1);
+		}
+	});
 });

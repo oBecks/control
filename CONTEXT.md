@@ -113,8 +113,12 @@ A Device's or Group's compact presence on Home or a Dashboard. Tapping it toggle
 _Avoid_: Card, widget, button
 
 **Remote Pad**:
-A Dashboard item laid out like a TV's, fan's or Streamer's remote, built from the buttons that Device really has (power, volume, arrows and OK, and more when it's large). A single button can also sit on a Dashboard by itself.
+A Dashboard item laid out like a TV's, fan's or Streamer's remote, built from the buttons that Device really has (power, volume, arrows and OK, and more when it's large).
 _Avoid_: Remote widget, keypad
+
+**Single Button**:
+A Dashboard item that is one remote button (e.g. HDMI 1) or one Streamer App Shortcut (e.g. Netflix) on its own.
+_Avoid_: Shortcut, widget
 
 **Big Control**:
 A Dashboard item that puts one of a Device's or Group's controls right on the Dashboard, larger than on a Tile: a brightness slider, a colour wheel, or an AC's temperature and mode.

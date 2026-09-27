@@ -7,6 +7,7 @@
 	import { Bold, GripVertical, Pencil, Plus, Redo2, Trash2, Undo2, X } from '@lucide/svelte';
 	import { MediaQuery } from 'svelte/reactivity';
 	import AddItems from '$lib/dashboards/AddItems.svelte';
+	import ItemView from '$lib/dashboards/ItemView.svelte';
 	import { dashboards } from '$lib/dashboards/dashboards.svelte';
 	import { gridDrag } from '$lib/dashboards/drag';
 	import {
@@ -16,10 +17,11 @@
 		COLUMNS,
 		columnsFor,
 		fits,
+		itemKey,
+		limits,
 		place,
 		readingOrder,
 		recall,
-		ROWS,
 		tileLook,
 		withColumns,
 		type Columns
@@ -90,7 +92,7 @@
 	const flowColumns = $derived(columnsFor(width || 375));
 	const rows = $derived(bottomOf(items, columns) + (arranging ? ROOM_BELOW : 0));
 	const pickedItem = $derived(items.find((i) => i.id === picked));
-	const targets = $derived(new Set(items.flatMap((i) => (i.kind === 'tile' ? [i.target] : []))));
+	const placedKeys = $derived(new Set(items.map(itemKey)));
 
 	// A new, empty Dashboard opens ready to arrange.
 	$effect(() => {
@@ -227,12 +229,26 @@
 		draft.columns = next;
 	}
 
+	const KIND_NAMES = { tile: 'Tile', big_control: 'Big control', pad: 'Remote pad', button: 'Button' } as const;
+	const CONTROL_NAMES = { brightness: 'brightness', colour: 'colour', climate: 'AC' } as const;
+
+	/** What the arrange bar and screen readers call an item, e.g. "Living room brightness". */
 	function itemName(item: DashboardItem): string {
 		if (item.kind === 'heading') return `Heading ${item.text}`.trim();
-		const target = item.target;
-		return (
-			home.groups.find((g) => g.uid === target)?.name ?? home.devices.find((d) => d.uid === target)?.name ?? 'Tile'
-		);
+		if (item.kind === 'clock') return 'Clock';
+		const name = home.nameOf(item.target) ?? KIND_NAMES[item.kind];
+		if (item.kind === 'big_control') return `${name} ${CONTROL_NAMES[item.control]}`;
+		if (item.kind === 'pad') return `${name} remote`;
+		if (item.kind === 'button') {
+			const reading = home.stateOf(item.target);
+			const shortcuts = reading?.control === 'streamer' ? reading.features.apps : [];
+			const buttons = reading?.control === 'remote' || reading?.control === 'streamer' ? reading.features.buttons : [];
+			const label = item.app
+				? (shortcuts.find((a) => a.app === item.app)?.name ?? item.app)
+				: (buttons.find((b) => b.name === item.button)?.label ?? item.button);
+			return `${name} ${label}`;
+		}
+		return name;
 	}
 
 	/** Where an item sits: its own cell, or (too narrow) just its size in reading order. */
@@ -360,10 +376,12 @@
 								selected={desktop.current && !arranging && panel.highlighted(item.target)}
 								onopen={(target) => panel.open(target)}
 							/>
-						{:else}
+						{:else if item.kind === 'heading'}
 							<h2 class="size-{item.text_size}" class:bold={item.bold} style:text-align={item.align}>
 								{item.text}
 							</h2>
+						{:else}
+							<ItemView {item} inert={arranging} onopen={(target) => panel.open(target)} />
 						{/if}
 
 						{#if arranging}
@@ -398,15 +416,15 @@
 							<Stepper
 								label="Width"
 								value={Math.min(pickedItem.w, columns)}
-								min={1}
+								min={limits(pickedItem).minW}
 								max={columns}
 								onchange={(w) => resize(pickedItem.id, { w })}
 							/>
 							<Stepper
 								label="Height"
 								value={pickedItem.h}
-								min={ROWS[pickedItem.kind].min}
-								max={ROWS[pickedItem.kind].max}
+								min={limits(pickedItem).minH}
+								max={limits(pickedItem).maxH}
 								onchange={(h) => resize(pickedItem.id, { h })}
 							/>
 						</div>
@@ -456,18 +474,18 @@
 	{#if desktop.current}
 		<aside class="panel" aria-label={adding ? 'Add items' : 'Device controls'}>
 			{#if adding}
-				<AddItems placed={targets} {columns} onadd={add} onclose={() => (adding = false)} />
+				<AddItems placed={placedKeys} {columns} onadd={add} onclose={() => (adding = false)} />
 			{:else if panel.showing}
 				<TargetPanel {panel} />
 			{:else if arranging}
 				<p class="hint">Add items, drag them to any cell, and tap one to change its size.</p>
 			{:else}
-				<p class="hint">Select a tile's <b>›</b>, or hold a small one, to see all its controls here.</p>
+				<p class="hint">Select an item's <b>›</b>, or hold a small tile, to see all its controls here.</p>
 			{/if}
 		</aside>
 	{:else if adding}
 		<Sheet label="Add items" onclose={() => (adding = false)}>
-			<AddItems placed={targets} {columns} onadd={add} onclose={() => (adding = false)} />
+			<AddItems placed={placedKeys} {columns} onadd={add} onclose={() => (adding = false)} />
 		</Sheet>
 	{:else if panel.showing}
 		<Sheet label={panel.label} onclose={() => panel.close()}>

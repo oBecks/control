@@ -5,8 +5,13 @@ import {
 	addBelow,
 	cellsOf,
 	columnsFor,
+	buttonItem,
+	controlItem,
 	fits,
 	homeItems,
+	itemKey,
+	padItem,
+	padLook,
 	moveItem,
 	place,
 	readingOrder,
@@ -135,7 +140,7 @@ describe('homeItems', () => {
 			[device('plug:1', 'plug'), device('light:1', 'light'), device('light:2', 'light'), device('light:3', 'light')],
 			4
 		);
-		const read = items.map((i) => [i.kind === 'heading' ? `# ${i.text}` : i.target, i.x, i.y]);
+		const read = items.map((i) => [i.kind === 'heading' ? `# ${i.text}` : 'target' in i ? i.target : i.kind, i.x, i.y]);
 		expect(read).toEqual([
 			['# Groups', 0, 0],
 			['group:1', 0, 1],
@@ -160,5 +165,26 @@ describe('moveItem', () => {
 		const list = ['a', 'b'];
 		expect(moveItem(list, 1, 1)).toBe(list);
 		expect(moveItem(list, 0, 5)).toBe(list);
+	});
+});
+
+describe('Big Controls, Remote Pads and Single Buttons', () => {
+	it('keep each kind at a size it can show', () => {
+		const wheel = { ...controlItem('light:1', 'colour'), x: 0, y: 0 } as DashboardItem;
+		const shrunk = place([wheel], wheel.id, { w: 1, h: 2 }, 4)[0];
+		expect([shrunk.w, shrunk.h]).toEqual([2, 4]);
+		const pad = { ...padItem('tv:1', 'compact'), x: 0, y: 0 } as DashboardItem;
+		expect(place([pad], pad.id, { h: 99 }, 4)[0].h).toBe(24);
+	});
+
+	it('show every button on a tall pad', () => {
+		expect(padLook(padItem('tv:1', 'compact'))).toBe('compact');
+		expect(padLook(padItem('tv:1', 'full'))).toBe('full');
+	});
+
+	it('tell the same thing on a dashboard apart from others, whatever its size', () => {
+		expect(itemKey(buttonItem('tv:1', { button: 'power' }))).toBe(itemKey(buttonItem('tv:1', { button: 'power' }, 2)));
+		expect(itemKey(buttonItem('tv:1', { app: 'power' }))).not.toBe(itemKey(buttonItem('tv:1', { button: 'power' })));
+		expect(itemKey(controlItem('light:1', 'colour'))).not.toBe(itemKey(controlItem('light:1', 'brightness')));
 	});
 });
