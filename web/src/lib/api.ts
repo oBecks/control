@@ -275,6 +275,8 @@ export interface PhoneAccess {
 	on: boolean;
 	/** What phones open, while the Engine listens on the home network. */
 	url: string | null;
+	/** What phones opened before this computer's address changed. */
+	moved_from: string | null;
 	error: string | null;
 	/** Why phones may still fail to connect, e.g. Windows treats the network as Public. */
 	warning: string | null;

@@ -100,6 +100,12 @@
 			{#if status.warning}
 				<p class="warning" role="alert">{status.warning}</p>
 			{/if}
+			{#if status.moved_from}
+				<p class="warning" role="status">
+					This computer's address changed, so phones that opened {status.moved_from} need the new address below and your approval
+					again. Giving the computer a fixed address in your router's settings stops this.
+				</p>
+			{/if}
 			<div class="join">
 				{#if status.can_change && qr}
 					<!-- eslint-disable-next-line svelte/no-at-html-tags -- SVG generated locally by the qrcode library -->
