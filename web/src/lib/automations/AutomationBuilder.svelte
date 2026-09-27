@@ -117,7 +117,7 @@
 		if (index === null) list.push(value);
 		else list[index] = value;
 		try {
-			const checked = await api.previewAutomation({ ...next, [part]: list });
+			const checked = await api.previewAutomation({ ...next, [part]: list, uid: isNew ? undefined : uid });
 			draft = { ...draft, triggers: checked.triggers, conditions: checked.conditions, actions: checked.actions };
 			editing = null;
 			return null;
@@ -233,6 +233,7 @@
 		{:else}
 			<ActionEditor
 				action={editingAction}
+				self={isNew ? undefined : uid}
 				onsave={(a) => keep('actions', at, a)}
 				onremove={at === null ? undefined : () => remove('actions', at)}
 				onclose={() => (editing = null)}

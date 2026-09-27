@@ -57,15 +57,15 @@ Ctrl+Alt with a letter) rather than keys the user types or uses elsewhere.
 
 Automations: When (Triggers: a time on some days; sunrise/sunset with an offset; a Device or Group
 turns on or off, or a Streamer opens an app, each optionally only once it stays so for some
-minutes; a
-Device goes Offline or comes back online) → Only if
-(Conditions: a Device or Group is on/off, a Streamer has an app open, a time window, some days, dark
-or light; all of them or any one) → Then (Actions in order: control a Device or Group the way a
-Hotkey does, wait, notify). Control runs them itself while it's running on this PC. You can list,
+minutes; a Device goes Offline or comes back online) → Only if (Conditions: a Device or Group is
+on/off, a Streamer has an app open, a time window, some days, dark or light; all of them or any
+one) → Then (Actions in order: control a Device or Group the way a Hotkey does, run another
+Automation, wait, notify). Control runs them itself while it's running on this PC. You can list,
 read (with recent Runs), create, edit, delete, run, and switch them on and off when the user asks;
 they're active right away and the app marks them as made by the Assistant. After creating one, tell
 the user its `summary` so they can check it. A timed Trigger missed while the PC was off or asleep
-is skipped, never run late. Running one by hand skips its Conditions. Device Triggers fire on changes
+is skipped, never run late. Running one by hand, or from another Automation's Action, skips its
+Conditions; Automations can't run each other in a loop. Device Triggers fire on changes
 from anywhere (a wall switch, another app, Control, another Automation); an AC, TV or fan changes
 only when Control sends it something, and one with only a Power Toggle can't be a Trigger. A Device
 counts as Offline after a minute without answering. An Automation isn't set off by its own changes,
@@ -334,8 +334,9 @@ class ActionIn(BaseModel):
     """One step of an Automation, done in order."""
 
     action: Literal["toggle", "on", "off", "brightness_up", "brightness_down", "temperature_up",
-                    "temperature_down", "set", "press", "open_app", "wait", "notify"]
-    device: str | None = Field(None, description="a Device's or Group's name or uid, for all but wait and notify")
+                    "temperature_down", "set", "press", "open_app", "run_automation", "wait", "notify"]
+    device: str | None = Field(None, description="a Device's or Group's name or uid, for all but wait and notify; "
+                                                 "run_automation: the Automation's")
     step: float | None = Field(None, description="brightness_* (%, default 10) or temperature_* (degrees, default 1)")
     button: str | None = Field(None, description='press: e.g. "Volume +"')
     app: str | None = Field(None, description='open_app: e.g. "Netflix"')
@@ -421,6 +422,8 @@ def action_in(a: dict) -> dict:
     out: dict = {"device": a["target"], "label": label}
     if do == "toggle":
         return {"action": "toggle"} | out
+    if do == "run":
+        return {"action": "run_automation"} | out
     if do == "press":
         return {"action": "press", "button": a["button"]} | out
     if do == "open_app":
@@ -762,6 +765,10 @@ def create_server(engine: Engine) -> MCPServer:
             return {"do": "wait", "seconds": round(a.minutes * 60)}
         if a.action == "notify":
             return {"do": "notify", "text": a.text or ""}
+        if a.action == "run_automation":
+            if not a.device:
+                raise ToolError("Say which Automation to run (`device`).")
+            return {"do": "run", "target": lookup_automation(a.device)["uid"]}
         if not a.device:
             raise ToolError(f"Say which Device or Group to {a.action} (`device`).")
         d = controllable(lookup(a.device))
@@ -804,8 +811,10 @@ def create_server(engine: Engine) -> MCPServer:
         Conditions (checked once when a Trigger fires; `match`: all of them, or any one): a Device or
         Group on/off, a Streamer's open app, a time window (may cross midnight), days, dark/light.
         Actions, in order: what a Hotkey can do to a Device or Group (on, off, toggle, set, step,
-        press a button, open an app), wait some minutes, or notify (a Windows notification on this PC
-        and a notice in the app). Tell the user the returned `summary`."""
+        press a button, open an app), run another Automation (`run_automation`: it skips that one's
+        Conditions, and this one goes on without waiting for it; they can't run each other in a loop),
+        wait some minutes, or notify (a Windows notification on this PC and a notice in the app). Tell
+        the user the returned `summary`."""
         body = {"name": name, "match": match, "enabled": enabled, "by_assistant": True}
         body |= automation_body(triggers or [], conditions or [], actions)
         return automation_summary(engine.call("POST", "/automations", body))

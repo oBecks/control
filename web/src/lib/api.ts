@@ -192,8 +192,9 @@ export const api = {
 	deleteAutomation: (uid: string) => call<void>('DELETE', `/automations/${enc(uid)}`),
 	/** Runs it now, skipping its Conditions; answers as it starts. */
 	runAutomation: (uid: string) => call<Run>('POST', `/automations/${enc(uid)}/run`),
-	/** The builder's draft checked and labelled, without saving it. */
-	previewAutomation: (draft: Omit<AutomationDraft, 'name' | 'enabled'>) =>
+	/** The builder's draft checked and labelled, without saving it. `uid`: the Automation it edits,
+	 * which mustn't end up running itself. */
+	previewAutomation: (draft: Omit<AutomationDraft, 'name' | 'enabled'> & { uid?: string }) =>
 		call<AutomationPreview>('POST', '/automations/preview', draft),
 	location: () => call<HomeLocation | null>('GET', '/location'),
 	setLocation: (where: { name?: string; lat: number; lon: number }) => call<HomeLocation>('PUT', '/location', where),

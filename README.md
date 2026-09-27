@@ -28,7 +28,7 @@ Everything stays on your home network.
 - Group devices ("Living room lights") and switch them together.
 - Arrange your own Dashboards: Tiles, a brightness bar, a colour wheel, the AC, a TV remote, single buttons like "Netflix" and a clock, placed where you want them. Turn an old phone into a remote.
 - Set Hotkeys: keys on your PC that toggle a light, dim it while held, or press Volume + on the TV, from any app. Keys can also do something else when pressed twice or held, or start a sequence (Ctrl+Alt+L, then 1).
-- Make Automations: at a time or at sunset, or when a Device turns on or off (or stays on a while), a TV box opens an app, or a Device goes Offline; only if something's true, do a few things in order ("at 19:00 on weekdays, if it's dark, turn on the living room lights, wait 3 hours, turn them off"). Control runs them itself while it's running, and tells you when something didn't work.
+- Make Automations: at a time or at sunset, or when a Device turns on or off (or stays on a while), a TV box opens an app, or a Device goes Offline; only if something's true, do a few things in order ("at 19:00 on weekdays, if it's dark, turn on the living room lights, wait 3 hours, turn them off"), or run another Automation. Control runs them itself while it's running, and tells you when something didn't work.
 - Use it from your phone, or just ask Claude.
 
 ## Works with
@@ -87,7 +87,7 @@ It only works in Claude on the same PC. Claude on the web or your phone can't re
 
 ## Coming next
 
-Automations that run each other (chaining), then Scenes. Later, Samsung TVs, Rooms and more brands. See the [roadmap](docs/roadmap.md).
+Scenes. Later, Samsung TVs, Rooms and more brands. See the [roadmap](docs/roadmap.md).
 
 <details>
 <summary>Run from source</summary>

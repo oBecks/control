@@ -364,11 +364,7 @@ class Listening:
             hops = by[1] + 1
         with closing(Registry()) as r:
             label = automations.trigger_label(t, api._names(r), api._app_names(r, t.get("target")))
-            if hops > MAX_HOPS:
-                why = f"{MAX_HOPS} Automations had already set each other off in a row, so it may be a loop"
-                steps = api._not_run(r, a)
-                r.update_run(r.add_run(a.uid, label, outcome="skipped", steps=steps), steps, "skipped", why)
-                api.runner.notify(r, a.name, f"Didn't run on \"{label}\": {why}", a.uid)
+            if api.runner.stopped_loop(r, a, label, hops):
                 return
             fired = self._fired.setdefault(a.uid, deque())
             while fired and now - fired[0] > MINUTE:

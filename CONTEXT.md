@@ -99,7 +99,7 @@ The "Only if" of an Automation: something that must be true when a Trigger fires
 _Avoid_: Filter, guard, constraint
 
 **Action**:
-One step in the "Then" of an Automation, done in order: control a Device or Group, wait, or notify.
+One step in the "Then" of an Automation, done in order: control a Device or Group, run another Automation (skipping its Only if, without waiting for it), wait, or notify.
 _Avoid_: Step, command, task
 
 **Run**:

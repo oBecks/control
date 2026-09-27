@@ -216,12 +216,10 @@ export type Condition =
 	| { type: 'days'; days: Weekday[] }
 	| { type: 'sun'; is: 'dark' | 'light' };
 
-/** The "Then", in order: a Hotkey's action on a Device or Group, a wait, or a notification.
- * Not `run` yet: running another Automation comes with chaining. */
+/** The "Then", in order: a Hotkey's action on a Device or Group, running another Automation
+ * (skipping its Only if, without waiting for it), a wait, or a notification. */
 export type AutomationAction =
-	| (Exclude<HotkeyAction, { do: 'run' }> & { target: string })
-	| { do: 'wait'; seconds: number }
-	| { do: 'notify'; text: string };
+	(HotkeyAction & { target: string }) | { do: 'wait'; seconds: number } | { do: 'notify'; text: string };
 
 /** A part as the Engine sends it back: with its plain-language label. */
 export type Labelled<T> = T & { label: string };
