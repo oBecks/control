@@ -31,6 +31,12 @@ version = VSVersionInfo(
     ],
 )
 
+# Pillow only opens the tray's .ico and writes the `control link tuya` QR as a PNG: its core module
+# does both. The AVIF, WebP, colour-management, Tk and FreeType extensions add ~11 MB for nothing.
+# Pillow imports the FreeType one (ImageFont) inside a try, so leaving it out only breaks drawing text.
+pillow_unused = ["PIL._avif", "PIL.AvifImagePlugin", "PIL._webp", "PIL.WebPImagePlugin",
+                 "PIL._imagingcms", "PIL.ImageCms", "PIL._imagingtk", "PIL.ImageTk", "PIL._imagingft"]
+
 a = Analysis(
     [str(root / "packaging" / "control_app.py")],
     pathex=[str(root / "src")],
@@ -38,7 +44,7 @@ a = Analysis(
     # uvicorn picks its loop and protocol implementations at run time; zeroconf imports its compiled
     # parts by name.
     hiddenimports=collect_submodules("uvicorn") + collect_submodules("zeroconf"),
-    excludes=["tkinter", "pytest"],
+    excludes=["tkinter", "pytest", *pillow_unused],
 )
 pyz = PYZ(a.pure)
 exe = EXE(
