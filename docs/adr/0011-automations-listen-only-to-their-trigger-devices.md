@@ -17,7 +17,7 @@ Until Automations, the Engine watched nothing: a Device's state was read only wh
 
 - **Yeelight**: its own TCP connection to the bulb, with TCP keep-alive, reading the "props" notifications a bulb sends on every open connection. One request per (re)connection, for the first reading; the keep-alive notices a bulb that lost power without spending its rate-limited requests.
 - **Tuya**: the plug's one local connection, kept open with its heartbeat; the plug pushes its status when the relay changes. While listened to, Control's own commands and reads for the plug go over that connection.
-- **Android TV**: the Remote connection a Streamer already holds; the device pings it every 5 s, so a lost one is noticed.
+- **Android TV**: the Remote connection a Streamer already holds; the device pings it every 5 s, so a lost one is noticed. While it's lost, the address is read again from the Registry, so a box a Scan found at a new address is reconnected there (Yeelight and Tuya do the same on each reconnection).
 - Only changes fire: the first reading after listening starts fires nothing, and "stays so for N min" counts from then (nothing is kept across a restart). A Streamer's screensaver doesn't count as leaving its app.
 - Offline Triggers are for Devices with a connection of their own (lights, plugs, Streamers), not Remote Devices or Hubs.
 

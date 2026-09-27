@@ -313,3 +313,57 @@ def test_a_bulbs_power_from_its_answer_and_notifications():
     assert _power(b'{"method": "props", "params": {"power": "off", "bright": 10}}') == "off"
     assert _power(b'{"method": "props", "params": {"bright": 10}}') is None  # brightness only
     assert _power(b"not json") is None
+
+
+class FakeRemote:
+    """Enough of an Android TV Remote connection for listening."""
+
+    def __init__(self, host, available=True):
+        self.host, self.available, self.is_on, self.current_app = host, available, True, NETFLIX
+        self.callbacks = []
+
+    def add_is_on_updated_callback(self, cb):
+        self.callbacks.append(cb)
+
+    add_current_app_updated_callback = add_is_available_updated_callback = add_is_on_updated_callback
+
+    def drop(self):
+        self.available = False
+        for cb in self.callbacks:
+            cb(False)
+
+
+def test_a_streamer_that_moved_is_listened_to_at_its_new_address(monkeypatch):
+    import asyncio
+
+    from control.engine.adapters import androidtv_streamer as atv
+
+    monkeypatch.setattr(atv, "RETRY_SECONDS", 0.05)
+    address = ["10.0.0.9"]
+    tried: list[str] = []
+    reports: list = []
+
+    async def connected(uid, ip):
+        tried.append(ip)
+        remote = FakeRemote(ip)
+        atv._remotes[uid] = remote
+        atv._attach(uid, remote)
+        return remote
+
+    monkeypatch.setattr(atv, "_connected", connected)
+    watch = atv.AndroidTVWatch("androidtv:moved", lambda: address[0], lambda uid, s: reports.append(s))
+    try:
+        deadline = time.monotonic() + 2
+        while not tried and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert tried == ["10.0.0.9"] and reports[-1] == {"on": True, "app": NETFLIX}
+        address[0] = "10.0.0.20"  # a Scan found it here
+        atv._loop.call_soon_threadsafe(atv._remotes["androidtv:moved"].drop)
+        while len(tried) < 2 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert tried == ["10.0.0.9", "10.0.0.20"]
+        assert None in reports and reports[-1] == {"on": True, "app": NETFLIX}
+    finally:
+        watch.close()
+        asyncio.run_coroutine_threadsafe(asyncio.sleep(0), atv._loop).result(1)
+        atv._remotes.pop("androidtv:moved", None)
