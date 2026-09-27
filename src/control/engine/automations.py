@@ -10,7 +10,8 @@ A Trigger is one of:
     {"type": "sun", "event": "sunrise" | "sunset", "offset": -30, "days": [...]}   offset in minutes
     {"type": "state", "target": uid, "on": true, "minutes": 30}   turns on (a Group: its first member),
                                                   and stays on for 30 min first; 0: at once
-    {"type": "app", "target": uid, "app": "com.netflix.ninja"}   a Streamer opens that app
+    {"type": "app", "target": uid, "app": "com.netflix.ninja", "minutes": 5}   a Streamer opens that
+                                                  app, and keeps it open 5 min first; 0: at once
     {"type": "offline", "target": uid, "offline": true}   a Device goes Offline (false: comes back online)
 The last three are Device Triggers: the Engine listens to the Devices they name (ADR 0011,
 `api/listening.py`).
@@ -95,20 +96,25 @@ def check_trigger(t: dict, location: sun.Location | None) -> dict:
     if kind == "state":
         if not isinstance(t.get("on"), bool):
             raise ValueError("a state Trigger says turns on (true) or off (false)")
-        minutes = 0 if t.get("minutes") is None else t["minutes"]
-        if (not isinstance(minutes, int | float) or isinstance(minutes, bool) or minutes != int(minutes)
-                or not 0 <= minutes <= MAX_STAYS):
-            raise ValueError("it stays so for whole minutes, 0 (at once) up to 24 hours")
-        return {"type": "state", "target": _target(t), "on": t["on"], "minutes": int(minutes)}
+        return {"type": "state", "target": _target(t), "on": t["on"], "minutes": _stays(t)}
     if kind == "app":
         if not isinstance(t.get("app"), str) or not t["app"]:
             raise ValueError("say which app")
-        return {"type": "app", "target": _target(t), "app": t["app"]}
+        return {"type": "app", "target": _target(t), "app": t["app"], "minutes": _stays(t)}
     if kind == "offline":
         if not isinstance(t.get("offline"), bool):
             raise ValueError("an Offline Trigger says goes Offline (true) or comes back online (false)")
         return {"type": "offline", "target": _target(t), "offline": t["offline"]}
     raise ValueError(f"a Trigger is one of: {', '.join(TRIGGERS)}")
+
+
+def _stays(t: dict) -> int:
+    """Minutes a state or app Trigger waits for it to stay so; 0: at once."""
+    minutes = 0 if t.get("minutes") is None else t["minutes"]
+    if (not isinstance(minutes, int | float) or isinstance(minutes, bool) or minutes != int(minutes)
+            or not 0 <= minutes <= MAX_STAYS):
+        raise ValueError("it stays so for whole minutes, 0 (at once) up to 24 hours")
+    return int(minutes)
 
 
 def check_condition(c: dict, location: sun.Location | None) -> dict:
@@ -220,7 +226,9 @@ def trigger_label(t: dict, names: dict[str, str], app_names: dict[str, str] | No
         stays = f" and stays {word} for {duration_label(t['minutes'] * 60)}" if t["minutes"] else ""
         return f"{name} turns {word}{stays}"
     if t["type"] == "app":
-        return f"{name} opens {(app_names or {}).get(t['app'], t['app'])}"
+        minutes = t.get("minutes", 0)
+        stays = f" and keeps it open for {duration_label(minutes * 60)}" if minutes else ""
+        return f"{name} opens {(app_names or {}).get(t['app'], t['app'])}{stays}"
     if t["type"] == "offline":
         return f"{name} goes Offline" if t["offline"] else f"{name} comes back online"
     return t["type"]

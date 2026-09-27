@@ -348,7 +348,10 @@ def test_a_chain_of_automations_stops(listening, monkeypatch):
     settle(listening, b["uid"])
     seen(listening, "yeelight:2", {"on": True})  # B's doing, one hop on
     settle(listening, chained["uid"])
-    assert [len(runs(c, x["uid"])) for x in (a, b, chained)] == [1, 1, 0]
+    assert [len(runs(c, x["uid"])) for x in (a, b, chained)] == [1, 1, 1]
+    stopped = runs(c, chained["uid"])[0]  # kept in its history, not only in a notice that goes away
+    assert (stopped["outcome"], stopped["cause"]) == ("skipped", "Yeelight strip turns on")
+    assert "set each other off" in stopped["note"]
     assert "set each other off" in c.get("/api/notices").json()[-1]["text"]
 
 
@@ -452,3 +455,23 @@ def test_a_plugs_heartbeat_answer_or_closing_is_told_apart():
     plug.close()
     assert TuyaWatch._read(dev) is False  # the plug closed the connection
     ours.close()
+
+
+def test_a_streamer_keeping_an_app_open_for_n_minutes(listening):
+    c = listening["client"]
+    a = create(c, triggers=[{"type": "app", "target": BOX, "app": NETFLIX, "minutes": 1}], actions=notify())
+    assert a["triggers"][0]["label"] == "Box opens Netflix and keeps it open for 1 min"
+    settle(listening)
+    seen(listening, BOX, {"on": True, "app": "com.google.android.tvlauncher"})
+    seen(listening, BOX, {"on": True, "app": NETFLIX})
+    seen(listening, BOX, {"on": True, "app": "com.google.android.youtube.tv"})  # left before the minute
+    settle(listening, seconds=0.3)
+    assert runs(c, a["uid"]) == []
+    seen(listening, BOX, {"on": True, "app": NETFLIX})
+    seen(listening, BOX, {"on": False, "app": NETFLIX})  # the box went to sleep with it open
+    settle(listening, seconds=0.3)
+    assert runs(c, a["uid"]) == []
+    seen(listening, BOX, {"on": True, "app": NETFLIX})
+    seen(listening, BOX, {"on": True, "app": "com.google.android.backdrop"})  # the screensaver: still Netflix
+    settle(listening, a["uid"], seconds=0.3)
+    assert [r["cause"] for r in runs(c, a["uid"])] == ["Box opens Netflix and keeps it open for 1 min"]

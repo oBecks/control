@@ -202,7 +202,8 @@ export type Trigger =
 	/** A Device or Group turns on or off (a Group: its first member on, its last off), and stays so for
 	 * `minutes` first (0: at once). The Engine listens to the Devices these name (ADR 0011). */
 	| { type: 'state'; target: string; on: boolean; minutes: number }
-	| { type: 'app'; target: string; app: string }
+	/** Opens the app, and keeps it open for `minutes` first (0: at once). */
+	| { type: 'app'; target: string; app: string; minutes: number }
 	/** Goes Offline (a minute without an answer), or (false) comes back online. */
 	| { type: 'offline'; target: string; offline: boolean };
 

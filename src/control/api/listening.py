@@ -55,6 +55,11 @@ def _on(state: dict | None) -> bool | None:
     return None if state is None else state.get("on")
 
 
+def _app_open(state: dict | None, app: str) -> bool | None:
+    """Whether a Streamer is on with that app open; None before its first reading."""
+    return None if state is None else bool(state.get("on")) and state.get("app") == app
+
+
 class Listening:
     def __init__(self):
         self._queue: queue.Queue = queue.Queue()
@@ -170,7 +175,7 @@ class Listening:
         # Count "stays so" from now for what's already so (a Device already heard, or a Remote Device).
         for a in self._automations:
             for i, t in enumerate(a.triggers):
-                if t["type"] == "state" and t["minutes"] and self._value(t["target"]) == t["on"]:
+                if t["type"] in ("state", "app") and t.get("minutes") and self._holds(t):
                     self._stay(a, i, t, t["target"], restart=False)
 
     def _watch(self, r: Registry, uid: str) -> None:
@@ -233,15 +238,18 @@ class Listening:
             for i, t in enumerate(a.triggers):
                 target = t.get("target")
                 if t["type"] == "state" and target == uid:
-                    was = _on(old)
+                    was, now = _on(old), _on(state)
                     if was is None and self._watches[uid] is None:
-                        was = not _on(state)  # Control just set a Remote Device for the first time: a change
-                    self._state_changed(a, i, t, was, _on(state), uid)
+                        was = not now  # Control just set a Remote Device for the first time: a change
                 elif t["type"] == "state" and target in before:
-                    self._state_changed(a, i, t, before[target], after[target], uid)
-                elif t["type"] == "app" and target == uid and old is not None:
-                    if state.get("app") == t["app"] and old.get("app") != t["app"]:
-                        self._fire(a, t, uid)
+                    was, now = before[target], after[target]
+                elif t["type"] == "app" and target == uid:
+                    was, now = _app_open(old, t["app"]), _app_open(state, t["app"])
+                else:
+                    continue
+                if t["type"] == "state":
+                    was, now = (None if v is None else v == t["on"] for v in (was, now))
+                self._changed(a, i, t, was, now, uid)
 
     def _offline(self, uid: str) -> None:
         if self._lost.pop(uid, None) is None or uid not in self._watches:
@@ -276,21 +284,31 @@ class Listening:
             values.append(value)
         return any(values) if values else None
 
-    def _state_changed(self, a: Automation, i: int, t: dict, was: bool | None, now: bool | None, uid: str) -> None:
+    def _holds(self, t: dict) -> bool | None:
+        """Whether a state or app Trigger's "so" is true now: on (or off), or the app open. None while
+        not known."""
+        if t["type"] == "app":
+            return _app_open(self._states.get(t["target"]), t["app"])
+        value = self._value(t["target"])
+        return None if value is None else value == t["on"]
+
+    def _changed(self, a: Automation, i: int, t: dict, was: bool | None, now: bool | None, uid: str) -> None:
+        """A state or app Trigger's "so" was and now is (None: not known): it fires when it becomes
+        so, or once it has stayed so for its minutes."""
         key = self._stay_key(a, i, t)
-        if now != t["on"]:
+        if not now:
             if counting := self._stays.pop(key, None):
                 counting[0].cancel()
             self._stayed_keys.discard(key)  # it left the state: it may fire again next time
             return
         if was is None:  # the first reading: nothing changed, but "stays so" counts from now
-            if t["minutes"]:
+            if t.get("minutes"):
                 self._stay(a, i, t, uid, restart=False)
             return
-        if was == now:
+        if was:
             return
         self._stayed_keys.discard(key)
-        if t["minutes"]:
+        if t.get("minutes"):
             self._stay(a, i, t, uid, restart=True)
         else:
             self._fire(a, t, uid)
@@ -318,7 +336,7 @@ class Listening:
         if a is None or key[1] >= len(a.triggers):
             return
         t = a.triggers[key[1]]
-        if self._value(t["target"]) != t["on"]:
+        if not self._holds(t):
             return
         _, since, since_awake = counting
         if (time.monotonic() - since) - (awake() - since_awake) > SLEPT:
@@ -343,8 +361,10 @@ class Listening:
         with closing(Registry()) as r:
             label = automations.trigger_label(t, api._names(r), api._app_names(r, t.get("target")))
             if hops > MAX_HOPS:
-                api.runner.notify(r, a.name, f"Didn't run on \"{label}\": {MAX_HOPS} Automations had already "
-                                  "set each other off in a row, so it may be a loop", a.uid)
+                why = f"{MAX_HOPS} Automations had already set each other off in a row, so it may be a loop"
+                steps = api._not_run(r, a)
+                r.update_run(r.add_run(a.uid, label, outcome="skipped", steps=steps), steps, "skipped", why)
+                api.runner.notify(r, a.name, f"Didn't run on \"{label}\": {why}", a.uid)
                 return
             fired = self._fired.setdefault(a.uid, deque())
             while fired and now - fired[0] > MINUTE:

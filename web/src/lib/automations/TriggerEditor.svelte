@@ -36,7 +36,7 @@
 	let days = $state<Weekday[]>(timed ? initial.days : [...EVERY_DAY]);
 	let target = $state(initial && !timed ? initial.target : '');
 	let on = $state(initial?.type === 'state' ? initial.on : true);
-	let stays = $state(initial?.type === 'state' ? initial.minutes : 0);
+	let stays = $state(initial?.type === 'state' || initial?.type === 'app' ? (initial.minutes ?? 0) : 0);
 	let app = $state(initial?.type === 'app' ? initial.app : '');
 	let offline = $state(initial?.type === 'offline' ? initial.offline : true);
 	let problem = $state<string | null>(null);
@@ -75,7 +75,7 @@
 			case 'state':
 				return target ? { type, target, on, minutes: stays || 0 } : null;
 			case 'app':
-				return target && app ? { type, target, app } : null;
+				return target && app ? { type, target, app, minutes: stays || 0 } : null;
 			case 'offline':
 				return target ? { type, target, offline } : null;
 		}
@@ -165,6 +165,12 @@
 				{#each apps as a (a.app)}<option value={a.app}>{a.name}</option>{/each}
 			</select>
 		</label>
+		<div class="amounts">
+			<span>and keeps it open for</span>
+			<input type="number" min="0" max="1440" step="1" bind:value={stays} aria-label="Minutes it stays open" />
+			<span>min</span>
+		</div>
+		<p class="hint">0 starts it at once. Its screensaver coming on doesn't count as leaving the app.</p>
 	{:else}
 		<label class="field">
 			<span>Device</span>

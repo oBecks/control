@@ -56,7 +56,8 @@ PC, and the keys then reach only Control, never the app in front: suggest spare 
 Ctrl+Alt with a letter) rather than keys the user types or uses elsewhere.
 
 Automations: When (Triggers: a time on some days; sunrise/sunset with an offset; a Device or Group
-turns on or off, optionally only once it stays so for some minutes; a Streamer opens an app; a
+turns on or off, or a Streamer opens an app, each optionally only once it stays so for some
+minutes; a
 Device goes Offline or comes back online) → Only if
 (Conditions: a Device or Group is on/off, a Streamer has an app open, a time window, some days, dark
 or light; all of them or any one) → Then (Actions in order: control a Device or Group the way a
@@ -309,7 +310,8 @@ class TriggerIn(BaseModel):
     device: str | None = Field(None, description="state, app, offline: a Device's name or uid (state: or a Group's)")
     on: bool | None = Field(None, description="state: true when it turns on (a Group: its first member), false "
                                               "when it turns off (a Group: its last member)")
-    stays_minutes: int = Field(0, description="state: only once it has stayed so this long (0-1440); 0: at once")
+    stays_minutes: int = Field(0, description="state, app: only once it has stayed so (on, off, or the app "
+                                               "open) this long, 0-1440 minutes; 0: at once")
     app: str | None = Field(None, description="app: when this Streamer opens this app, e.g. Netflix")
     offline: bool | None = Field(None, description="offline: true when it goes Offline (a minute without an "
                                                    "answer), false when it comes back online")
@@ -383,7 +385,8 @@ def trigger_in(t: dict) -> dict:
     if kind == "state":
         return {"type": kind, "device": t["target"], "on": t["on"], "stays_minutes": t["minutes"], "label": label}
     if kind == "app":
-        return {"type": kind, "device": t["target"], "app": t["app"], "label": label}
+        return {"type": kind, "device": t["target"], "app": t["app"], "stays_minutes": t.get("minutes", 0),
+                "label": label}
     if kind == "offline":
         return {"type": kind, "device": t["target"], "offline": t["offline"], "label": label}
     if t["type"] == "time":
@@ -727,7 +730,7 @@ def create_server(engine: Engine) -> MCPServer:
         if d["control"] != "streamer":
             raise ToolError(f"'{d['name']}' isn't a Streamer, so it opens no apps.")
         apps = engine.call("GET", f"/devices/{d['uid']}/state")["features"]["apps"]
-        return {"type": "app", "target": d["uid"], "app": app_package(apps, t.app)}
+        return {"type": "app", "target": d["uid"], "app": app_package(apps, t.app), "minutes": t.stays_minutes}
 
     def automation_condition(c: ConditionIn) -> dict:
         if c.type in ("state", "app"):
