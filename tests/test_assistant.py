@@ -512,3 +512,24 @@ def test_automations_the_engine_refuses_say_why(home, runner):
     assert "'someday' isn't a day" in error(srv, "create_automation", name="x",
                                             triggers=[{"type": "time", "at": "07:00", "days": ["someday"]}],
                                             actions=[{"action": "on", "device": "yeelight"}])
+
+
+def test_device_triggers_from_the_assistant(home, runner):
+    srv, *_ = home
+    made = ok(srv, "create_automation", name="Lamp left on",
+              triggers=[{"type": "state", "device": "yeelight", "on": True, "stays_minutes": 120},
+                        {"type": "offline", "device": "Yeelight color", "offline": True}],
+              actions=[{"action": "notify", "text": "Check the lamp"}])
+    assert made["summary"].startswith("When: Yeelight color turns on and stays on for 2 h or Yeelight color goes "
+                                      "Offline.")
+    got = ok(srv, "get_automation", automation="Lamp left on")
+    assert got["triggers"][0] == {"type": "state", "device": "yeelight:1", "on": True, "stays_minutes": 120,
+                                  "label": "Yeelight color turns on and stays on for 2 h"}
+    # They go straight back into edit_automation.
+    kept = [{k: v for k, v in t.items() if k != "label"} for t in got["triggers"]]
+    assert ok(srv, "edit_automation", automation="Lamp left on", triggers=kept)["summary"] == made["summary"]
+    assert "says `on`" in error(srv, "create_automation", name="x", triggers=[{"type": "state", "device": "yeelight"}],
+                                actions=[{"action": "notify", "text": "x"}])
+    assert "isn't a Streamer" in error(srv, "create_automation", name="y",
+                                       triggers=[{"type": "app", "device": "yeelight", "app": "Netflix"}],
+                                       actions=[{"action": "notify", "text": "x"}])

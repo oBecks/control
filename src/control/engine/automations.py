@@ -8,7 +8,12 @@ Condition without `days` means every day.
 A Trigger is one of:
     {"type": "time", "at": "07:00", "days": [0, 1, 2, 3, 4]}
     {"type": "sun", "event": "sunrise" | "sunset", "offset": -30, "days": [...]}   offset in minutes
-(Triggers on a Device's state or going Offline come with listening, ADR 0011.)
+    {"type": "state", "target": uid, "on": true, "minutes": 30}   turns on (a Group: its first member),
+                                                  and stays on for 30 min first; 0: at once
+    {"type": "app", "target": uid, "app": "com.netflix.ninja"}   a Streamer opens that app
+    {"type": "offline", "target": uid, "offline": true}   a Device goes Offline (false: comes back online)
+The last three are Device Triggers: the Engine listens to the Devices they name (ADR 0011,
+`api/listening.py`).
 
 A Condition is one of:
     {"type": "state", "target": uid, "on": true}          a Device or Group is on (a Group: any member)
@@ -32,10 +37,12 @@ from . import hotkeys, sun
 
 DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 EVERY_DAY = list(range(7))
-TRIGGERS = ("time", "sun")
+TRIGGERS = ("time", "sun", "state", "app", "offline")
+DEVICE_TRIGGERS = ("state", "app", "offline")
 CONDITIONS = ("state", "app", "time", "days", "sun")
 CONTROL = ("toggle", "set", "step", "press", "open_app")
 MAX_WAIT = 24 * 3600
+MAX_STAYS = 24 * 60  # minutes a state Trigger can ask it to stay so
 MAX_OFFSET = 180  # minutes before or after sunrise or sunset
 MAX_TEXT = 200
 MAX_PARTS = 30  # Triggers, Conditions or Actions in one Automation
@@ -85,6 +92,21 @@ def check_trigger(t: dict, location: sun.Location | None) -> dict:
         if location is None:
             raise ValueError("set your location first, so Control knows when the sun rises and sets")
         return {"type": "sun", "event": t["event"], "offset": _offset(t.get("offset")), "days": _days(t.get("days"))}
+    if kind == "state":
+        if not isinstance(t.get("on"), bool):
+            raise ValueError("a state Trigger says turns on (true) or off (false)")
+        minutes = 0 if t.get("minutes") is None else t["minutes"]
+        if not isinstance(minutes, int | float) or isinstance(minutes, bool) or not 0 <= minutes <= MAX_STAYS:
+            raise ValueError("it stays so for 0 minutes (at once) up to 24 hours")
+        return {"type": "state", "target": _target(t), "on": t["on"], "minutes": int(minutes)}
+    if kind == "app":
+        if not isinstance(t.get("app"), str) or not t["app"]:
+            raise ValueError("say which app")
+        return {"type": "app", "target": _target(t), "app": t["app"]}
+    if kind == "offline":
+        if not isinstance(t.get("offline"), bool):
+            raise ValueError("an Offline Trigger says goes Offline (true) or comes back online (false)")
+        return {"type": "offline", "target": _target(t), "offline": t["offline"]}
     raise ValueError(f"a Trigger is one of: {', '.join(TRIGGERS)}")
 
 
@@ -155,6 +177,12 @@ def targets_of(automation) -> set[str]:
     return {p["target"] for p in parts if "target" in p}
 
 
+def listened(automation) -> set[str]:
+    """The Devices and Groups an Automation's Device Triggers name: what the Engine listens to while
+    it's on (ADR 0011)."""
+    return {t["target"] for t in automation.triggers if t["type"] in DEVICE_TRIGGERS}
+
+
 def without(triggers: list, conditions: list, actions: list, gone: set[str]) -> tuple[list, list, list]:
     """The parts that don't name a forgotten Device or deleted Group (ADR 0012)."""
     keep = lambda parts: [p for p in parts if p.get("target") not in gone]  # noqa: E731
@@ -180,11 +208,20 @@ def _offset_label(minutes: int, event: str) -> str:
     return f"{abs(minutes)} min {'before' if minutes < 0 else 'after'} {event}"
 
 
-def trigger_label(t: dict, names: dict[str, str]) -> str:
+def trigger_label(t: dict, names: dict[str, str], app_names: dict[str, str] | None = None) -> str:
     if t["type"] == "time":
         return f"At {t['at']}, {days_label(t['days'])}"
     if t["type"] == "sun":
         return f"{_offset_label(t['offset'], t['event'])}, {days_label(t['days'])}"
+    name = names.get(t.get("target", ""), t.get("target", ""))
+    if t["type"] == "state":
+        word = "on" if t["on"] else "off"
+        stays = f" and stays {word} for {duration_label(t['minutes'] * 60)}" if t["minutes"] else ""
+        return f"{name} turns {word}{stays}"
+    if t["type"] == "app":
+        return f"{name} opens {(app_names or {}).get(t['app'], t['app'])}"
+    if t["type"] == "offline":
+        return f"{name} goes Offline" if t["offline"] else f"{name} comes back online"
     return t["type"]
 
 
@@ -203,11 +240,16 @@ def condition_label(c: dict, names: dict[str, str], app_names: dict[str, str]) -
     return kind
 
 
-def wait_label(seconds: int) -> str:
+def duration_label(seconds: int) -> str:
+    """"1 h 5 min", "30 s"."""
     h, rest = divmod(seconds, 3600)
     m, s = divmod(rest, 60)
     parts = [f"{h} h" if h else "", f"{m} min" if m else "", f"{s} s" if s else ""]
-    return "Wait " + " ".join(p for p in parts if p)
+    return " ".join(p for p in parts if p)
+
+
+def wait_label(seconds: int) -> str:
+    return "Wait " + duration_label(seconds)
 
 
 def action_label(a: dict, name: str, buttons: dict[str, str], app_names: dict[str, str]) -> str:

@@ -31,6 +31,7 @@ from ..engine.errors import DeviceUnreachable
 from ..engine.registry import Automation, Registry, Run
 from . import hotkeys as hotkeys_api
 from .deps import registry
+from .listening import listening
 
 router = APIRouter()
 
@@ -72,6 +73,7 @@ class _Active:
     run_id: int
     automation: Automation  # as it was when the Run started: an edit meanwhile doesn't change it
     steps: list[dict]
+    hops: int = 0  # started by a change another Automation made, and so on (the loop guard, ADR 0012)
     cancel: threading.Event = field(default_factory=threading.Event)
     thread: threading.Thread | None = None
 
@@ -96,6 +98,7 @@ class Runner:
             self._last_notice = max((n.id for n in r.notices()), default=0)
         self._thread = threading.Thread(target=self._loop, name="automations", daemon=True)
         self._thread.start()
+        listening.start()  # Device Triggers (ADR 0011)
 
     def stop(self) -> None:
         """Control is quitting: Runs still going end as interrupted (and say so)."""
@@ -103,6 +106,7 @@ class Runner:
             self._closing = True
             self._cond.notify_all()
             active = list(self._active.values())
+        listening.stop()
         for a in active:
             a.cancel.set()
         for a in active:
@@ -110,10 +114,12 @@ class Runner:
                 a.thread.join(timeout=5)
 
     def changed(self) -> None:
-        """Automations or the location changed: work out the next due time again."""
+        """Automations, Groups or the location changed: work out the next due time again, and what to
+        listen to."""
         with self._cond:
             self._revision += 1
             self._cond.notify_all()
+        listening.sync()
 
     def _loop(self) -> None:
         with closing(Registry()) as r:
@@ -158,7 +164,7 @@ class Runner:
                     else:
                         missed = missed if missed and missed[0] >= ts else (ts, t)
             if missed:
-                label = automations.trigger_label(missed[1], {})
+                label = automations.trigger_label(missed[1], {})  # timed Triggers name nothing
                 r.add_run(a.uid, label, outcome="missed", started=missed[0], steps=_not_run(r, a))
             if due:
                 self.run(r, a.uid, automations.trigger_label(due[1], {}))
@@ -186,7 +192,7 @@ class Runner:
 
     # Runs
 
-    def run(self, r: Registry, uid: str, cause: str, by_hand: bool = False) -> int:
+    def run(self, r: Registry, uid: str, cause: str, by_hand: bool = False, hops: int = 0) -> int:
         """Start a Run of an Automation; returns its id. One still going is restarted."""
         a = r.get_automation(uid)
         with self._cond:
@@ -194,7 +200,7 @@ class Runner:
             if old:
                 old.cancel.set()
             steps = _not_run(r, a)
-            active = _Active(r.add_run(uid, cause, steps=steps), a, steps)
+            active = _Active(r.add_run(uid, cause, steps=steps), a, steps, hops)
             self._active[uid] = active
             active.thread = threading.Thread(target=self._go, args=(active, by_hand), name=f"run-{uid}", daemon=True)
             active.thread.start()
@@ -255,7 +261,7 @@ class Runner:
                 self.notify(r, a.name, action["text"], a.uid)
                 step["result"] = "done"
             else:
-                problem = _control(r, action)
+                problem = _control(r, action, a.uid, active.hops)
                 step["result"] = "failed" if problem else "done"
                 if problem:
                     step["detail"] = problem
@@ -311,10 +317,11 @@ def _didnt_run(steps: list[dict]) -> str | None:
     return f"{', '.join(labels)} didn't run" if labels else None
 
 
-def _control(r: Registry, action: dict) -> str | None:
+def _control(r: Registry, action: dict, automation: str, hops: int) -> str | None:
     """Do a control Action; what went wrong, or None."""
     try:
         t = hotkeys_api.target(r, action["target"])
+        listening.acting(r.get_group(t.uid).members if t.is_group else [t.uid], automation, hops)
         clean = hotkeys_api.check_action(r, t, _without_target(action))
         reading = hotkeys_api.run(r, t, clean)
     except (LookupError, ValueError, DeviceUnreachable) as exc:
@@ -407,17 +414,39 @@ def _checked_target(r: Registry, uid: str) -> hotkeys_api.Target:
         raise ValueError(f"there's no Device or Group '{uid}'") from None
 
 
+def _check_on_off(t: hotkeys_api.Target) -> None:
+    if "on" not in t.settable:
+        why = "only has a Power Toggle, so Control can't tell" if t.buttons.get("power") else "can't say"
+        raise ValueError(f"'{t.name}' {why} whether it's on")
+
+
+def _check_trigger(r: Registry, t: dict, where) -> dict:
+    clean = automations.check_trigger(t, where)
+    if clean["type"] == "state":
+        _check_on_off(_checked_target(r, clean["target"]))
+    if clean["type"] == "app":
+        _check_streamer(_checked_target(r, clean["target"]))
+    if clean["type"] == "offline":
+        target = _checked_target(r, clean["target"])
+        if target.control is None:
+            raise ValueError(f"'{target.name}' can't be controlled yet, so Control can't listen to it")
+        if target.is_group or target.control not in ("light", "plug", "streamer"):
+            raise ValueError(f"only a light, plug or Streamer can go Offline, and '{target.name}' isn't one: "
+                             "an AC, TV or fan has no connection of its own")
+    return clean
+
+
+def _check_streamer(t: hotkeys_api.Target) -> None:
+    if t.control != "streamer":
+        raise ValueError(f"only a Streamer has apps open, and '{t.name}' isn't one")
+
+
 def _check_condition(r: Registry, c: dict, where) -> dict:
     clean = automations.check_condition(c, where)
     if clean["type"] == "state":
-        t = _checked_target(r, clean["target"])
-        if "on" not in t.settable:
-            why = "only has a Power Toggle, so Control can't tell" if t.buttons.get("power") else "can't say"
-            raise ValueError(f"'{t.name}' {why} whether it's on")
+        _check_on_off(_checked_target(r, clean["target"]))
     if clean["type"] == "app":
-        t = _checked_target(r, clean["target"])
-        if t.control != "streamer":
-            raise ValueError(f"only a Streamer has apps open, and '{t.name}' isn't one")
+        _check_streamer(_checked_target(r, clean["target"]))
     return clean
 
 
@@ -445,7 +474,7 @@ def check(r: Registry, triggers: list, conditions: list, actions: list, whole: b
     """The parts cleaned up, or ValueError naming the first one that's wrong. `whole`: it's to be
     saved, so it needs an Action."""
     where = location(r)
-    triggers = _numbered("Trigger", triggers, lambda t: automations.check_trigger(t, where))
+    triggers = _numbered("Trigger", triggers, lambda t: _check_trigger(r, t, where))
     conditions = _numbered("Condition", conditions, lambda c: _check_condition(r, c, where))
     actions = _numbered("Action", actions, lambda a: _check_action(r, a))
     if whole:
@@ -498,7 +527,7 @@ class AutomationOut(BaseModel):
 def _labelled(r: Registry, triggers: list[dict], conditions: list[dict], actions: list[dict]):
     names = _names(r)
     return (
-        [t | {"label": automations.trigger_label(t, names)} for t in triggers],
+        [t | {"label": automations.trigger_label(t, names, _app_names(r, t.get("target")))} for t in triggers],
         [c | {"label": automations.condition_label(c, names, _app_names(r, c.get("target")))} for c in conditions],
         [x | {"label": _action_label(r, x, names)} for x in actions],
     )

@@ -13,6 +13,7 @@ import asyncio
 import secrets
 import ssl
 import threading
+from collections.abc import Callable
 from pathlib import Path
 
 from androidtvremote2 import AndroidTVRemote, CannotConnect, ConnectionClosed, InvalidAuth
@@ -84,13 +85,17 @@ _loop: asyncio.AbstractEventLoop | None = None
 _loop_lock = threading.Lock()
 
 
-def _run(coro, timeout: float = _CALL_TIMEOUT):
+def _started() -> asyncio.AbstractEventLoop:
     global _loop
     with _loop_lock:
         if _loop is None:
             _loop = asyncio.new_event_loop()
             threading.Thread(target=_loop.run_forever, name="android-tv", daemon=True).start()
-    future = asyncio.run_coroutine_threadsafe(coro, _loop)
+        return _loop
+
+
+def _run(coro, timeout: float = _CALL_TIMEOUT):
+    future = asyncio.run_coroutine_threadsafe(coro, _started())
     try:
         return future.result(timeout)
     except TimeoutError:
@@ -122,7 +127,76 @@ async def _connected(uid: str, ip: str) -> _Remote:
     remote.available = True
     remote.keep_reconnecting()
     _remotes[uid] = remote
+    _attach(uid, remote)
     return remote
+
+
+# --- Listening (ADR 0011) -------------------------------------------------------------
+# The connection above already pushes power and the open app, and notices a lost device: the device
+# pings every 5 s, and the library drops a connection that misses them for 16 s, then keeps
+# reconnecting. Listening adds callbacks to it, and keeps trying while the device can't be reached.
+
+RETRY_SECONDS = 5
+_watchers: dict[str, Callable[[str, dict | None], None]] = {}  # uid -> report (touched only on the loop)
+_attached: dict[str, _Remote] = {}
+
+
+def _attach(uid: str, remote: _Remote) -> None:
+    report = _watchers.get(uid)
+    if report is None or _attached.get(uid) is remote:
+        return
+    _attached[uid] = remote
+
+    def changed(_value=None) -> None:
+        if _remotes.get(uid) is not remote or _watchers.get(uid) is not report:
+            return  # replaced, or no longer listened to
+        if not remote.available:
+            report(uid, None)
+        elif remote.is_on is not None:
+            report(uid, {"on": bool(remote.is_on), "app": remote.current_app or None})
+
+    remote.add_is_on_updated_callback(changed)
+    remote.add_current_app_updated_callback(changed)
+    remote.add_is_available_updated_callback(changed)
+    changed()
+
+
+class AndroidTVWatch:
+    """Reports a Streamer's power and open app as it pushes them: `report(uid, {"on", "app"})`, or
+    `report(uid, None)` while it can't be reached. `address()` gives its IP (read off the loop)."""
+
+    def __init__(self, uid: str, address: Callable[[], str | None], report: Callable[[str, dict | None], None]):
+        self._uid = uid
+        loop = _started()
+        self._task = asyncio.run_coroutine_threadsafe(self._start(address, report), loop)
+
+    async def _start(self, address, report) -> None:
+        _watchers[self._uid] = report
+        loop = asyncio.get_running_loop()
+        while True:
+            remote = _remotes.get(self._uid)
+            if remote is not None and remote.available:
+                _attach(self._uid, remote)
+                return  # from here the library reconnects by itself
+            ip = await loop.run_in_executor(None, address)
+            try:
+                if ip:
+                    await _connected(self._uid, ip)
+                    return
+            except DeviceUnreachable:
+                pass
+            report(self._uid, None)
+            await asyncio.sleep(RETRY_SECONDS)
+
+    def close(self) -> None:
+        uid, task = self._uid, self._task
+
+        async def stop():
+            _watchers.pop(uid, None)
+            _attached.pop(uid, None)
+
+        task.cancel()
+        asyncio.run_coroutine_threadsafe(stop(), _started())
 
 
 def _state(remote: _Remote) -> StreamerState:

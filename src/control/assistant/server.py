@@ -55,14 +55,20 @@ asks; the app marks them as made by the Assistant. They work only while the Cont
 PC, and the keys then reach only Control, never the app in front: suggest spare keys (F13-F24, or
 Ctrl+Alt with a letter) rather than keys the user types or uses elsewhere.
 
-Automations: When (Triggers: a time on some days, or sunrise/sunset with an offset) → Only if
+Automations: When (Triggers: a time on some days; sunrise/sunset with an offset; a Device or Group
+turns on or off, optionally only once it stays so for some minutes; a Streamer opens an app; a
+Device goes Offline or comes back online) → Only if
 (Conditions: a Device or Group is on/off, a Streamer has an app open, a time window, some days, dark
 or light; all of them or any one) → Then (Actions in order: control a Device or Group the way a
 Hotkey does, wait, notify). Control runs them itself while it's running on this PC. You can list,
 read (with recent Runs), create, edit, delete, run, and switch them on and off when the user asks;
 they're active right away and the app marks them as made by the Assistant. After creating one, tell
 the user its `summary` so they can check it. A timed Trigger missed while the PC was off or asleep
-is skipped, never run late. Running one by hand skips its Conditions. Sunrise and sunset need the
+is skipped, never run late. Running one by hand skips its Conditions. Device Triggers fire on changes
+from anywhere (a wall switch, another app, Control, another Automation); an AC, TV or fan changes
+only when Control sends it something, and one with only a Power Toggle can't be a Trigger. A Device
+counts as Offline after a minute without answering. An Automation isn't set off by its own changes,
+and one set off too often in a minute is switched off (it may be in a loop). Sunrise and sunset need the
 home's location, set in Control (Settings or the Automation builder).
 
 Setting things up (scanning, adding Devices, Learning buttons, renaming Devices) happens in the
@@ -289,16 +295,24 @@ def parse_color(text: str) -> list[int]:
 # --- Automations -----------------------------------------------------------------
 
 DAY_NAMES = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+DEVICE_TRIGGERS = ("state", "app", "offline")
 
 
 class TriggerIn(BaseModel):
     """What starts an Automation."""
 
-    type: Literal["time", "sun"]
+    type: Literal["time", "sun", "state", "app", "offline"]
     at: str | None = Field(None, description='time: "HH:MM", 24-hour, the PC\'s local time')
     event: Literal["sunrise", "sunset"] | None = Field(None, description="sun")
     offset_minutes: int = Field(0, description="sun: minutes before (negative) or after, at most 180")
-    days: list[str] | None = Field(None, description='e.g. ["mon", "tue"]; left out: every day')
+    days: list[str] | None = Field(None, description='time, sun: e.g. ["mon", "tue"]; left out: every day')
+    device: str | None = Field(None, description="state, app, offline: a Device's name or uid (state: or a Group's)")
+    on: bool | None = Field(None, description="state: true when it turns on (a Group: its first member), false "
+                                              "when it turns off (a Group: its last member)")
+    stays_minutes: int = Field(0, description="state: only once it has stayed so this long (0-1440); 0: at once")
+    app: str | None = Field(None, description="app: when this Streamer opens this app, e.g. Netflix")
+    offline: bool | None = Field(None, description="offline: true when it goes Offline (a minute without an "
+                                                   "answer), false when it comes back online")
 
 
 class ConditionIn(BaseModel):
@@ -365,6 +379,13 @@ def _without_none(part: dict) -> dict:
 
 
 def trigger_in(t: dict) -> dict:
+    kind, label = t["type"], t["label"]
+    if kind == "state":
+        return {"type": kind, "device": t["target"], "on": t["on"], "stays_minutes": t["minutes"], "label": label}
+    if kind == "app":
+        return {"type": kind, "device": t["target"], "app": t["app"], "label": label}
+    if kind == "offline":
+        return {"type": kind, "device": t["target"], "offline": t["offline"], "label": label}
     if t["type"] == "time":
         return _without_none({"type": "time", "at": t["at"], "days": _days_in(t["days"]), "label": t["label"]})
     return _without_none({"type": "sun", "event": t["event"], "offset_minutes": t["offset"],
@@ -677,12 +698,32 @@ def create_server(engine: Engine) -> MCPServer:
                         actions: list[ActionIn] | None) -> dict:
         body = {}
         if triggers is not None:
-            body["triggers"] = [automation_trigger(t) for t in triggers]
+            body["triggers"] = [device_trigger(t) if t.type in DEVICE_TRIGGERS else automation_trigger(t)
+                                for t in triggers]
         if conditions is not None:
             body["conditions"] = [automation_condition(c) for c in conditions]
         if actions is not None:
             body["actions"] = [automation_action(a) for a in actions]
         return body
+
+    def device_trigger(t: TriggerIn) -> dict:
+        if not t.device:
+            raise ToolError(f"A {t.type} Trigger says which Device (`device`).")
+        d = controllable(lookup(t.device))
+        if t.type == "state":
+            if t.on is None:
+                raise ToolError("A state Trigger says `on`: true (turns on) or false (turns off).")
+            return {"type": "state", "target": d["uid"], "on": t.on, "minutes": t.stays_minutes}
+        if t.type == "offline":
+            if t.offline is None:
+                raise ToolError("An offline Trigger says `offline`: true (goes Offline) or false (comes back online).")
+            return {"type": "offline", "target": d["uid"], "offline": t.offline}
+        if not t.app:
+            raise ToolError("Say which app (`app`).")
+        if d["control"] != "streamer":
+            raise ToolError(f"'{d['name']}' isn't a Streamer, so it opens no apps.")
+        apps = engine.call("GET", f"/devices/{d['uid']}/state")["features"]["apps"]
+        return {"type": "app", "target": d["uid"], "app": app_package(apps, t.app)}
 
     def automation_condition(c: ConditionIn) -> dict:
         if c.type in ("state", "app"):
