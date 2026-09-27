@@ -11,6 +11,7 @@ An Automation is stored in the Registry and run by the Engine's own scheduler, w
 - **The Engine runs them, so they only run while the PC is on.** A timed Automation that was due while the PC was asleep or off is **skipped** and logged as missed, never run late by surprise. The "PC wakes" trigger covers wanting something to happen on wake. This makes the always-on box on the roadmap more valuable.
 - **Web links are a narrow exception to Approved Browsers** ([ADR 0003](0003-phone-access-approved-browsers-over-lan-http.md)). An Automation can have a private URL, so phone Shortcuts and NFC tags can fire it. Each link carries its own long random secret, answers only on the LAN listener (with Phone access on), can fire only that one Automation, and can be revoked. It never reads state or controls anything else.
 - **Presence comes from the network.** A Person is home while one of their marked phones is on the home Wi-Fi, which a network scan can already see. There's no phone app and no location sharing. Expect about a minute of delay, and phones that drop off Wi-Fi while asleep.
+- **Sunrise and sunset come from a location picked offline** (added 2026-09-27): a city from the list bundled with the sun-times library, or typed coordinates, set once. No Windows Location prompt and no IP lookup, so Automations stay fully local.
 - **Notifications** are a Windows notification from the tray plus a notice in the UI. Phone push waits for HTTPS on the LAN.
 
 ## Considered options

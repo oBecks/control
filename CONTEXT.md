@@ -63,7 +63,7 @@ A Found Device recognised as smart but of a brand or model the app can't control
 _Avoid_: Unknown device
 
 **Offline**:
-A remembered Device that didn't show up in the latest Scan of its brand. It keeps its name and settings and comes back when it's seen again, even at a different IP.
+A remembered Device that didn't show up in the latest Scan of its brand, or that an Automation is listening to and that stopped answering for a minute. It keeps its name and settings and comes back when it's seen again, even at a different IP.
 
 **New**:
 A flag on a Device the user hasn't looked at since a Scan first found it.
@@ -88,7 +88,23 @@ _Avoid_: Preset, routine, macro
 
 **Automation**:
 A user-made rule that the Engine runs on its own: when something happens (a time, sunrise, a Device changing state, the PC waking…), do something (control Devices or Groups, run a Scene). Runs only while the Engine is running. Made in the app or by describing it to the Assistant, never by writing code.
-_Avoid_: Routine, rule, script, trigger
+_Avoid_: Routine, rule, script
+
+**Trigger**:
+The "When" of an Automation: something that happens and starts a Run (a time, sunset, a Device turning on…). An Automation can have several; any one of them starts it.
+_Avoid_: Event, when-clause
+
+**Condition**:
+The "Only if" of an Automation: something that must be true when a Trigger fires for the Run to go ahead (a Device's state, a time window). It's checked, never waited for.
+_Avoid_: Filter, guard, constraint
+
+**Action**:
+One step in the "Then" of an Automation, done in order: control a Device or Group, wait, or notify.
+_Avoid_: Step, command, task
+
+**Run**:
+One time an Automation went: what triggered it, what each Action did, and how it ended (succeeded, partly failed, skipped by its Conditions, missed while the PC was off, or interrupted). A Trigger firing during a Run restarts it.
+_Avoid_: Execution, job, history entry
 
 **Person**:
 Someone who lives in the home, known to Control by the phone(s) the user marked as theirs. A Person is home while one of their phones is on the home network, which lets Automations react to someone arriving or the last person leaving. Not an account and not an Approved Browser.
