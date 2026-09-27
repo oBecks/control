@@ -8,7 +8,7 @@ when both exist."""
 
 import json
 import os
-import subprocess
+import shutil
 import sys
 from pathlib import Path
 
@@ -23,8 +23,14 @@ def command() -> list[str]:
     return [sys.executable, "-m", "control.desktop", "--mcp"]
 
 
-def claude_code_command() -> str:
-    return subprocess.list2cmdline(["claude", "mcp", "add", "--scope", "user", NAME, "--", *command()])
+def claude_code_command() -> str | None:
+    """The command that adds Control to Claude Code, or None without the `claude` CLI on PATH: Claude
+    Code inside the Claude app has none, and uses Claude Desktop's config instead. Paths are always
+    quoted, since Git Bash strips the backslashes of an unquoted one."""
+    if not shutil.which("claude"):
+        return None
+    cmd = command()
+    return " ".join(["claude", "mcp", "add", "--scope", "user", NAME, "--", f'"{cmd[0]}"', *cmd[1:]])
 
 
 def config_dirs() -> list[Path]:
@@ -67,20 +73,24 @@ def entry() -> dict:
     return {"command": cmd[0], "args": cmd[1:]}
 
 
-def status() -> str:
-    """"missing" (no Claude Desktop), "connected", "outdated" (points at another Control) or "off"."""
+def status() -> tuple[str, str | None]:
+    """The state and, when "broken", why. States: "missing" (no Claude Desktop), "broken" (a config
+    file Control won't touch, so Connect fails), "connected", "outdated" (points at another Control),
+    "partial" (only one of the regular and the Store install has the entry) or "off"."""
     dirs = config_dirs()
     if not dirs:
-        return "missing"
+        return "missing", None
     found = []
     for d in dirs:
         try:
             found.append(_servers(_read(d / CONFIG)).get(NAME))
-        except ValueError:
-            found.append(None)
+        except ValueError as e:
+            return "broken", str(e)
     if all(e == entry() for e in found):
-        return "connected"
-    return "outdated" if any(found) else "off"
+        return "connected", None
+    if any(e and e != entry() for e in found):
+        return "outdated", None
+    return ("partial" if any(found) else "off"), None
 
 
 def connect() -> None:

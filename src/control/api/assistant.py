@@ -52,20 +52,24 @@ async def note_mcp(request: Request, call_next):
 
 
 class AssistantOut(BaseModel):
-    claude_desktop: Literal["missing", "connected", "outdated", "off"] = Field(
-        description="missing: not installed; outdated: connected to another copy of Control")
-    claude_code_command: str
+    claude_desktop: Literal["missing", "broken", "connected", "outdated", "partial", "off"] = Field(
+        description="missing: not installed; broken: a config file Control won't touch; "
+                    "outdated: connected to another copy of Control; partial: only one of two installs")
+    claude_desktop_error: str | None = Field(None, description="Why it's broken")
+    claude_code_command: str | None = Field(
+        None, description="Adds Control to Claude Code; None without the claude CLI on PATH")
     can_change: bool  # only on the computer running the Engine
     restart_claude: str | None = Field(
         None, description="Control was updated and Claude still runs the old tools: this version")
 
 
 def _status(request: Request) -> AssistantOut:
-    status = claude.status()
+    status, error = claude.status()
     with closing(Registry()) as r:
         _note_version(r)
-        restart = __version__ if _restart_pending and status in ("connected", "outdated") else None
-    return AssistantOut(claude_desktop=status, claude_code_command=claude.claude_code_command(),
+        restart = __version__ if _restart_pending and status in ("connected", "outdated", "partial") else None
+    return AssistantOut(claude_desktop=status, claude_desktop_error=error,
+                        claude_code_command=claude.claude_code_command(),
                         can_change=request.state.local, restart_claude=restart)
 
 

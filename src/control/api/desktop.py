@@ -56,7 +56,7 @@ def _status(request: Request, r: Registry) -> DesktopOut:
         version=__version__, app=state.running,
         start_with_windows=autostart.is_on() if state.running else None,
         update=UpdateOut(version=u.version, url=u.url) if u else None,
-        claude_connected=bool(u) and claude.status() in ("connected", "outdated"),
+        claude_connected=bool(u) and claude.status()[0] in ("connected", "outdated", "partial"),
         close_note=local and r.setting(CLOSE_NOTE, False), can_change=local,
     )
 

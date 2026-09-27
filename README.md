@@ -57,7 +57,7 @@ Turn on **Settings → Phone access**, scan the QR code, and approve the code yo
 
 In **Settings → Assistant**, click **Connect Claude**, then restart Claude Desktop. Now try "dim the living room lights" or "put yes+ on the Shield". Claude asks before it changes anything.
 
-For Claude Code, or any other MCP client, run the local server `Control.exe --mcp`. Settings shows the exact command. Restart Claude after you update Control, or it keeps the old tools.
+Claude Code inside the Claude app uses the same connection. For the `claude` CLI, Settings shows the command to run once (only when the CLI is installed). Any other MCP client can run the local server `Control.exe --mcp`. Restart Claude after you update Control, or it keeps the old tools.
 
 | Tool | What it does |
 |---|---|
