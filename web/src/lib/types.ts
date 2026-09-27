@@ -148,9 +148,18 @@ export interface PickableKey {
 	types: boolean;
 }
 
+/** A Big Control's kind: a light's brightness bar or colour wheel, or an AC's temperature, mode and power. */
+export type BigControl = 'brightness' | 'colour' | 'climate';
+
 /** A Dashboard item before it has a cell (ADR 0010): w is its width in columns, h its height in rows. */
 export type NewDashboardItem =
 	| { id: string; kind: 'tile'; w: number; h: number; target: string }
+	| { id: string; kind: 'big_control'; w: number; h: number; target: string; control: BigControl }
+	/** A Remote Pad: the Device's buttons laid out like its remote. */
+	| { id: string; kind: 'pad'; w: number; h: number; target: string }
+	/** A Single Button: presses one remote button, or opens one Streamer app (by package). */
+	| { id: string; kind: 'button'; w: number; h: number; target: string; button?: string; app?: string }
+	| { id: string; kind: 'clock'; w: number; h: number }
 	| {
 			id: string;
 			kind: 'heading';

@@ -2,15 +2,33 @@
 // Dropping or growing an item where others are pushes them down just enough, and what's under them moves along.
 import type { Device, Group } from '../api';
 import { SECTIONS } from '../present';
-import type { DashboardItem, DashboardItemKind, NewDashboardItem } from '../types';
+import type { BigControl, DashboardItem, DashboardItemKind, NewDashboardItem } from '../types';
 
 export type Columns = 4 | 6 | 8;
 
-/** How many rows high each kind may be: a Tile needs room for its icon and name. Mirrors engine/dashboards.py. */
-export const ROWS: Record<DashboardItemKind, { min: number; max: number }> = {
-	tile: { min: 2, max: 12 },
-	heading: { min: 1, max: 6 }
+type Limits = { minW: number; minH: number; maxH: number };
+
+/** How small and tall each kind may be: a Tile needs room for its icon and name. Mirrors engine/dashboards.py. */
+const KINDS: Record<DashboardItemKind, Limits> = {
+	tile: { minW: 1, minH: 2, maxH: 12 },
+	heading: { minW: 1, minH: 1, maxH: 6 },
+	big_control: { minW: 2, minH: 1, maxH: 12 },
+	pad: { minW: 2, minH: 4, maxH: 24 },
+	button: { minW: 1, minH: 1, maxH: 6 },
+	clock: { minW: 1, minH: 1, maxH: 6 }
 };
+
+/** A Big Control's own limits: a colour wheel needs room for the wheel and the white strip. */
+const CONTROLS: Record<BigControl, Limits> = {
+	brightness: { minW: 2, minH: 1, maxH: 12 },
+	colour: { minW: 2, minH: 4, maxH: 12 },
+	climate: { minW: 2, minH: 3, maxH: 12 }
+};
+
+/** The fewest columns, and the fewest and most rows, this item may have. */
+export function limits(item: NewDashboardItem): Limits {
+	return item.kind === 'big_control' ? CONTROLS[item.control] : KINDS[item.kind];
+}
 
 /** How a Tile of this size looks: one column is small, four rows or more is large. */
 export function tileLook(item: { w: number; h: number }): 'small' | 'normal' | 'large' {
@@ -58,9 +76,9 @@ function pushDown(items: DashboardItem[], moved: DashboardItem, columns: number)
 }
 
 function clampX(item: DashboardItem, columns: number) {
-	const rows = ROWS[item.kind];
-	item.w = Math.max(1, Math.min(item.w, columns));
-	item.h = Math.max(rows.min, Math.min(item.h, rows.max));
+	const { minW, minH, maxH } = limits(item);
+	item.w = Math.max(minW, Math.min(item.w, columns));
+	item.h = Math.max(minH, Math.min(item.h, maxH));
 	item.x = Math.max(0, Math.min(item.x, columns - item.w));
 	item.y = Math.max(0, item.y);
 }
@@ -154,6 +172,47 @@ export function tileItem(target: string, w = 2, h = 2): NewDashboardItem {
 
 export function headingItem(text: string, w: number): NewDashboardItem {
 	return { id: newId(), kind: 'heading', w, h: 1, text, align: 'start', text_size: 'm', bold: true };
+}
+
+/** A Big Control at its usual size: a brightness bar as wide as a phone, a wheel or an AC like a large Tile. */
+export function controlItem(target: string, control: BigControl): NewDashboardItem {
+	const [w, h] = control === 'brightness' ? [4, 2] : [2, 4];
+	return { id: newId(), kind: 'big_control', w, h, target, control };
+}
+
+/** A Remote Pad, compact (the essentials) or full (every button). */
+export function padItem(target: string, size: 'compact' | 'full'): NewDashboardItem {
+	const [w, h] = size === 'compact' ? [2, 8] : [4, 12];
+	return { id: newId(), kind: 'pad', w, h, target };
+}
+
+/** A Single Button: one remote button, or one Streamer App Shortcut. */
+export function buttonItem(target: string, press: { button: string } | { app: string }, w = 1): NewDashboardItem {
+	return { id: newId(), kind: 'button', w, h: 2, target, ...press };
+}
+
+export function clockItem(w = 2): NewDashboardItem {
+	return { id: newId(), kind: 'clock', w, h: 2 };
+}
+
+/** What an item shows, to tell whether the same thing is on a Dashboard already: "tile:<uid>", "big_control:<uid>:colour"… */
+export function itemKey(item: NewDashboardItem): string {
+	switch (item.kind) {
+		case 'tile':
+		case 'pad':
+			return `${item.kind}:${item.target}`;
+		case 'big_control':
+			return `big_control:${item.target}:${item.control}`;
+		case 'button':
+			return `button:${item.target}:${item.button ?? `app:${item.app}`}`;
+		default:
+			return item.kind;
+	}
+}
+
+/** How a Remote Pad of this size looks: full from 10 rows, when there's room for every button. */
+export function padLook(item: { h: number }): 'compact' | 'full' {
+	return item.h >= 10 ? 'full' : 'compact';
 }
 
 /** "A copy of Home": Home's Groups and Category sections, each under its heading. */

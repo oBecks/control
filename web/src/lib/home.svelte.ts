@@ -192,6 +192,21 @@ class Home {
 		for (const g of this.groups) if (g.members.includes(uid)) this.#readGroup(g);
 	}
 
+	/** A Device's or Group's reading, by uid (Dashboard items point at either). */
+	stateOf(uid: string): DeviceState | GroupState | undefined {
+		return this.groupStates[uid] ?? this.states[uid];
+	}
+
+	/** Change a Device or every member of a Group, by uid. */
+	changeTarget(uid: string, change: StateChange) {
+		return this.groups.some((g) => g.uid === uid) ? this.changeGroup(uid, change) : this.change(uid, change);
+	}
+
+	/** A Device's or Group's name, by uid. */
+	nameOf(uid: string): string | undefined {
+		return this.groups.find((g) => g.uid === uid)?.name ?? this.devices.find((d) => d.uid === uid)?.name;
+	}
+
 	/** A Group's Tile tap: everything off if any member is on, otherwise everything on. */
 	toggleGroup(uid: string) {
 		const s = this.groupStates[uid];

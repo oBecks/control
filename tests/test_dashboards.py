@@ -107,6 +107,41 @@ def test_a_heading_keeps_trimmed_text_its_style_and_no_target():
         check([{"kind": "heading", "x": 0, "y": 0, "text_size": "huge"}])
 
 
+def test_big_controls_remote_pads_buttons_and_clocks():
+    items = check([
+        {"kind": "big_control", "control": "brightness", "target": "a", "x": 0, "y": 0, "w": 4, "h": 1},
+        {"kind": "big_control", "control": "colour", "target": "b", "x": 4, "y": 0},  # 2×4 by default
+        {"kind": "pad", "target": "b", "x": 0, "y": 4},
+        {"kind": "button", "target": "b", "button": "input:hdmi1", "x": 2, "y": 4},
+        {"kind": "button", "target": "b", "app": "com.netflix.ninja", "x": 3, "y": 4, "w": 1, "h": 1},
+        {"kind": "clock", "x": 6, "y": 4, "target": "a"},
+    ])
+    assert [i["kind"] for i in items] == ["big_control", "big_control", "pad", "button", "button", "clock"]
+    assert items[0]["control"] == "brightness" and items[1]["control"] == "colour"
+    assert (items[1]["w"], items[1]["h"]) == (2, 4)
+    assert (items[2]["w"], items[2]["h"]) == (2, 8)
+    assert items[3]["button"] == "input:hdmi1" and "app" not in items[3]
+    assert items[4]["app"] == "com.netflix.ninja" and "button" not in items[4]
+    assert "target" not in items[5]
+
+
+@pytest.mark.parametrize("item, problem", [
+    ({"kind": "big_control", "control": "volume", "target": "a"}, "big control"),
+    ({"kind": "big_control", "target": "a"}, "big control"),
+    ({"kind": "big_control", "control": "colour", "target": "a", "w": 2, "h": 3}, "rows"),  # a wheel needs 4
+    ({"kind": "big_control", "control": "climate", "target": "a", "w": 1, "h": 4}, "columns"),
+    ({"kind": "big_control", "control": "brightness", "target": "a", "w": 1, "h": 1}, "columns"),
+    ({"kind": "pad", "target": "a", "w": 1}, "columns"),
+    ({"kind": "pad", "target": "a", "h": 3}, "rows"),
+    ({"kind": "button", "target": "a"}, "one remote button"),
+    ({"kind": "button", "target": "a", "button": "power", "app": "x"}, "one remote button"),
+    ({"kind": "pad", "target": "gone"}, "no device"),
+])
+def test_items_that_make_no_sense_are_refused(item, problem):
+    with pytest.raises((ValueError, LookupError), match=problem):
+        check([{"x": 0, "y": 0, **item}])
+
+
 def test_dashboards_from_before_free_placement_are_laid_out_as_they_looked():
     flow = [
         {"id": "h", "kind": "heading", "size": "full", "text": "Lights"},
@@ -167,6 +202,20 @@ def test_make_arrange_rename_and_delete_a_dashboard(pc):
     assert pc.delete(f"/api/dashboards/{d['uid']}").status_code == 204
     assert pc.get("/api/dashboards").json() == []
     assert pc.get(f"/api/dashboards/{d['uid']}").status_code == 404
+
+
+def test_every_item_kind_comes_back_as_sent(pc):
+    ac = "yeelight:2"  # the Engine leaves which items suit a Device to the UI
+    sent = [
+        {"kind": "big_control", "control": "brightness", "target": pc.group, "x": 0, "y": 0, "w": 4, "h": 1},
+        {"kind": "big_control", "control": "climate", "target": ac, "x": 0, "y": 1, "w": 2, "h": 4},
+        {"kind": "pad", "target": ac, "x": 2, "y": 1, "w": 2, "h": 8},
+        {"kind": "button", "target": ac, "button": "power", "x": 0, "y": 5, "w": 1, "h": 2},
+        {"kind": "button", "target": ac, "app": "com.netflix.ninja", "x": 1, "y": 5, "w": 1, "h": 2},
+        {"kind": "clock", "x": 0, "y": 9, "w": 4, "h": 2},
+    ]
+    d = pc.post("/api/dashboards", json={"name": "All", "columns": 4, "items": sent}).json()
+    assert [{k: v for k, v in i.items() if k != "id" and v is not None} for i in d["items"]] == sent
 
 
 def test_names_are_needed_and_unique(pc):

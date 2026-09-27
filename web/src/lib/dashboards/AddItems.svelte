@@ -1,15 +1,22 @@
 <script lang="ts">
-	// "Add item": a Heading at once, or ticked Groups and Devices as Tiles. The Dashboard places them.
-	import { Check, Heading, Search, X } from '@lucide/svelte';
+	// "Add item": a Heading or Clock at once, or ticked Tiles, Big Controls, Remote Pads or Single Buttons.
+	// The Dashboard places them.
+	import { ArrowLeft, Check, Clock, Heading, Search, X } from '@lucide/svelte';
+	import AirVent from '@lucide/svelte/icons/air-vent';
+	import Gamepad2 from '@lucide/svelte/icons/gamepad-2';
+	import Palette from '@lucide/svelte/icons/palette';
+	import SunDim from '@lucide/svelte/icons/sun-dim';
+	import type { Component } from 'svelte';
 	import { home } from '$lib/home.svelte';
 	import { groupIcon, iconFor, SECTIONS } from '$lib/present';
-	import type { NewDashboardItem } from '$lib/types';
+	import type { BigControl, NewDashboardItem } from '$lib/types';
 	import Button from '$lib/ui/Button.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
-	import { headingItem, tileItem } from './layout';
+	import { buttonIcon } from './items/buttons';
+	import { buttonItem, clockItem, controlItem, headingItem, padItem, tileItem } from './layout';
 
 	interface Props {
-		/** Devices and Groups already on the Dashboard: they can be added again, but say so. */
+		/** What's on the Dashboard already (see itemKey): it can be added again, but says so. */
 		placed: Set<string>;
 		/** The Dashboard's width: a new Heading spans it. */
 		columns: number;
@@ -19,37 +26,179 @@
 
 	let { placed, columns, onadd, onclose }: Props = $props();
 
+	/** One thing to tick. `key` is its itemKey, whatever size it's added at. */
+	type Row = { key: string; name: string; icon: Component; make: () => NewDashboardItem };
+	type Kind = 'tiles' | 'controls' | 'remotes' | 'buttons';
+
+	const KINDS: { value: Kind; label: string }[] = [
+		{ value: 'tiles', label: 'Tiles' },
+		{ value: 'controls', label: 'Big controls' },
+		{ value: 'remotes', label: 'Remote pads' },
+		{ value: 'buttons', label: 'Buttons' }
+	];
+	const SIZES: Record<Kind, { value: string; label: string }[]> = {
+		tiles: [
+			{ value: 'small', label: 'Small' },
+			{ value: 'wide', label: 'Wide' },
+			{ value: 'large', label: 'Large' }
+		],
+		controls: [],
+		remotes: [
+			{ value: 'compact', label: 'Compact' },
+			{ value: 'full', label: 'Full' }
+		],
+		buttons: [
+			{ value: 'small', label: 'Small' },
+			{ value: 'wide', label: 'Wide' }
+		]
+	};
+	const TILE_CELLS: Record<string, [number, number]> = { small: [1, 2], wide: [2, 2], large: [2, 4] };
+	const CONTROLS: { control: BigControl; title: string; icon: Component }[] = [
+		{ control: 'brightness', title: 'Brightness', icon: SunDim },
+		{ control: 'colour', title: 'Colour', icon: Palette },
+		{ control: 'climate', title: 'AC', icon: AirVent }
+	];
+	const NOUNS: Record<Kind, [string, string]> = {
+		tiles: ['tile', 'tiles'],
+		controls: ['big control', 'big controls'],
+		remotes: ['remote pad', 'remote pads'],
+		buttons: ['button', 'buttons']
+	};
+	const EMPTY: Record<Kind, string> = {
+		tiles: 'No devices yet: add some first.',
+		controls: 'No lights or ACs yet.',
+		remotes: 'No TVs, fans or streamers with buttons yet.',
+		buttons: 'No TVs, fans or streamers with buttons yet.'
+	};
+
+	let kind = $state<Kind>('tiles');
 	let query = $state('');
 	let picked = $state<string[]>([]);
-	/** New Tiles' look; each one's width and height can be changed afterwards. */
-	let size = $state<'small' | 'wide' | 'large'>('wide');
-	const CELLS = { small: [1, 2], wide: [2, 2], large: [2, 4] } as const;
+	/** Each kind's size for new items; each one's width and height can be changed afterwards. */
+	let sizes = $state<Record<Kind, string>>({ tiles: 'wide', controls: '', remotes: 'compact', buttons: 'small' });
+	/** Buttons: the Device whose buttons are listed. */
+	let buttonsOf = $state<string | null>(null);
 
 	const matches = (name: string) => name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
 
-	const sections = $derived(
-		[
-			{
-				title: 'Groups',
-				rows: home.groups.map((g) => ({ uid: g.uid, name: g.name, icon: groupIcon(g, home.groupStates[g.uid]) }))
-			},
-			...SECTIONS.map((s) => ({
-				title: s.title,
-				rows: home.controllable
-					.filter((d) => d.category === s.category)
-					.map((d) => ({ uid: d.uid, name: d.name, icon: iconFor(d) }))
-			}))
-		]
-			.map((s) => ({ ...s, rows: s.rows.filter((r) => matches(r.name)) }))
-			.filter((s) => s.rows.length)
+	const groupRows = $derived(
+		home.groups.map((g) => ({ uid: g.uid, name: g.name, icon: groupIcon(g, home.groupStates[g.uid]) }))
+	);
+	const deviceRows = $derived(
+		home.controllable.map((d) => ({
+			uid: d.uid,
+			name: d.name,
+			category: d.category,
+			icon: iconFor(d, home.states[d.uid])
+		}))
+	);
+	/** TVs, fans and Streamers with at least one button. */
+	const remotes = $derived(
+		deviceRows.filter((d) => {
+			const r = home.states[d.uid];
+			return (r?.control === 'remote' || r?.control === 'streamer') && r.features.buttons.length > 0;
+		})
 	);
 
-	function toggle(uid: string) {
-		picked = picked.includes(uid) ? picked.filter((u) => u !== uid) : [...picked, uid];
+	function suits(uid: string, control: BigControl): boolean {
+		const r = home.stateOf(uid);
+		if (control === 'climate') return r?.control === 'climate';
+		return r?.control === 'light' && (control === 'brightness' || r.features.color);
+	}
+
+	const sections = $derived.by((): { title: string; rows: Row[] }[] => {
+		if (kind === 'tiles') {
+			const [w, h] = TILE_CELLS[sizes.tiles];
+			const tile = (t: { uid: string; name: string; icon: Component }): Row => ({
+				key: `tile:${t.uid}`,
+				name: t.name,
+				icon: t.icon,
+				make: () => tileItem(t.uid, w, h)
+			});
+			return [
+				{ title: 'Groups', rows: groupRows.map(tile) },
+				...SECTIONS.map((s) => ({
+					title: s.title,
+					rows: deviceRows.filter((d) => d.category === s.category).map(tile)
+				}))
+			];
+		}
+		if (kind === 'controls') {
+			return CONTROLS.map((c) => ({
+				title: c.title,
+				rows: [...groupRows, ...deviceRows]
+					.filter((t) => suits(t.uid, c.control))
+					.map((t) => ({
+						key: `big_control:${t.uid}:${c.control}`,
+						name: t.name,
+						icon: c.icon,
+						make: () => controlItem(t.uid, c.control)
+					}))
+			}));
+		}
+		if (kind === 'remotes') {
+			const size = sizes.remotes === 'full' ? 'full' : 'compact';
+			return [
+				{
+					title: 'TVs, fans and streamers',
+					rows: remotes.map((d) => ({
+						key: `pad:${d.uid}`,
+						name: d.name,
+						icon: d.icon,
+						make: () => padItem(d.uid, size)
+					}))
+				}
+			];
+		}
+		const w = sizes.buttons === 'wide' ? 2 : 1;
+		const device = remotes.find((d) => d.uid === buttonsOf);
+		const r = device && home.states[device.uid];
+		if (!device || !(r?.control === 'remote' || r?.control === 'streamer')) return [];
+		return [
+			{
+				title: 'Buttons',
+				rows: r.features.buttons.map((b) => ({
+					key: `button:${device.uid}:${b.name}`,
+					name: b.label,
+					icon: buttonIcon(b.name) ?? Gamepad2,
+					make: () => buttonItem(device.uid, { button: b.name }, w)
+				}))
+			},
+			{
+				title: 'Apps',
+				rows: (r.control === 'streamer' ? r.features.apps : []).map((a) => ({
+					key: `button:${device.uid}:app:${a.app}`,
+					name: a.name,
+					icon: device.icon,
+					make: () => buttonItem(device.uid, { app: a.app }, w)
+				}))
+			}
+		];
+	});
+
+	const shown = $derived(
+		sections.map((s) => ({ ...s, rows: s.rows.filter((r) => matches(r.name)) })).filter((s) => s.rows.length)
+	);
+	const rows = $derived(new Map(sections.flatMap((s) => s.rows.map((r) => [r.key, r] as const))));
+	const noun = $derived(NOUNS[kind][picked.length === 1 ? 0 : 1]);
+
+	function toggle(key: string) {
+		picked = picked.includes(key) ? picked.filter((k) => k !== key) : [...picked, key];
+	}
+
+	function switchKind(next: Kind) {
+		kind = next;
+		picked = [];
+		buttonsOf = null;
 	}
 
 	function add() {
-		onadd(picked.map((uid) => tileItem(uid, ...CELLS[size])));
+		onadd(picked.flatMap((key) => rows.get(key)?.make() ?? []));
+		onclose();
+	}
+
+	function addNow(item: NewDashboardItem) {
+		onadd([item]);
 		onclose();
 	}
 </script>
@@ -61,61 +210,88 @@
 	</div>
 
 	<div class="quick">
-		<button
-			type="button"
-			onclick={() => {
-				onadd([headingItem('Heading', columns)]);
-				onclose();
-			}}
-		>
+		<button type="button" onclick={() => addNow(headingItem('Heading', columns))}>
 			<Heading size={18} strokeWidth={2.2} />
 			<span><b>Heading</b><small>A title, as wide as you like, over anything</small></span>
 		</button>
+		<button type="button" onclick={() => addNow(clockItem())}>
+			<Clock size={18} strokeWidth={2.2} />
+			<span><b>Clock</b><small>The time; make it wider for the date</small></span>
+		</button>
 	</div>
 
-	<label class="search">
-		<Search size={16} strokeWidth={2.2} />
-		<input bind:value={query} placeholder="Search devices and groups" aria-label="Search devices and groups" />
-	</label>
+	<Segmented label="Add" options={KINDS} value={kind} onchange={switchKind} />
 
-	{#each sections as s (s.title)}
-		<section>
-			<h3>{s.title}</h3>
+	{#if kind === 'buttons' && !buttonsOf}
+		<p class="lead">Pick a remote or streamer, then the buttons to put on the dashboard on their own.</p>
+		{#if remotes.length}
 			<ul>
-				{#each s.rows as r (r.uid)}
-					{@const checked = picked.includes(r.uid)}
+				{#each remotes as d (d.uid)}
 					<li>
-						<label class="pick" class:checked>
-							<input type="checkbox" {checked} onchange={() => toggle(r.uid)} />
-							<span class="badge" aria-hidden="true"><r.icon size={16} strokeWidth={2.2} /></span>
-							<span class="text">
-								<span class="name">{r.name}</span>
-								{#if placed.has(r.uid)}<span class="why">Already on this dashboard</span>{/if}
-							</span>
-							<span class="box" aria-hidden="true"
-								>{#if checked}<Check size={14} strokeWidth={3} />{/if}</span
-							>
-						</label>
+						<button type="button" class="pick" onclick={() => (buttonsOf = d.uid)}>
+							<span class="badge" aria-hidden="true"><d.icon size={16} strokeWidth={2.2} /></span>
+							<span class="text"><span class="name">{d.name}</span></span>
+						</button>
 					</li>
 				{/each}
 			</ul>
-		</section>
+		{:else}
+			<p class="hint">{EMPTY.buttons}</p>
+		{/if}
 	{:else}
-		<p class="hint">{query ? 'Nothing matches.' : 'No devices yet: add some first.'}</p>
-	{/each}
+		{#if kind === 'buttons'}
+			<button
+				type="button"
+				class="back"
+				onclick={() => {
+					buttonsOf = null;
+					picked = [];
+				}}
+			>
+				<ArrowLeft size={16} strokeWidth={2.4} />
+				{home.nameOf(buttonsOf ?? '')}
+			</button>
+		{/if}
+
+		<label class="search">
+			<Search size={16} strokeWidth={2.2} />
+			<input bind:value={query} placeholder="Search" aria-label="Search" />
+		</label>
+
+		{#each shown as s (s.title)}
+			<section>
+				<h3>{s.title}</h3>
+				<ul>
+					{#each s.rows as r (r.key)}
+						{@const checked = picked.includes(r.key)}
+						<li>
+							<label class="pick" class:checked>
+								<input type="checkbox" {checked} onchange={() => toggle(r.key)} />
+								<span class="badge" aria-hidden="true"><r.icon size={16} strokeWidth={2.2} /></span>
+								<span class="text">
+									<span class="name">{r.name}</span>
+									{#if placed.has(r.key)}<span class="why">Already on this dashboard</span>{/if}
+								</span>
+								<span class="box" aria-hidden="true"
+									>{#if checked}<Check size={14} strokeWidth={3} />{/if}</span
+								>
+							</label>
+						</li>
+					{/each}
+				</ul>
+			</section>
+		{:else}
+			<p class="hint">{query ? 'Nothing matches.' : EMPTY[kind]}</p>
+		{/each}
+	{/if}
 
 	<div class="actions">
-		<Segmented
-			label="Tile size"
-			options={[
-				{ value: 'small', label: 'Small' },
-				{ value: 'wide', label: 'Wide' },
-				{ value: 'large', label: 'Large' }
-			]}
-			bind:value={size}
-		/>
+		{#if SIZES[kind].length}
+			<Segmented label="Size" options={SIZES[kind]} bind:value={sizes[kind]} />
+		{/if}
 		<Button variant="primary" disabled={!picked.length} onclick={add}>
-			Add {picked.length || ''} tile{picked.length === 1 ? '' : 's'}
+			Add {picked.length || ''}
+			{noun}
 		</Button>
 	</div>
 </div>
@@ -156,6 +332,7 @@
 	}
 	.quick {
 		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
 		gap: var(--s-2);
 	}
 	.quick button {
@@ -186,6 +363,26 @@
 	.quick small {
 		color: var(--text-2);
 		font-size: var(--fs-xs);
+	}
+	.lead {
+		margin: 0;
+		color: var(--text-2);
+		font-size: var(--fs-sm);
+	}
+	.back {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--s-2);
+		align-self: flex-start;
+		padding: var(--s-1) var(--s-3) var(--s-1) var(--s-2);
+		border: 0;
+		border-radius: var(--r-pill);
+		background: var(--surface-2);
+		color: var(--text);
+		font-weight: var(--fw-medium);
+	}
+	:global([dir='rtl']) .back :global(svg) {
+		transform: scaleX(-1);
 	}
 	.search {
 		display: flex;
@@ -227,6 +424,13 @@
 		border-radius: var(--r-md);
 		cursor: pointer;
 		transition: background-color var(--dur-fast) var(--ease);
+	}
+	button.pick {
+		inline-size: 100%;
+		border: 0;
+		background: transparent;
+		color: var(--text);
+		text-align: start;
 	}
 	.pick:hover {
 		background: var(--surface-2);

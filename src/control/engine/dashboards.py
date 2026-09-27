@@ -8,12 +8,26 @@ import secrets
 
 COLUMNS = (4, 6, 8)  # a phone's, a tablet's, a desktop's
 
-# Each item kind: the smallest and largest height in rows, its default (w, h), and whether it points
-# at a Device or Group. A default width of 0 means the whole grid.
+# Each item kind: the smallest and largest height in rows, the fewest columns, its default (w, h), and
+# whether it points at a Device or Group. A default width of 0 means the whole grid.
 KINDS: dict[str, dict] = {
-    "tile": {"rows": (2, 12), "default": (2, 2), "targeted": True},
-    "heading": {"rows": (1, 6), "default": (0, 1), "targeted": False},
+    "tile": {"rows": (2, 12), "cols": 1, "default": (2, 2), "targeted": True},
+    "heading": {"rows": (1, 6), "cols": 1, "default": (0, 1), "targeted": False},
+    # A Big Control: one of a light's, AC's or their Group's controls, right on the Dashboard.
+    "big_control": {"rows": (1, 12), "cols": 1, "default": (4, 2), "targeted": True},
+    # A Remote Pad: a TV's, fan's or Streamer's buttons laid out like its remote.
+    "pad": {"rows": (4, 24), "cols": 2, "default": (2, 8), "targeted": True},
+    # A Single Button: one remote button, or one Streamer App Shortcut.
+    "button": {"rows": (1, 6), "cols": 1, "default": (1, 2), "targeted": True},
+    "clock": {"rows": (1, 6), "cols": 1, "default": (2, 2), "targeted": False},
 }
+# A Big Control's kinds, each with its own sizes in place of the "big_control" kind's.
+CONTROLS: dict[str, dict] = {
+    "brightness": {"rows": (1, 12), "cols": 2, "default": (4, 2)},
+    "colour": {"rows": (4, 12), "cols": 2, "default": (2, 4)},  # a wheel and a white strip
+    "climate": {"rows": (3, 12), "cols": 2, "default": (2, 4)},  # temperature, mode and power
+}
+MAX_NAME = 80
 ALIGNS = ("start", "center", "end")
 TEXT_SIZES = ("s", "m", "l", "xl")
 MAX_ITEMS = 200
@@ -52,12 +66,19 @@ def check_items(items: list[dict], targets: set[str], columns: int) -> list[dict
             raise ValueError(f"two dashboard items share the id '{item_id}'")
         ids.add(item_id)
 
+        if kind == "big_control":
+            control = item.get("control")
+            if control not in CONTROLS:
+                raise ValueError(f"a big control is {', '.join(CONTROLS)}, not {control!r}")
+            spec = spec | CONTROLS[control]
+
         x, y = _whole(item.get("x"), "column"), _whole(item.get("y"), "row")
         w = _whole(item.get("w", spec["default"][0] or columns), "width")
         h = _whole(item.get("h", spec["default"][1]), "height")
         lo, hi = spec["rows"]
-        if not 1 <= w <= columns:
-            raise ValueError(f"a {kind} is 1 to {columns} columns wide, not {w}")
+        narrowest = spec["cols"]
+        if not narrowest <= w <= columns:
+            raise ValueError(f"a {kind} is {narrowest} to {columns} columns wide, not {w}")
         if not lo <= h <= hi:
             raise ValueError(f"a {kind} is {lo} to {hi} rows high, not {h}")
         if x < 0 or y < 0 or y + h > MAX_ROWS:
@@ -75,6 +96,14 @@ def check_items(items: list[dict], targets: set[str], columns: int) -> list[dict
             if target not in targets:
                 raise LookupError(f"no device or group '{target}'")
             kept["target"] = target
+        if kind == "big_control":
+            kept["control"] = item["control"]
+        if kind == "button":
+            given = [(k, item[k]) for k in ("button", "app") if isinstance(item.get(k), str) and item[k]]
+            if len(given) != 1:
+                raise ValueError("a button presses one remote button or opens one app")
+            key, name = given[0]
+            kept[key] = name[:MAX_NAME]
         if kind == "heading":
             kept["text"] = str(item.get("text") or "").strip()[:MAX_TEXT]
             kept["align"] = item.get("align") or "start"

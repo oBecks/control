@@ -54,9 +54,9 @@
 	}
 
 	function count(d: Dashboard) {
-		const n = d.items.filter((i) => i.kind === 'tile').length;
+		const n = d.items.filter((i) => i.kind !== 'heading').length;
 		const made = COLUMNS.find((c) => c.value === d.columns)?.label ?? '';
-		return `${made} · ${n ? `${n} tile${n === 1 ? '' : 's'}` : 'empty'}`;
+		return `${made} · ${n ? `${n} item${n === 1 ? '' : 's'}` : 'empty'}`;
 	}
 </script>
 

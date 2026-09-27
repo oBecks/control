@@ -26,6 +26,7 @@ Everything stays on your home network.
 - Control a TV or fan that has no Wi-Fi, through an infrared hub.
 - Open Netflix or yes+ on your TV box with one tap.
 - Group devices ("Living room lights") and switch them together.
+- Arrange your own Dashboards: Tiles, a brightness bar, a colour wheel, the AC, a TV remote, single buttons like "Netflix" and a clock, placed where you want them. Turn an old phone into a remote.
 - Set Hotkeys: keys on your PC that toggle a light, dim it while held, or press Volume + on the TV, from any app. Keys can also do something else when pressed twice or held, or start a sequence (Ctrl+Alt+L, then 1).
 - Use it from your phone, or just ask Claude.
 
@@ -78,7 +79,7 @@ It only works in Claude on the same PC. Claude on the web or your phone can't re
 
 ## Coming next
 
-Dashboards, then Automations and Scenes. Later, Samsung TVs, Rooms and more brands. See the [roadmap](docs/roadmap.md).
+Automations, then Scenes. Later, Samsung TVs, Rooms and more brands. See the [roadmap](docs/roadmap.md).
 
 <details>
 <summary>Run from source</summary>
