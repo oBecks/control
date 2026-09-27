@@ -577,12 +577,11 @@
 		min-inline-size: 0;
 	}
 
-	/* A phone on its side: the Dashboard gets the screen. A short header, and cells no wider than
-	   on a big phone held upright, so a phone Dashboard keeps its look, centered. */
+	/* A phone on its side: the Dashboard gets the screen, with a short header, centered. */
 	@media (orientation: landscape) and (max-height: 500px) and (max-width: 959px) {
 		main {
 			gap: var(--s-3);
-			max-inline-size: calc(var(--cols) * 120px + (var(--cols) - 1) * var(--s-3));
+			max-inline-size: calc(var(--cols) * 180px + (var(--cols) - 1) * var(--s-3));
 			margin-inline: auto;
 		}
 		header {
