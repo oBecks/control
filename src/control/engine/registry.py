@@ -353,6 +353,11 @@ class Registry:
         with self._db:
             self._db.execute("UPDATE devices SET online = 1 WHERE uid = ?", (uid,))
 
+    def mark_offline(self, uid: str) -> None:
+        """A listened-to device stopped answering for a minute (ADR 0011)."""
+        with self._db:
+            self._db.execute("UPDATE devices SET online = 0 WHERE uid = ?", (uid,))
+
     def forget(self, uid: str) -> None:
         with self._db:
             self._db.execute("DELETE FROM devices WHERE uid = ?", (uid,))
@@ -724,6 +729,11 @@ class Registry:
                     self._db.execute("UPDATE automations SET armed = ? WHERE uid = ?", (time.time(), uid))
         except sqlite3.IntegrityError:
             raise ValueError(f"an Automation named '{name}' already exists") from None
+
+    def switch_off(self, uid: str, attention: str) -> None:
+        """Switch an Automation off by itself, saying why (e.g. it was caught in a loop)."""
+        with self._db:
+            self._db.execute("UPDATE automations SET enabled = 0, attention = ? WHERE uid = ?", (attention, uid))
 
     def forget_automation(self, uid: str) -> None:
         with self._db:

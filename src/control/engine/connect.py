@@ -1,11 +1,12 @@
 """Turn a remembered device into a live, controllable object."""
 
-from typing import Callable, TypeVar
+from contextlib import closing
+from typing import Callable, Protocol, TypeVar
 
-from .adapters.androidtv_streamer import AndroidTVStreamer
+from .adapters.androidtv_streamer import AndroidTVStreamer, AndroidTVWatch
 from .adapters.broadlink_transmitter import BroadlinkTransmitter
-from .adapters.tuya_plug import TuyaPlug
-from .adapters.yeelight_light import YeelightLight
+from .adapters.tuya_plug import TuyaPlug, TuyaWatch
+from .adapters.yeelight_light import YeelightLight, YeelightWatch
 from .climate import ClimateState, RemoteClimate
 from .errors import DeviceUnreachable
 from .found_device import Category, Readiness
@@ -117,3 +118,34 @@ def connect_climate(registry: Registry, ref: str) -> tuple[RemoteDevice, RemoteC
     _, transmitter = connect_transmitter(registry, remote.transmitter_uid)
     assumed = ClimateState(**remote.assumed_state) if remote.assumed_state else None
     return remote, RemoteClimate(remote.signals, transmitter, assumed)
+
+
+# --- Listening (ADR 0011) -----------------------------------------------------------------
+
+
+class Watch(Protocol):
+    def close(self) -> None: ...
+
+
+def watch(registry: Registry, device: KnownDevice, report: Callable[[str, dict | None], None]) -> Watch | None:
+    """Start listening to a network Device: `report(uid, state)` with {"on"} (and a Streamer's "app")
+    on each answer or pushed change, `report(uid, None)` while it can't be reached. None when the
+    Device can't be listened to."""
+    uid = device.uid
+    kind = control_kind(registry, device)
+    if kind == "light" and device.brand == "Yeelight":
+        return YeelightWatch(uid, lambda: _ip(registry.path, uid), report)
+    if kind == "plug":
+        link = registry.get_link(uid)
+        return TuyaWatch(uid, link["secret"]["local_key"], device.raw.get("version", "3.3"),
+                         lambda: _ip(registry.path, uid), report)
+    if kind == "streamer":
+        return AndroidTVWatch(uid, lambda: _ip(registry.path, uid), report)
+    return None
+
+
+def _ip(path, uid: str) -> str | None:
+    """A Device's IP now (a Scan may have moved it), from its own connection to the Registry."""
+    with closing(Registry(path)) as r:
+        device = r.get(uid)
+        return device.ip if device else None

@@ -1,6 +1,10 @@
 <script lang="ts">
-	// Automations' notifications (ADR 0012), at the top of every page until dismissed, on any browser.
-	// The computer running Control also shows them as Windows notifications.
+	// Automations' notifications (ADR 0012): cards at the top of every page, on any browser, that go
+	// by themselves after SHOW_FOR (for every browser, like dismissing them). Each Automation's
+	// history keeps what they said. The computer running Control also shows them as Windows
+	// notifications.
+	import { onDestroy } from 'svelte';
+	import { fade } from 'svelte/transition';
 	import { resolve } from '$app/paths';
 	import { BellRing, X } from '@lucide/svelte';
 	import { home } from '$lib/home.svelte';
@@ -8,13 +12,64 @@
 
 	/** Many at once (a night with the PC asleep): the latest few, and Dismiss all. */
 	const SHOWN = 3;
+	/** How long a card stays: counted only while the page is visible and nobody points at the cards. */
+	const SHOW_FOR = 8000;
 	const shown = $derived(home.notices.slice(-SHOWN).reverse());
+
+	let visible = $state(typeof document === 'undefined' || document.visibilityState === 'visible');
+	let held = $state(false); // the pointer or keyboard focus is on the cards: someone's reading
+	const timers: Record<number, ReturnType<typeof setTimeout>> = {}; // not reactive: nothing shows them
+	const reduced = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+	function stopAll() {
+		for (const id in timers) {
+			clearTimeout(timers[id]);
+			delete timers[id];
+		}
+	}
+
+	$effect(() => {
+		const onVisibility = () => (visible = document.visibilityState === 'visible');
+		document.addEventListener('visibilitychange', onVisibility);
+		return () => document.removeEventListener('visibilitychange', onVisibility);
+	});
+
+	// Each notice gets its own countdown, from when it arrived or the page came back into view (so the
+	// hidden Window never clears one nobody saw); holding the cards starts them all again afterwards.
+	$effect(() => {
+		const ids = new Set(home.notices.map((n) => n.id));
+		if (!visible || held) {
+			stopAll();
+			return;
+		}
+		for (const id in timers) {
+			if (!ids.has(Number(id))) {
+				clearTimeout(timers[id]);
+				delete timers[id];
+			}
+		}
+		for (const id of ids) {
+			timers[id] ??= setTimeout(() => {
+				delete timers[id];
+				home.dismissNotices([id]);
+			}, SHOW_FOR);
+		}
+	});
+
+	onDestroy(stopAll);
 </script>
 
 {#if home.notices.length}
-	<div class="notices" role="status">
+	<div
+		class="notices"
+		role="status"
+		onpointerenter={() => (held = true)}
+		onpointerleave={() => (held = false)}
+		onfocusin={() => (held = true)}
+		onfocusout={() => (held = false)}
+	>
 		{#each shown as n (n.id)}
-			<div class="notice">
+			<div class="notice" out:fade={{ duration: reduced ? 0 : 200 }}>
 				<BellRing size={16} strokeWidth={2.4} />
 				<span class="text">
 					{#if n.automation}

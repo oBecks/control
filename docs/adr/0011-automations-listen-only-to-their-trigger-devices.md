@@ -13,6 +13,14 @@ Until Automations, the Engine watched nothing: a Device's state was read only wh
 - **Offline after a minute.** A listened-to Device whose connection drops is reconnected quietly; if it still hasn't answered after 1 minute it becomes Offline (on Home too, and "goes Offline" Triggers fire). Any answer, a reconnect, a Scan or a command, brings it back online. So Offline now also means "stopped answering while listened to", not only "missing from the latest Scan".
 - **Changes made by Control count.** A change an Automation or a person makes through Control fires Triggers the same way as one pushed by the Device, so "when the TV turns on" works whoever turned it on (the loop guard is in [ADR 0012](0012-how-an-automation-run-behaves.md)).
 
+## How each brand listens (decided when it was built, 2026-09-27)
+
+- **Yeelight**: its own TCP connection to the bulb, with TCP keep-alive, reading the "props" notifications a bulb sends on every open connection. One request per (re)connection, for the first reading; the keep-alive notices a bulb that lost power without spending its rate-limited requests.
+- **Tuya**: the plug's one local connection, kept open with its heartbeat; the plug pushes its status when the relay changes. While listened to, Control's own commands and reads for the plug go over that connection.
+- **Android TV**: the Remote connection a Streamer already holds; the device pings it every 5 s, so a lost one is noticed. While it's lost, the address is read again from the Registry, so a box a Scan found at a new address is reconnected there (Yeelight and Tuya do the same on each reconnection).
+- Only changes fire: the first reading after listening starts fires nothing, and "stays so for N min" counts from then (nothing is kept across a restart). A Streamer's screensaver doesn't count as leaving its app.
+- Offline Triggers are for Devices with a connection of their own (lights, plugs, Streamers), not Remote Devices or Hubs.
+
 ## Considered options
 
 - **Poll every Device on an interval**: simple, but costs CPU and network all day, is slow to notice, and Yeelight bulbs rate-limit requests.

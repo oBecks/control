@@ -40,6 +40,7 @@ from ..engine.registry import Group, KnownDevice, Registry, RemoteDevice
 from ..engine.scan import DEFAULT_TIMEOUT, scan_and_remember
 from . import access, assistant, automations, dashboards, desktop, hotkeys
 from .deps import registry
+from .listening import listening
 
 
 @asynccontextmanager
@@ -238,6 +239,7 @@ def _read_state(r: Registry, out: DeviceOut, desired: StateIn | None) -> dict:
             ac.apply(on=desired.on, mode=desired.mode, target_temp=desired.target_temp,
                      fan=desired.fan, swing=desired.swing)
             r.set_assumed_state(remote.uid, ac.state_dict())
+            listening.controlled(remote.uid, {"on": ac.state_dict()["on"]})
         return {"control": "climate", "features": asdict(ac.features), "state": ac.state_dict(), "assumed": True}
     if out.control == "remote":
         remote, pad = connect_buttons(r, out.uid)
@@ -248,6 +250,7 @@ def _read_state(r: Registry, out: DeviceOut, desired: StateIn | None) -> dict:
                 pad.set_power(desired.on)
             if pad.on is not None:
                 r.set_assumed_state(remote.uid, {"on": pad.on})
+                listening.controlled(remote.uid, {"on": pad.on})
         # on is null for a Power Toggle: the app never claims whether it's on.
         return {"control": "remote", "features": asdict(pad.features), "state": {"on": pad.on}, "assumed": True}
     if out.control == "streamer":
@@ -403,6 +406,8 @@ def patch_group(uid: str, patch: GroupPatch, r: Registry = Depends(registry)):
     name = patch.name.strip() if patch.name is not None else None
     _check_group(r, name, patch.members)
     r.update_group(uid, name=name, members=patch.members)
+    if patch.members is not None:
+        automations.runner.changed()  # listen to its new members
     return _group_out(r, r.get_group(uid))
 
 
