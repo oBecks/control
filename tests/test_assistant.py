@@ -152,12 +152,13 @@ def test_read_tools_are_marked_read_only(home):
 
     tools = {t.name: t.annotations for t in anyio.run(go)}
     assert {n for n, a in tools.items() if a.read_only_hint} == {
-        "list_devices", "get_device", "list_hotkeys", "list_automations", "get_automation"}
+        "list_devices", "get_device", "list_scenes", "list_hotkeys", "list_automations", "get_automation"}
     # Pressing a button again (e.g. a Power Toggle) undoes it; creating a Group twice makes two.
     assert {n for n, a in tools.items() if a.idempotent_hint} == {
-        "set_power", "set_light", "set_climate", "edit_group", "delete_group", "delete_hotkey", "edit_automation",
-        "set_automation_enabled", "delete_automation"}
-    assert {n for n, a in tools.items() if a.destructive_hint} == {"delete_group", "delete_hotkey", "delete_automation"}
+        "set_power", "set_light", "set_climate", "edit_group", "delete_group", "set_scene", "edit_scene",
+        "delete_scene", "delete_hotkey", "edit_automation", "set_automation_enabled", "delete_automation"}
+    assert {n for n, a in tools.items() if a.destructive_hint} == {"delete_group", "delete_scene", "delete_hotkey",
+                                                                         "delete_automation"}
 
 
 # --- Groups --------------------------------------------------------------------------
@@ -213,6 +214,41 @@ def test_edit_and_delete_a_group(home):
     assert ok(srv, "delete_group", group="Night") == {"deleted": "Night"}
     assert "No Group called 'Night'" in error(srv, "delete_group", group="Night")
     assert "groups" not in ok(srv, "list_devices")
+
+
+# --- Scenes --------------------------------------------------------------------------
+
+
+def test_create_set_and_read_a_scene(home, client):  # noqa: F811
+    srv, light, tx = home
+    light.state.on = True
+    made = ok(srv, "create_scene", name="Movie night", devices=[
+        {"device": "yeelight", "as_now": True}, {"device": "AC", "mode": "cool", "temperature": 24}])
+    assert made["devices"] == {"Yeelight color": "On · 50% · 4000 K", "AC": "On · Cool · 24°"}
+    assert client.get("/api/scenes").json()[0]["made_by"] == "assistant"
+    light.state.on = False
+    assert ok(srv, "list_scenes", include_state=True)["scenes"][0] | {"uid": None} == {
+        "name": "Movie night", "uid": None, "devices": made["devices"], "active": False,
+        "not_as_the_scene_says": ["Yeelight color", "AC"]}
+    assert ok(srv, "set_scene", scene="movie") == {"set": "Movie night"}
+    assert light.state.on and tx.sent
+    assert ok(srv, "list_scenes", include_state=True)["scenes"][0]["active"] is True
+    assert "a Power Toggle isn't a state" in error(srv, "create_scene", name="TV", devices=[{"device": "Living room TV"}])
+    assert "isn't a Streamer" in error(srv, "create_scene", name="X", devices=[{"device": "AC", "app": "Netflix"}])
+
+
+def test_edit_and_delete_a_scene(home):
+    srv, *_ = home
+    ok(srv, "create_scene", name="Evening", devices=[{"device": "Yeelight color", "on": False}])
+    out = ok(srv, "edit_scene", scene="evening", name="Night", set_devices=[
+        {"device": "Yeelight color", "brightness": 10}, {"device": "AC", "on": False}])
+    assert out["devices"] == {"Yeelight color": "On · 10%", "AC": "Off"}
+    out = ok(srv, "edit_scene", scene="Night", remove=["AC"])
+    assert list(out["devices"]) == ["Yeelight color"]
+    assert "leave 'Night' empty" in error(srv, "edit_scene", scene="Night", remove=["Yeelight color"])
+    assert "Say what to change" in error(srv, "edit_scene", scene="Night")
+    assert ok(srv, "delete_scene", scene="Night") == {"deleted": "Night"}
+    assert ok(srv, "list_scenes") == {"scenes": []}
 
 
 # --- Hotkeys -------------------------------------------------------------------------

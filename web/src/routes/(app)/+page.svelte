@@ -8,6 +8,7 @@
 	import { greeting, isOn, SECTIONS } from '$lib/present';
 	import TargetPanel from '$lib/TargetPanel.svelte';
 	import TargetTile from '$lib/TargetTile.svelte';
+	import SceneRow from '$lib/scenes/SceneRow.svelte';
 	import Banner from '$lib/ui/Banner.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import SectionHeader from '$lib/ui/SectionHeader.svelte';
@@ -84,6 +85,7 @@
 				>
 			</div>
 		{:else}
+			<SceneRow />
 			{#if home.groups.length}
 				<section aria-label="Groups">
 					<SectionHeader title="Groups" summary={groupSummary} />

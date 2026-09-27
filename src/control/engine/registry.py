@@ -115,6 +115,17 @@ CREATE TABLE IF NOT EXISTS automations (
     armed       REAL NOT NULL,                 -- since when its Triggers count: earlier times aren't missed Runs
     created     REAL NOT NULL
 );
+-- Scenes (ADR 0013): a named end state for several Devices, engine/scenes.py.
+CREATE TABLE IF NOT EXISTS scenes (
+    uid        TEXT PRIMARY KEY,
+    name       TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    icon       TEXT NOT NULL DEFAULT 'sparkles',
+    parts      TEXT NOT NULL DEFAULT '[]',    -- JSON: [{"target": uid, "state": {...}}]
+    attention  TEXT,                          -- why it needs looking at, e.g. nothing is left in it
+    position   INTEGER NOT NULL,              -- order on the Scenes page and Home
+    made_by    TEXT NOT NULL DEFAULT 'user',  -- 'user' or 'assistant'
+    created    REAL NOT NULL
+);
 -- Each Automation's last Runs (RUNS_KEPT).
 CREATE TABLE IF NOT EXISTS automation_runs (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -221,6 +232,16 @@ class Automation:
     attention: str | None  # why it switched itself off
     made_by: str  # "user" or "assistant"
     armed: float  # since when its Triggers count
+
+
+@dataclass
+class Scene:
+    uid: str
+    name: str
+    icon: str
+    parts: list[dict]  # engine/scenes.py
+    attention: str | None  # why it needs looking at
+    made_by: str  # "user" or "assistant"
 
 
 @dataclass
@@ -366,6 +387,7 @@ class Registry:
             self._drop_hotkeys(uid)
             self._drop_dashboard_items()
             self._trim_automations()
+            self._trim_scenes()
 
     # --- Links ---------------------------------------------------------------
 
@@ -504,6 +526,7 @@ class Registry:
             self._drop_hotkeys(uid)
             self._drop_dashboard_items()
             self._trim_automations()
+            self._trim_scenes()
 
     # --- Groups --------------------------------------------------------------
 
@@ -549,6 +572,7 @@ class Registry:
             self._drop_hotkeys(uid)
             self._drop_dashboard_items()
             self._trim_automations()
+            self._trim_scenes()
 
     def _set_members(self, uid: str, members: list[str]) -> None:
         self._db.execute("DELETE FROM group_members WHERE group_uid = ?", (uid,))
@@ -839,6 +863,75 @@ class Registry:
             else:
                 self._db.executemany("UPDATE notices SET seen = 1 WHERE id = ?", [(i,) for i in ids])
 
+    # --- Scenes ----------------------------------------------------------------
+
+    def add_scene(self, name: str, parts: list[dict], icon: str = "sparkles", made_by: str = "user") -> str:
+        uid = f"scene:{uuid.uuid4().hex[:12]}"
+        try:
+            with self._db:
+                position = self._db.execute("SELECT COALESCE(MAX(position) + 1, 0) FROM scenes").fetchone()[0]
+                self._db.execute(
+                    "INSERT INTO scenes (uid, name, icon, parts, position, made_by, created) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (uid, name, icon, json.dumps(parts), position, made_by, time.time()),
+                )
+        except sqlite3.IntegrityError:
+            raise ValueError(f"a Scene named '{name}' already exists") from None
+        return uid
+
+    def scenes(self) -> list[Scene]:
+        rows = self._db.execute("SELECT * FROM scenes ORDER BY position, created").fetchall()
+        return [self._to_scene(r) for r in rows]
+
+    def get_scene(self, uid: str) -> Scene:
+        row = self._db.execute("SELECT * FROM scenes WHERE uid = ?", (uid,)).fetchone()
+        if row is None:
+            raise LookupError(f"no Scene '{uid}'")
+        return self._to_scene(row)
+
+    def update_scene(self, uid: str, name: str | None = None, icon: str | None = None,
+                     parts: list[dict] | None = None) -> None:
+        """Change what's given. Any change clears `attention`: the user has looked at it since."""
+        self.get_scene(uid)  # 404s early
+        values = {"name": name, "icon": icon, "parts": json.dumps(parts) if parts is not None else None}
+        try:
+            with self._db:
+                for column, value in values.items():
+                    if value is not None:
+                        self._db.execute(f"UPDATE scenes SET {column} = ? WHERE uid = ?", (value, uid))  # noqa: S608
+                self._db.execute("UPDATE scenes SET attention = NULL WHERE uid = ?", (uid,))
+        except sqlite3.IntegrityError:
+            raise ValueError(f"a Scene named '{name}' already exists") from None
+
+    def order_scenes(self, uids: list[str]) -> None:
+        """Put the Scenes in this order; any left out keep their order after them."""
+        known = [s.uid for s in self.scenes()]
+        uids = [u for u in dict.fromkeys(uids) if u in known]
+        rest = [u for u in known if u not in uids]
+        with self._db:
+            self._db.executemany("UPDATE scenes SET position = ? WHERE uid = ?", [(i, u) for i, u in enumerate(uids + rest)])
+
+    def forget_scene(self, uid: str) -> None:
+        with self._db:
+            if self._db.execute("DELETE FROM scenes WHERE uid = ?", (uid,)).rowcount == 0:
+                raise LookupError(f"no Scene '{uid}'")
+
+    def _trim_scenes(self) -> None:
+        """Forgetting a Device or deleting a Group drops only its part (ADR 0013). A Scene left with
+        nothing is kept, marked as needing attention."""
+        from . import scenes
+
+        targets = self.targets()
+        for sc in self.scenes():
+            parts = scenes.without(sc.parts, {p["target"] for p in sc.parts} - targets)
+            if len(parts) == len(sc.parts):
+                continue
+            self._db.execute("UPDATE scenes SET parts = ? WHERE uid = ?", (json.dumps(parts), sc.uid))
+            if not parts:
+                self._db.execute(
+                    "UPDATE scenes SET attention = ? WHERE uid = ?",
+                    ("Nothing is left in it: its Devices were forgotten or its Groups deleted", sc.uid),
+                )
+
     # --- Settings ------------------------------------------------------------
 
     def setting(self, key: str, default=None):
@@ -904,6 +997,10 @@ class Registry:
                           triggers=json.loads(r["triggers"]), conditions=json.loads(r["conditions"]),
                           actions=json.loads(r["actions"]), attention=r["attention"], made_by=r["made_by"],
                           armed=r["armed"])
+
+    def _to_scene(self, r: sqlite3.Row) -> Scene:
+        return Scene(uid=r["uid"], name=r["name"], icon=r["icon"], parts=json.loads(r["parts"]),
+                     attention=r["attention"], made_by=r["made_by"])
 
     def _to_run(self, r: sqlite3.Row) -> Run:
         return Run(id=r["id"], automation=r["automation"], cause=r["cause"], started=r["started"], ended=r["ended"],

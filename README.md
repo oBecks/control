@@ -72,6 +72,11 @@ Claude Code inside the Claude app uses the same connection. For the `claude` CLI
 | `create_group` | Makes a Group |
 | `edit_group` | Renames a Group or changes its devices |
 | `delete_group` | Deletes a Group |
+| `list_scenes` | Lists your Scenes, and which are active |
+| `set_scene` | Sets a Scene, like "Movie night" |
+| `create_scene` | Makes a Scene, from how things are now or from the values you say |
+| `edit_scene` | Renames a Scene or changes its devices |
+| `delete_scene` | Deletes a Scene |
 | `list_hotkeys` | Lists your Hotkeys |
 | `create_hotkey` | Makes a Hotkey, like Ctrl+Alt+L to toggle a light or run an Automation |
 | `delete_hotkey` | Deletes a Hotkey |

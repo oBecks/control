@@ -2,7 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import { House, Keyboard, LayoutDashboard, Radar, Settings, Workflow } from '@lucide/svelte';
+	import { House, Keyboard, LayoutDashboard, Radar, Settings, Sparkles, Workflow } from '@lucide/svelte';
 	import { dashboards } from '$lib/dashboards/dashboards.svelte';
 	import { home } from '$lib/home.svelte';
 	import AccessRequestBanner from '$lib/access/AccessRequestBanner.svelte';
@@ -16,6 +16,8 @@
 
 	const NAV = [
 		{ href: resolve('/'), label: 'Home', icon: House },
+		// Phones reach Scenes from Home's chips instead: the tab bar stays at five.
+		{ href: resolve('/scenes'), label: 'Scenes', icon: Sparkles, tab: false },
 		{ href: resolve('/dashboards'), label: 'Dashboards', icon: LayoutDashboard },
 		{ href: resolve('/automations'), label: 'Automations', short: 'Automate', icon: Workflow },
 		{ href: resolve('/add'), label: 'Add devices', short: 'Add', icon: Radar },
@@ -116,7 +118,7 @@
 		</div>
 
 		<nav class="tabbar" aria-label="Main">
-			{#each NAV as n (n.href)}
+			{#each NAV.filter((n) => n.tab !== false) as n (n.href)}
 				<a href={n.href} class:active={isActive(n.href)} aria-current={isActive(n.href) ? 'page' : undefined}>
 					<n.icon size={22} strokeWidth={2.1} />
 					<small>{n.short ?? n.label}</small>
