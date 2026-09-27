@@ -1,19 +1,22 @@
 <script lang="ts">
-	// "Add item": a Heading or Clock at once, or ticked Tiles, Big Controls, Remote Pads or Single Buttons.
-	// The Dashboard places them.
+	// "Add item": a Heading or Clock at once, or ticked Tiles, Big Controls, Remote Pads, Single Buttons
+	// or Run Buttons. The Dashboard places them.
 	import { ArrowLeft, Check, Clock, Heading, Search, X } from '@lucide/svelte';
 	import AirVent from '@lucide/svelte/icons/air-vent';
 	import Gamepad2 from '@lucide/svelte/icons/gamepad-2';
 	import Palette from '@lucide/svelte/icons/palette';
+	import Play from '@lucide/svelte/icons/play';
+	import Workflow from '@lucide/svelte/icons/workflow';
 	import SunDim from '@lucide/svelte/icons/sun-dim';
 	import type { Component } from 'svelte';
+	import { automations } from '$lib/automations/automations.svelte';
 	import { home } from '$lib/home.svelte';
 	import { groupIcon, iconFor, SECTIONS } from '$lib/present';
 	import type { BigControl, NewDashboardItem } from '$lib/types';
 	import Button from '$lib/ui/Button.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
 	import { buttonIcon } from './items/buttons';
-	import { buttonItem, clockItem, controlItem, headingItem, padItem, tileItem } from './layout';
+	import { buttonItem, clockItem, controlItem, headingItem, padItem, runItem, tileItem } from './layout';
 
 	interface Props {
 		/** What's on the Dashboard already (see itemKey): it can be added again, but says so. */
@@ -68,15 +71,17 @@
 		tiles: 'No devices yet: add some first.',
 		controls: 'No lights or ACs yet.',
 		remotes: 'No TVs, fans or streamers with buttons yet.',
-		buttons: 'No TVs, fans or streamers with buttons yet.'
+		buttons: 'No TVs, fans or streamers with buttons, and no automations, yet.'
 	};
+	/** Buttons: the Automations' Run Buttons, in place of a Device's buttons. */
+	const AUTOMATIONS = 'automations';
 
 	let kind = $state<Kind>('tiles');
 	let query = $state('');
 	let picked = $state<string[]>([]);
 	/** Each kind's size for new items; each one's width and height can be changed afterwards. */
 	let sizes = $state<Record<Kind, string>>({ tiles: 'wide', controls: '', remotes: 'compact', buttons: 'small' });
-	/** Buttons: the Device whose buttons are listed. */
+	/** Buttons: the Device whose buttons are listed, or AUTOMATIONS. */
 	let buttonsOf = $state<string | null>(null);
 
 	const matches = (name: string) => name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
@@ -151,6 +156,19 @@
 			];
 		}
 		const w = sizes.buttons === 'wide' ? 2 : 1;
+		if (buttonsOf === AUTOMATIONS) {
+			return [
+				{
+					title: 'Run an automation',
+					rows: automations.list.map((a) => ({
+						key: `run:${a.uid}`,
+						name: a.name,
+						icon: Play,
+						make: () => runItem(a.uid, w)
+					}))
+				}
+			];
+		}
 		const device = remotes.find((d) => d.uid === buttonsOf);
 		const r = device && home.states[device.uid];
 		if (!device || !(r?.control === 'remote' || r?.control === 'streamer')) return [];
@@ -223,8 +241,11 @@
 	<Segmented label="Add" options={KINDS} value={kind} onchange={switchKind} />
 
 	{#if kind === 'buttons' && !buttonsOf}
-		<p class="lead">Pick a remote or streamer, then the buttons to put on the dashboard on their own.</p>
-		{#if remotes.length}
+		<p class="lead">
+			Pick a remote or streamer, then the buttons to put on the dashboard on their own. Or automations, for buttons that
+			run them.
+		</p>
+		{#if remotes.length || automations.list.length}
 			<ul>
 				{#each remotes as d (d.uid)}
 					<li>
@@ -234,6 +255,14 @@
 						</button>
 					</li>
 				{/each}
+				{#if automations.list.length}
+					<li>
+						<button type="button" class="pick" onclick={() => (buttonsOf = AUTOMATIONS)}>
+							<span class="badge" aria-hidden="true"><Workflow size={16} strokeWidth={2.2} /></span>
+							<span class="text"><span class="name">Automations</span></span>
+						</button>
+					</li>
+				{/if}
 			</ul>
 		{:else}
 			<p class="hint">{EMPTY.buttons}</p>
@@ -249,7 +278,7 @@
 				}}
 			>
 				<ArrowLeft size={16} strokeWidth={2.4} />
-				{home.nameOf(buttonsOf ?? '')}
+				{buttonsOf === AUTOMATIONS ? 'Automations' : home.nameOf(buttonsOf ?? '')}
 			</button>
 		{/if}
 

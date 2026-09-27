@@ -599,7 +599,7 @@ class Registry:
                 raise LookupError(f"no Hotkey '{uid}'")
 
     def _drop_hotkeys(self, target: str) -> None:
-        """Forgetting a Device or Group deletes its Hotkeys, and those of a Group that went with it."""
+        """Forgetting a Device, Group or Automation deletes its Hotkeys, and those of a Group that went with it."""
         self._db.execute("DELETE FROM hotkeys WHERE target = ?", (target,))
         self._db.execute("DELETE FROM hotkeys WHERE target LIKE 'group:%' AND target NOT IN (SELECT uid FROM groups)")
 
@@ -665,9 +665,13 @@ class Registry:
         ).fetchall()
         return {r["uid"] for r in rows}
 
+    def automation_uids(self) -> set[str]:
+        """What a Dashboard's Run button can point at."""
+        return {r["uid"] for r in self._db.execute("SELECT uid FROM automations").fetchall()}
+
     def _drop_dashboard_items(self) -> None:
-        """Forgetting a Device or deleting a Group takes it off every Dashboard."""
-        targets = self.targets()
+        """Forgetting a Device or deleting a Group or Automation takes it off every Dashboard."""
+        targets = self.targets() | self.automation_uids()
         for r in self._db.execute("SELECT uid, items FROM dashboards").fetchall():
             items = json.loads(r["items"])
             kept = [i for i in items if "target" not in i or i["target"] in targets]
@@ -726,6 +730,8 @@ class Registry:
             if self._db.execute("DELETE FROM automations WHERE uid = ?", (uid,)).rowcount == 0:
                 raise LookupError(f"no Automation '{uid}'")
             self._db.execute("DELETE FROM automation_runs WHERE automation = ?", (uid,))
+            self._drop_hotkeys(uid)
+            self._drop_dashboard_items()
 
     def _trim_automations(self) -> None:
         """Forgetting a Device or deleting a Group removes only the parts naming it (ADR 0012). One that

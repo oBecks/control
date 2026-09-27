@@ -1,5 +1,5 @@
 <script lang="ts">
-	// Make or change a Hotkey: its keys, the Device or Group, and what it does to it.
+	// Make or change a Hotkey: its keys, the Device or Group, and what it does to it (or the Automation it runs).
 	import { Trash2, X } from '@lucide/svelte';
 	import { api } from '$lib/api';
 	import type { Hotkey, KeysCheck } from '$lib/types';
@@ -22,7 +22,7 @@
 	interface Props {
 		/** The Hotkey to edit; none to make one. */
 		hotkey?: Hotkey;
-		/** A new Hotkey's Device or Group, when made from its controls. */
+		/** A new Hotkey's Device, Group or Automation, when made from its controls or page. */
 		target?: string;
 		onclose: () => void;
 	}
@@ -150,6 +150,7 @@
 		bind:params
 		fixedTarget={!!initial.preset && !hotkey}
 		holdHint={holdRepeats}
+		automations
 		onready={(r) => (fieldsReady = r)}
 	/>
 
