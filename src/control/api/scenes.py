@@ -145,15 +145,17 @@ def capture(body: CaptureIn, r: Registry = Depends(registry)):
     readings = _read(r, targets)
     parts, failed = [], {}
     for uid in targets:
-        t = _target(r, uid)
-        reading = readings[uid]
+        name = uid  # until it's known
         try:
+            t = _target(r, uid)
+            name = t.name
+            reading = readings[uid]
             if isinstance(reading, Exception):
                 raise reading
             state = scenes.capture(reading, scenes.settable(t.control, t.settable), t.apps)
             parts.append(PartIO(target=uid, state=_check_part(r, uid, state)))
         except (ValueError, LookupError, DeviceUnreachable) as exc:
-            failed[uid] = f"{t.name}: {exc}"
+            failed[uid] = f"{name}: {exc}"
     return CaptureOut(parts=parts, failed=failed)
 
 

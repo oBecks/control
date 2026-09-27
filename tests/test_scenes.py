@@ -189,12 +189,12 @@ def test_what_a_scene_refuses(home):
 def test_capture_reads_how_things_are_now(home):
     c, lights = home["client"], home["lights"]
     lights["yeelight:1"].state.on = True
-    body = c.post("/api/scenes/capture", json={"targets": ["yeelight:1", "tuya:abc", home["tv"]]}).json()
+    body = c.post("/api/scenes/capture", json={"targets": ["yeelight:1", "tuya:abc", home["tv"], "yeelight:9"]}).json()
     assert body["parts"] == [
         {"target": "yeelight:1", "state": {"on": True, "brightness": 50, "kelvin": 4000}},
         {"target": "tuya:abc", "state": {"on": False}},
     ]
-    assert list(body["failed"]) == [home["tv"]]
+    assert list(body["failed"]) == [home["tv"], "yeelight:9"]  # an unknown one fails alone too
     assert c.get("/api/scenes").json() == []  # nothing saved
 
 
