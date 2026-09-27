@@ -18,7 +18,7 @@ Approval needs something already trusted, the Engine's machine or an approved ph
 
 - **Trust the whole LAN**: simplest, rejected for the reasons above.
 - **A PIN or password**: gets shared around, can't be revoked per phone, and adds a login screen for every family member.
-- **HTTPS on the LAN**: needed for a real Android install and for a service worker (see below). On a LAN with no outside service it means a local certificate authority the user installs on every phone, which is too much setup for "anyone downloads it". Remote access (and a valid certificate that could come with it) is out of scope for now.
+- **HTTPS on the LAN**: needed for a real Android install and for a service worker (see below). On a LAN with no outside service it means a local certificate authority the user installs on every phone, which is too much setup for "anyone downloads it". Remote access (and a valid certificate that could come with it) is out of scope for now. Another way, a real domain with Let's Encrypt certificates (Vercel as the helper), is written up under step 10 of the [roadmap](../roadmap.md).
 - **A native phone app that controls devices without the PC**: browsers can't speak the devices' protocols (raw TCP/UDP to Yeelight, Tuya, Broadlink), so working without the PC would need a native app. That app would contain a second Engine, and it would have to keep Code Sets, learned Signals, Local Keys and names in sync with the PC's. Rejected for now as a separate product.
 
 ## Consequences
