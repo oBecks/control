@@ -8,7 +8,9 @@ The rules every Run follows (ADR 0012):
   the rest: the Run is *interrupted*, and a notification says what didn't happen. A Run cut short by
   Control quitting is found *running* at the next start, and handled the same way.
 - A failed Action doesn't stop the others; the Run ends *partly failed* and a notification says which.
-- Running by hand skips the Conditions.
+- Running by hand skips the Conditions, and so does a Run another Automation starts (chaining).
+- The loop guard: a chain of Automations starting each other, by an Action or by changing a Device
+  another one listens to, stops after `listening.MAX_HOPS`, and the one it stopped keeps a skipped Run.
 
 Notifications go to the UI as notices, and to Windows through the Desktop App, which watches
 `/api/notices/watch` like the Hotkey listener watches its Hotkeys. Anyone who may use the Engine may
@@ -30,6 +32,7 @@ from ..engine import automations, streamer, sun
 from ..engine.errors import DeviceUnreachable
 from ..engine.registry import Automation, Registry, Run
 from . import hotkeys as hotkeys_api
+from . import listening as listening_api
 from .deps import registry
 from .listening import listening
 
@@ -73,7 +76,7 @@ class _Active:
     run_id: int
     automation: Automation  # as it was when the Run started: an edit meanwhile doesn't change it
     steps: list[dict]
-    hops: int = 0  # started by a change another Automation made, and so on (the loop guard, ADR 0012)
+    hops: int = 0  # started by another Automation (an Action, or a change it made), and so on (ADR 0012)
     cancel: threading.Event = field(default_factory=threading.Event)
     thread: threading.Thread | None = None
 
@@ -260,6 +263,12 @@ class Runner:
             elif action["do"] == "notify":
                 self.notify(r, a.name, action["text"], a.uid)
                 step["result"] = "done"
+            elif action["do"] == "run":
+                problem = self._chain(r, action["target"], active)
+                step["result"] = "failed" if problem else "done"
+                if problem:
+                    step["detail"] = problem
+                    failed.append(f"{step['label']} failed: {problem}")
             else:
                 problem = _control(r, action, a.uid, active.hops)
                 step["result"] = "failed" if problem else "done"
@@ -272,6 +281,32 @@ class Runner:
             self.notify(r, a.name, "; ".join(failed), a.uid)
         else:
             r.update_run(active.run_id, steps, "succeeded")
+
+    def _chain(self, r: Registry, uid: str, active: _Active) -> str | None:
+        """Start another Automation's Run, skipping its Conditions like a Run by hand, without waiting
+        for it; what went wrong, or None."""
+        if self._closing:  # stop() has already gathered the Runs to end
+            return "Control quit"
+        try:
+            other = r.get_automation(uid)
+        except LookupError:
+            return "that Automation was deleted"
+        cause = f"Run by {active.automation.name}"
+        if self.stopped_loop(r, other, cause, active.hops + 1):
+            return "stopped, since it may be a loop"
+        self.run(r, uid, cause, by_hand=True, hops=active.hops + 1)
+        return None
+
+    def stopped_loop(self, r: Registry, a: Automation, cause: str, hops: int) -> bool:
+        """The loop guard (ADR 0012): a Run `hops` Automations down a chain, past MAX_HOPS, doesn't
+        start. It's kept in the Automation's history as skipped, and a notice says so."""
+        if hops <= listening_api.MAX_HOPS:
+            return False
+        why = f"{listening_api.MAX_HOPS} Automations had already set each other off in a row, so it may be a loop"
+        steps = _not_run(r, a)
+        r.update_run(r.add_run(a.uid, cause, outcome="skipped", steps=steps), steps, "skipped", why)
+        self.notify(r, a.name, f"Didn't run on \"{cause}\": {why}", a.uid)
+        return True
 
     def _cut_short(self, r: Registry, a: Automation, active: _Active, steps: list[dict]) -> None:
         if self._closing:
@@ -374,6 +409,7 @@ def _names(r: Registry) -> dict[str, str]:
     names = {d.uid: d.name for d in r.all()}
     names |= {d.uid: d.name for d in r.remotes()}
     names |= {g.uid: g.name for g in r.groups()}
+    names |= {a.uid: a.name for a in r.automations()}
     return names
 
 
@@ -408,7 +444,7 @@ def _without_target(action: dict) -> dict:
 
 
 def _checked_target(r: Registry, uid: str) -> hotkeys_api.Target:
-    if uid.startswith("automation:"):  # a Hotkey's target, not yet an Automation's (chaining comes later)
+    if uid.startswith("automation:"):  # only a run Action names one
         raise ValueError(f"there's no Device or Group '{uid}'")
     try:
         return hotkeys_api.target(r, uid)
@@ -454,6 +490,15 @@ def _check_condition(r: Registry, c: dict, where) -> dict:
 
 def _check_action(r: Registry, a: dict) -> dict:
     clean = automations.check_step(a)
+    if clean["do"] == "run":
+        uid = clean["target"]
+        if not uid.startswith("automation:"):
+            raise ValueError("only an Automation runs; pick one")
+        try:
+            r.get_automation(uid)
+        except LookupError:
+            raise ValueError(f"there's no Automation '{uid}'") from None
+        return {"do": "run", "target": uid}
     if clean["do"] in automations.CONTROL:
         t = _checked_target(r, a["target"])
         return hotkeys_api.check_action(r, t, _without_target(a)) | {"target": t.uid}
@@ -472,16 +517,32 @@ def _numbered(what: str, parts: list[dict], check) -> list[dict]:
     return out
 
 
-def check(r: Registry, triggers: list, conditions: list, actions: list, whole: bool = True) -> tuple[list, list, list]:
+def check(r: Registry, triggers: list, conditions: list, actions: list, whole: bool = True,
+          uid: str | None = None) -> tuple[list, list, list]:
     """The parts cleaned up, or ValueError naming the first one that's wrong. `whole`: it's to be
-    saved, so it needs an Action."""
+    saved, so it needs an Action. `uid`: the Automation they're for, which mustn't end up running itself."""
     where = location(r)
     triggers = _numbered("Trigger", triggers, lambda t: _check_trigger(r, t, where))
     conditions = _numbered("Condition", conditions, lambda c: _check_condition(r, c, where))
     actions = _numbered("Action", actions, lambda a: _check_action(r, a))
+    if uid:
+        _check_loop(r, uid, actions)
     if whole:
         automations.check_counts(triggers, conditions, actions)
     return triggers, conditions, actions
+
+
+def _check_loop(r: Registry, uid: str, actions: list[dict]) -> None:
+    """ValueError when the Actions would run this Automation again, itself or through others."""
+    path = automations.loop(uid, actions, {a.uid: a.actions for a in r.automations() if a.uid != uid})
+    if path is None:
+        return
+    i = next(i for i, x in enumerate(actions, 1) if x["do"] == "run" and x["target"] == path[1])
+    if len(path) == 2:
+        raise ValueError(f"Action {i}: an Automation can't run itself")
+    names = _names(r)
+    chain = " → ".join(names.get(x, x) for x in path[1:-1])
+    raise ValueError(f"Action {i}: {chain} runs this one again, so they'd run each other in a loop")
 
 
 def _name(name: str) -> str:
@@ -567,6 +628,7 @@ def _summary(match: str, triggers: list[dict], conditions: list[dict], actions: 
 
 
 class PreviewIn(BaseModel):
+    uid: str | None = Field(None, description="the Automation being edited, so it isn't made to run itself")
     triggers: list[dict] = Field(default_factory=list)
     conditions: list[dict] = Field(default_factory=list)
     match: str = "all"
@@ -577,7 +639,8 @@ class PreviewIn(BaseModel):
 def preview_automation(body: PreviewIn, r: Registry = Depends(registry)):
     """The builder's draft, checked and in plain language, without saving it: each part with its
     `label`, and the `summary`. A part that's wrong answers 422, naming it ("Action 2: …")."""
-    triggers, conditions, actions = _labelled(r, *check(r, body.triggers, body.conditions, body.actions, whole=False))
+    triggers, conditions, actions = _labelled(r, *check(r, body.triggers, body.conditions, body.actions,
+                                                                 whole=False, uid=body.uid))
     return {"triggers": triggers, "conditions": conditions, "actions": actions,
             "summary": _summary(_match(body.match), triggers, conditions, actions)}
 
@@ -644,6 +707,7 @@ def patch_automation(uid: str, patch: AutomationPatch, r: Registry = Depends(reg
         a.triggers if patch.triggers is None else patch.triggers,
         a.conditions if patch.conditions is None else patch.conditions,
         a.actions if patch.actions is None else patch.actions,
+        uid=uid,
     )
     r.update_automation(
         uid,

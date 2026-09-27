@@ -415,11 +415,84 @@ def test_only_an_automation_runs_and_it_only_runs(hk):  # noqa: F811
     assert add_hotkey(c, "F13", "automation:nope", {"do": "run"}, 404)
 
 
-def test_an_automation_cant_control_another_yet(home):
+# --- Chaining: an Action that runs another Automation ------------------------------------------
+
+
+def test_an_automation_runs_another_skipping_its_conditions(home, runner):
+    c, light = home["client"], home["lights"]["yeelight:1"]
+    # Switched off too: that only stops its own Triggers.
+    a = create(c, enabled=False, conditions=[{"type": "time", "after": "03:00", "before": "03:01"}])
+    chain = create(c, name="Chain", actions=[{"do": "run", "target": a["uid"]}, {"do": "notify", "text": "Hi"}])
+    assert chain["summary"] == "When: at 19:00, every day. Then: Run Evening, then Notify: Hi."
+    done = run(c, runner, chain["uid"])
+    assert (done["outcome"], done["steps"][0]) == ("succeeded", {"label": "Run Evening", "result": "done"})
+    runner.join(a["uid"])
+    other = c.get(f"/api/automations/{a['uid']}/runs").json()[0]
+    assert (other["cause"], other["outcome"]) == ("Run by Chain", "succeeded")
+    assert light.state.on
+
+
+@pytest.mark.parametrize("action, message", [
+    ({"do": "run", "target": "yeelight:1"}, "only an Automation runs"),
+    ({"do": "run", "target": "automation:nope"}, "no Automation"),
+    ({"do": "run"}, "say which"),
+])
+def test_what_a_run_action_cant_be(home, action, message):
+    resp = home["client"].post("/api/automations", json={"name": "Chain", "actions": [action]})
+    assert resp.status_code == 422 and message in resp.json()["detail"]
+
+
+def test_an_automation_cant_be_toggled(home):
     a = create(home["client"])
     resp = home["client"].post("/api/automations", json={
-        "name": "Chain", "actions": [{"do": "run", "target": a["uid"]}]})
-    assert resp.status_code == 422
+        "name": "Chain", "actions": [{"do": "toggle", "target": a["uid"]}]})
+    assert resp.status_code == 422 and "no Device or Group" in resp.json()["detail"]
+
+
+def test_automations_cant_run_each_other_in_a_loop(home):
+    c = home["client"]
+    a = create(c)
+    b = create(c, name="B", actions=[{"do": "run", "target": a["uid"]}])
+    d = create(c, name="D", actions=[{"do": "notify", "text": "x"}, {"do": "run", "target": b["uid"]}])
+    itself = c.patch(f"/api/automations/{a['uid']}", json={"actions": [{"do": "run", "target": a["uid"]}]})
+    assert itself.status_code == 422 and itself.json()["detail"] == "Action 1: an Automation can't run itself"
+    loop = c.patch(f"/api/automations/{a['uid']}", json={"actions": [{"do": "run", "target": d["uid"]}]})
+    assert loop.json()["detail"] == "Action 1: D → B runs this one again, so they'd run each other in a loop"
+    # The builder hears it as soon as the Action is kept.
+    preview = c.post("/api/automations/preview", json={"uid": a["uid"], "actions": [{"do": "run", "target": b["uid"]}]})
+    assert "B runs this one again" in preview.json()["detail"]
+    # A new one can't be in a loop yet: nothing runs it.
+    assert c.post("/api/automations/preview", json={"actions": [{"do": "run", "target": b["uid"]}]}).status_code == 200
+
+
+def test_deleting_an_automation_removes_the_actions_that_ran_it(home):
+    c = home["client"]
+    a, b = create(c), create(c, name="Morning")
+    both = create(c, name="Both", actions=[{"do": "run", "target": a["uid"]}, {"do": "run", "target": b["uid"]}])
+    c.delete(f"/api/automations/{a['uid']}")
+    after = c.get(f"/api/automations/{both['uid']}").json()
+    assert ([x["label"] for x in after["actions"]], after["enabled"]) == (["Run Morning"], True)
+    c.delete(f"/api/automations/{b['uid']}")
+    after = c.get(f"/api/automations/{both['uid']}").json()
+    assert (after["actions"], after["enabled"]) == ([], False)
+    assert "Automation that was removed" in after["attention"]
+
+
+def test_a_chain_of_run_actions_stops(home, runner, monkeypatch):
+    from control.api import listening as listening_api
+
+    monkeypatch.setattr(listening_api, "MAX_HOPS", 1)
+    c = home["client"]
+    last = create(c, name="C", triggers=[])
+    middle = create(c, name="B", triggers=[], actions=[{"do": "run", "target": last["uid"]}])
+    first = create(c, name="A", actions=[{"do": "run", "target": middle["uid"]}])
+    assert run(c, runner, first["uid"])["outcome"] == "succeeded"
+    runner.join(middle["uid"])
+    b = c.get(f"/api/automations/{middle['uid']}/runs").json()[0]
+    assert (b["outcome"], b["steps"][0]["result"]) == ("partly_failed", "failed")
+    stopped = c.get(f"/api/automations/{last['uid']}/runs").json()[0]
+    assert (stopped["outcome"], stopped["cause"]) == ("skipped", "Run by B")
+    assert "set each other off" in stopped["note"]
 
 
 def test_deleting_an_automation_deletes_its_hotkeys_and_run_buttons(hk):  # noqa: F811

@@ -499,6 +499,22 @@ def test_edit_switch_off_and_delete_an_automation(home, runner):
     assert "No Automation called 'Late'" in error(srv, "delete_automation", automation="Late")
 
 
+def test_an_automation_that_runs_another(home, runner):
+    srv, *_ = home
+    evening = ok(srv, "create_automation", name="Evening", actions=[{"action": "on", "device": "yeelight"}])
+    made = ok(srv, "create_automation", name="Home", actions=[{"action": "run_automation", "device": "evening"}])
+    assert made["summary"] == "When: only when run by hand. Then: Run Evening."
+    got = ok(srv, "get_automation", automation="Home")
+    assert got["actions"] == [{"action": "run_automation", "device": evening["uid"], "label": "Run Evening"}]
+    # What get_automation says goes straight back in.
+    kept = [{k: v for k, v in x.items() if k != "label"} for x in got["actions"]]
+    assert ok(srv, "edit_automation", automation="Home", actions=kept)["summary"].endswith("Run Evening.")
+    assert "can't run itself" in error(srv, "edit_automation", automation="Home",
+                                       actions=[{"action": "run_automation", "device": "Home"}])
+    assert "Say which Automation" in error(srv, "create_automation", name="x",
+                                           actions=[{"action": "run_automation"}])
+
+
 def test_automations_the_engine_refuses_say_why(home, runner):
     srv, *_ = home
     assert "set your location first" in error(srv, "create_automation", name="Dusk",

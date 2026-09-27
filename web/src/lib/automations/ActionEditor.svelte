@@ -1,32 +1,41 @@
 <script lang="ts">
-	// One "Then" of an Automation: control a Device or Group (what a Hotkey can do), wait, or notify.
+	// One "Then" of an Automation: control a Device or Group (what a Hotkey can do), run another
+	// Automation, wait, or notify.
 	import { Trash2 } from '@lucide/svelte';
 	import ActionFields from '$lib/hotkeys/ActionFields.svelte';
 	import { actionOf, choiceOf, DEFAULT_PARAMS, type Choice, type Params } from '$lib/hotkeys/keys';
 	import type { AutomationAction } from '$lib/types';
 	import Button from '$lib/ui/Button.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
+	import { automations } from './automations.svelte';
 	import './editor.css';
 	import { joinSeconds, splitSeconds } from './parts';
 
 	interface Props {
 		/** The Action to change; none to add one. */
 		action?: AutomationAction;
+		/** The Automation being edited, which can't run itself; none while it's new. */
+		self?: string;
 		/** Keep it: answers why it can't be, or null. */
 		onsave: (action: AutomationAction) => Promise<string | null>;
 		onremove?: () => void;
 		onclose: () => void;
 	}
 
-	let { action, onsave, onremove, onclose }: Props = $props();
+	let { action, self, onsave, onremove, onclose }: Props = $props();
 
-	type Kind = 'control' | 'wait' | 'notify';
+	type Kind = 'control' | 'run' | 'wait' | 'notify';
 	const initial = (() => action)();
-	const control = initial && initial.do !== 'wait' && initial.do !== 'notify' ? initial : undefined;
+	const control =
+		initial && initial.do !== 'wait' && initial.do !== 'notify' && initial.do !== 'run' ? initial : undefined;
 	const start = control ? choiceOf(control) : { choice: 'on' as Choice, params: {} };
 
-	let kind = $state<Kind>(initial?.do === 'wait' ? 'wait' : initial?.do === 'notify' ? 'notify' : 'control');
+	let kind = $state<Kind>(
+		initial?.do === 'wait' || initial?.do === 'notify' || initial?.do === 'run' ? initial.do : 'control'
+	);
 	let target = $state(control?.target ?? '');
+	/** The Automation a Run starts. */
+	let runs = $state(initial?.do === 'run' ? initial.target : '');
 	let choice = $state<Choice>(start.choice);
 	let params = $state<Params>({ ...DEFAULT_PARAMS, ...start.params });
 	let fieldsReady = $state(false);
@@ -41,10 +50,16 @@
 			return seconds > 0 ? { do: 'wait', seconds } : null;
 		}
 		if (kind === 'notify') return text.trim() ? { do: 'notify', text: text.trim() } : null;
-		const action = actionOf(choice, params);
-		// Automations aren't offered here (no chaining yet), so a Run never comes up.
-		return fieldsReady && action.do !== 'run' ? { ...action, target } : null;
+		if (kind === 'run') return runs ? { do: 'run', target: runs } : null;
+		// ActionFields offers no Automations here, so a control Action never runs one.
+		return fieldsReady ? { ...actionOf(choice, params), target } : null;
 	});
+
+	$effect(() => {
+		if (!automations.loaded) automations.load();
+	});
+	/** Every other Automation; the Engine refuses one that would run this one again. */
+	const others = $derived(automations.list.filter((a) => a.uid !== self));
 
 	async function save(e: SubmitEvent) {
 		e.preventDefault();
@@ -62,6 +77,7 @@
 		label="Then"
 		options={[
 			{ value: 'control', label: 'Control' },
+			{ value: 'run', label: 'Run' },
 			{ value: 'wait', label: 'Wait' },
 			{ value: 'notify', label: 'Notify' }
 		]}
@@ -70,6 +86,24 @@
 
 	{#if kind === 'control'}
 		<ActionFields bind:target bind:choice bind:params onready={(r) => (fieldsReady = r)} />
+	{:else if kind === 'run'}
+		{#if others.length}
+			<label class="field">
+				<span>Automation</span>
+				<select bind:value={runs} required>
+					<option value="" disabled>Pick an automation</option>
+					{#each others as a (a.uid)}<option value={a.uid}>{a.name}</option>{/each}
+				</select>
+			</label>
+			<p class="hint">
+				It does its Then right away, skipping its Only if, and this one carries on without waiting for it. Automations
+				can't run each other in a loop.
+			</p>
+		{:else}
+			<p class="hint">
+				{automations.loaded ? 'There are no other automations to run yet.' : 'Loading automations…'}
+			</p>
+		{/if}
 	{:else if kind === 'wait'}
 		<div class="amounts" role="group" aria-label="How long">
 			<input type="number" min="0" max="24" bind:value={wait.h} aria-label="Hours" /> h

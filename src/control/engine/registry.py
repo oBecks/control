@@ -742,13 +742,15 @@ class Registry:
             self._db.execute("DELETE FROM automation_runs WHERE automation = ?", (uid,))
             self._drop_hotkeys(uid)
             self._drop_dashboard_items()
+            self._trim_automations()  # the Actions that ran it
 
     def _trim_automations(self) -> None:
-        """Forgetting a Device or deleting a Group removes only the parts naming it (ADR 0012). One that
-        loses its last Trigger (it would quietly become manual-only) or its last Action is switched off."""
+        """Forgetting a Device or deleting a Group or Automation removes only the parts naming it (ADR
+        0012). One that loses its last Trigger (it would quietly become manual-only) or its last Action
+        is switched off."""
         from . import automations
 
-        targets = self.targets()
+        targets = self.targets() | self.automation_uids()
         for a in self.automations():
             gone = automations.targets_of(a) - targets
             if not gone:
@@ -762,7 +764,7 @@ class Registry:
             if lost:
                 self._db.execute(
                     "UPDATE automations SET enabled = 0, attention = ? WHERE uid = ?",
-                    (f"Switched off: its last {lost} was for a Device or Group that was removed", a.uid),
+                    (f"Switched off: its last {lost} was for a Device, Group or Automation that was removed", a.uid),
                 )
 
     # Runs

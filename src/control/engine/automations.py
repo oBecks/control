@@ -26,8 +26,11 @@ Conditions are checked once, when a Trigger fires: all of them, or any one (`mat
 
 An Action is one of:
     {"do": "toggle" | "set" | "step" | "press" | "open_app", "target": uid, ...}   a Hotkey's action
+    {"do": "run", "target": "automation:…"}   another Automation's Run (chaining): it skips that one's
+                                              Only if, and this Run goes on without waiting for it
     {"do": "wait", "seconds": 600}
     {"do": "notify", "text": "The AC is off"}
+An Automation never runs itself, even through others (`loop`); the loop guard stops the rest.
 """
 
 import datetime as dt
@@ -157,10 +160,10 @@ def check_step(a: dict) -> dict:
         if not isinstance(text, str) or not text.strip():
             raise ValueError("say what the notification says")
         return {"do": "notify", "text": text.strip()[:MAX_TEXT]}
-    if do in CONTROL:
+    if do in CONTROL or do == "run":
         _target(a)
         return a
-    raise ValueError(f"an Action is one of: {', '.join(CONTROL + ('wait', 'notify'))}")
+    raise ValueError(f"an Action is one of: {', '.join(CONTROL + ('run', 'wait', 'notify'))}")
 
 
 def _target(part: dict) -> str:
@@ -182,6 +185,34 @@ def targets_of(automation) -> set[str]:
     """Every Device or Group an Automation names."""
     parts = [*automation.triggers, *automation.conditions, *automation.actions]
     return {p["target"] for p in parts if "target" in p}
+
+
+def runs(actions: list[dict]) -> list[str]:
+    """The Automations these Actions run, in order."""
+    return [a["target"] for a in actions if a["do"] == "run"]
+
+
+def loop(uid: str, actions: list[dict], others: dict[str, list[dict]]) -> list[str] | None:
+    """The uids from `uid` back to itself if its `actions` would run it again, through the other
+    Automations' Actions (`others`: uid -> actions); None when they don't."""
+    path: list[str] = [uid]
+    seen: set[str] = set()
+
+    def via(actions: list[dict]) -> bool:
+        for nxt in runs(actions):
+            if nxt == uid:
+                path.append(uid)
+                return True
+            if nxt in seen:
+                continue
+            seen.add(nxt)
+            path.append(nxt)
+            if via(others.get(nxt, [])):
+                return True
+            path.pop()
+        return False
+
+    return path if via(actions) else None
 
 
 def listened(automation) -> set[str]:
@@ -262,12 +293,14 @@ def wait_label(seconds: int) -> str:
 
 
 def action_label(a: dict, name: str, buttons: dict[str, str], app_names: dict[str, str]) -> str:
-    """"Turn on Bulb 1", "Set AC to 24°, cool", "Wait 10 min", "Notify: The AC is off"."""
+    """"Turn on Bulb 1", "Set AC to 24°, cool", "Run Evening", "Wait 10 min", "Notify: The AC is off"."""
     do = a["do"]
     if do == "wait":
         return wait_label(a["seconds"])
     if do == "notify":
         return f"Notify: {a['text']}"
+    if do == "run":
+        return f"Run {name}"
     text = hotkeys.describe(a, buttons, app_names)
     if do == "toggle":
         return f"Toggle {name}"
