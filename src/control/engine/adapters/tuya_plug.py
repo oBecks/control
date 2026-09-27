@@ -11,6 +11,8 @@ from ..plug import PlugState
 
 # Tuya plugs expose their relay as data point 1 ("switch_1").
 _SWITCH_DP = "1"
+SOCKET_TIMEOUT = 3  # seconds per try; tinytuya tries twice
+CONNECT_SECONDS = 2 * SOCKET_TIMEOUT + 2  # the longest a connection attempt takes, with a margin
 
 
 class TuyaPlug:
@@ -52,7 +54,7 @@ class TuyaPlug:
 
 def _device(device_id: str, ip: str, local_key: str, version: str) -> tinytuya.OutletDevice:
     dev = tinytuya.OutletDevice(device_id, address=ip, local_key=local_key, version=float(version))
-    dev.set_socketTimeout(3)
+    dev.set_socketTimeout(SOCKET_TIMEOUT)
     dev.set_socketRetryLimit(1)
     return dev
 
@@ -106,11 +108,13 @@ class TuyaWatch:
             if self._dev is not None:
                 self._dev.close()
 
-    def wait_connected(self, seconds: float = 4.0) -> bool:
-        """Whether commands can go over this connection. While it's being opened, wait for it rather
-        than open a second one, which the plug would refuse."""
-        if self._connecting.is_set():
-            self._ready.wait(seconds)
+    def wait_connected(self) -> bool:
+        """Whether commands can go over this connection. While it's being opened, wait until that
+        attempt ends (it's bounded by the socket's timeout and one retry) rather than open a second
+        connection, which the plug would refuse."""
+        deadline = time.monotonic() + CONNECT_SECONDS
+        while self._connecting.is_set() and not self._ready.wait(0.1) and time.monotonic() < deadline:
+            pass
         return self.connected
 
     def switch(self, on: bool) -> None:
