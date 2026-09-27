@@ -15,7 +15,8 @@ const KINDS: Record<DashboardItemKind, Limits> = {
 	big_control: { minW: 2, minH: 1, maxH: 12 },
 	pad: { minW: 2, minH: 4, maxH: 24 },
 	button: { minW: 1, minH: 1, maxH: 6 },
-	clock: { minW: 1, minH: 1, maxH: 6 }
+	clock: { minW: 1, minH: 1, maxH: 6 },
+	run: { minW: 1, minH: 1, maxH: 6 }
 };
 
 /** A Big Control's own limits: a colour wheel needs room for the wheel and the white strip. */
@@ -195,11 +196,17 @@ export function clockItem(w = 2): NewDashboardItem {
 	return { id: newId(), kind: 'clock', w, h: 2 };
 }
 
+/** A Run Button: starts an Automation's Run. */
+export function runItem(target: string, w = 2): NewDashboardItem {
+	return { id: newId(), kind: 'run', w, h: 2, target };
+}
+
 /** What an item shows, to tell whether the same thing is on a Dashboard already: "tile:<uid>", "big_control:<uid>:colour"… */
 export function itemKey(item: NewDashboardItem): string {
 	switch (item.kind) {
 		case 'tile':
 		case 'pad':
+		case 'run':
 			return `${item.kind}:${item.target}`;
 		case 'big_control':
 			return `big_control:${item.target}:${item.control}`;

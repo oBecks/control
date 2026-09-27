@@ -9,6 +9,9 @@
 	import { api } from '$lib/api';
 	import { moveItem } from '$lib/dashboards/layout';
 	import { reorder } from '$lib/dashboards/reorder';
+	import HotkeyEditor from '$lib/hotkeys/HotkeyEditor.svelte';
+	import { hotkeys } from '$lib/hotkeys/hotkeys.svelte';
+	import TargetHotkeys from '$lib/hotkeys/TargetHotkeys.svelte';
 	import type { AutomationAction, Condition, HomeLocation, Labelled, Run, Trigger } from '$lib/types';
 	import Button from '$lib/ui/Button.svelte';
 	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
@@ -53,11 +56,18 @@
 	let ask = $state<{ title: string; confirmLabel: string; onconfirm: () => void } | null>(null);
 	/** The Actions' order while one is dragged. */
 	let dragged = $state<Labelled<AutomationAction>[] | null>(null);
+	/** The Hotkey editor, open on one of its Hotkeys (uid) or a new one (null). */
+	let hotkeyEditor = $state<{ uid: string | null } | null>(null);
+	const editingHotkey = $derived(hotkeyEditor?.uid ? hotkeys.list.find((h) => h.uid === hotkeyEditor?.uid) : undefined);
+	const hotkeyCount = $derived(saved ? hotkeys.forTarget(saved.uid).length : 0);
 
 	const changed = $derived(!!draft && JSON.stringify(plain(draft)) !== original);
 	const actions = $derived(dragged ?? draft?.actions ?? []);
 
 	$effect(() => automations.start());
+	$effect(() => {
+		hotkeys.load();
+	});
 	$effect(() => {
 		api.location().then(
 			(l) => (location = l),
@@ -147,7 +157,9 @@
 	async function deleteIt() {
 		if (!saved) return;
 		original = draft ? JSON.stringify(plain(draft)) : original; // nothing to lose any more
-		if (await automations.remove(saved.uid)) await goto(resolve('/automations'));
+		if (!(await automations.remove(saved.uid))) return;
+		hotkeys.load(); // its Hotkeys went with it
+		await goto(resolve('/automations'));
 	}
 
 	beforeNavigate((nav) => {
@@ -187,6 +199,14 @@
 		onconfirm={ask.onconfirm}
 		oncancel={() => (ask = null)}
 	/>
+{/if}
+
+{#if hotkeyEditor && saved}
+	<Sheet label="Hotkey" onclose={() => (hotkeyEditor = null)}>
+		{#key hotkeyEditor.uid}
+			<HotkeyEditor hotkey={editingHotkey} target={saved.uid} onclose={() => (hotkeyEditor = null)} />
+		{/key}
+	</Sheet>
 {/if}
 
 {#if editing && draft}
@@ -365,9 +385,19 @@
 				<RunHistory {runs} />
 			</section>
 
+			<TargetHotkeys
+				uid={saved.uid}
+				onadd={() => (hotkeyEditor = { uid: null })}
+				onopen={(h) => (hotkeyEditor = { uid: h })}
+			/>
+
 			<div class="danger">
 				{#if confirmDelete}
-					<p>Delete {saved.name} and its history?</p>
+					<p>
+						Delete {saved.name} and its history{hotkeyCount
+							? `, with its ${hotkeyCount === 1 ? 'Hotkey' : 'Hotkeys'}`
+							: ''}?
+					</p>
 					<div class="row">
 						<Button variant="secondary" size="sm" onclick={deleteIt}
 							><Trash2 size={15} strokeWidth={2.4} /> Delete</Button

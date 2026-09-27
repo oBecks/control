@@ -6,6 +6,7 @@
 	import { page } from '$app/state';
 	import { Bold, ChevronLeft, GripVertical, Pencil, Plus, Redo2, Trash2, Undo2, X } from '@lucide/svelte';
 	import { MediaQuery } from 'svelte/reactivity';
+	import { automations } from '$lib/automations/automations.svelte';
 	import AddItems from '$lib/dashboards/AddItems.svelte';
 	import ItemView from '$lib/dashboards/ItemView.svelte';
 	import { dashboards } from '$lib/dashboards/dashboards.svelte';
@@ -93,6 +94,12 @@
 	const rows = $derived(bottomOf(items, columns) + (arranging ? ROOM_BELOW : 0));
 	const pickedItem = $derived(items.find((i) => i.id === picked));
 	const placedKeys = $derived(new Set(items.map(itemKey)));
+
+	// Run Buttons show their Automation's name and whether it's running; Add item lists them.
+	const needsAutomations = $derived(adding || items.some((i) => i.kind === 'run'));
+	$effect(() => {
+		if (needsAutomations) return automations.start();
+	});
 
 	// A new, empty Dashboard opens ready to arrange.
 	$effect(() => {
@@ -236,6 +243,7 @@
 	function itemName(item: DashboardItem): string {
 		if (item.kind === 'heading') return `Heading ${item.text}`.trim();
 		if (item.kind === 'clock') return 'Clock';
+		if (item.kind === 'run') return `Run ${automations.get(item.target)?.name ?? 'automation'}`;
 		const name = home.nameOf(item.target) ?? KIND_NAMES[item.kind];
 		if (item.kind === 'big_control') return `${name} ${CONTROL_NAMES[item.control]}`;
 		if (item.kind === 'pad') return `${name} remote`;

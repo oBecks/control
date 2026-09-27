@@ -1,6 +1,9 @@
 <script lang="ts">
 	// A Dashboard item other than a Tile or Heading, with its Device's or Group's live state:
-	// a Big Control, a Remote Pad, a Single Button or a Clock.
+	// a Big Control, a Remote Pad, a Single Button or a Clock. Or a Run Button, with its Automation's.
+	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
+	import { automations } from '$lib/automations/automations.svelte';
 	import { home } from '$lib/home.svelte';
 	import type { DashboardItem, StateChange } from '$lib/types';
 	import BrightnessBar from './items/BrightnessBar.svelte';
@@ -24,7 +27,7 @@
 
 	let { item, inert = false, onopen }: Props = $props();
 
-	const uid = $derived('target' in item ? item.target : '');
+	const uid = $derived('target' in item && item.kind !== 'run' ? item.target : '');
 	const reading = $derived(uid ? home.stateOf(uid) : undefined);
 	const name = $derived(uid ? (home.nameOf(uid) ?? '') : '');
 	const offline = $derived.by(() => {
@@ -39,6 +42,18 @@
 
 {#if item.kind === 'clock'}
 	<Clock withDate={item.w >= 3} />
+{:else if item.kind === 'run'}
+	{@const target = item.target}
+	{@const automation = automations.get(target)}
+	<SingleButton
+		label={automation?.name ?? (automations.loaded ? 'Gone' : '…')}
+		device={automation?.running ? 'Running…' : 'Automation'}
+		lit={!!automation?.running}
+		missing={automations.loaded && !automation}
+		{inert}
+		onpress={() => automations.run(target)}
+		onopen={() => goto(resolve('/(app)/automations/[uid]', { uid: target }))}
+	/>
 {:else if !reading}
 	{@render unavailable(name ? '…' : 'Gone')}
 {:else if item.kind === 'big_control'}

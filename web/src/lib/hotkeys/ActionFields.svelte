@@ -1,6 +1,8 @@
 <script lang="ts">
 	// What an action does to a Device or Group: the Device or Group, then toggle, set, step, press or
-	// open an app, with its fields. Shared by Hotkeys and Automations (ADR 0012).
+	// open an app, with its fields. Shared by Hotkeys and Automations (ADR 0012). A Hotkey may run an
+	// Automation instead.
+	import { automations as automationStore } from '$lib/automations/automations.svelte';
 	import { home } from '$lib/home.svelte';
 	import { choicesFor, stepOf, type Abilities, type Choice, type Params } from './keys';
 
@@ -12,6 +14,8 @@
 		fixedTarget?: boolean;
 		/** Holding keys repeats steps and presses: say so. */
 		holdHint?: boolean;
+		/** Offer Automations too, to run (a Hotkey's). */
+		automations?: boolean;
 		/** Says whether everything the choice needs is filled in. */
 		onready?: (ready: boolean) => void;
 	}
@@ -22,18 +26,28 @@
 		params = $bindable(),
 		fixedTarget = false,
 		holdHint = false,
+		automations = false,
 		onready
 	}: Props = $props();
 
+	$effect(() => {
+		if (automations && !automationStore.loaded) automationStore.load();
+	});
+
+	const runnable = $derived(automations ? automationStore.list : []);
 	const targets = $derived([
 		...home.groups.map((g) => ({ uid: g.uid, name: g.name, group: true })),
-		...home.controllable.map((d) => ({ uid: d.uid, name: d.name, group: false }))
+		...home.controllable.map((d) => ({ uid: d.uid, name: d.name, group: false })),
+		...runnable.map((a) => ({ uid: a.uid, name: a.name, group: false }))
 	]);
 	const targetName = $derived(targets.find((t) => t.uid === target)?.name ?? '');
+	const isAutomation = $derived(target.startsWith('automation:'));
 
 	/** The target's features have been read (a Device's buttons and apps come with its state). */
-	const known = $derived(home.groups.some((g) => g.uid === target) || !!home.states[target]);
+	const known = $derived(isAutomation || home.groups.some((g) => g.uid === target) || !!home.states[target]);
 	const abilities = $derived.by((): Abilities => {
+		if (isAutomation)
+			return { control: 'automation', toggle: false, onOff: false, color: false, buttons: [], apps: [], modes: [] };
 		const group = home.groups.find((g) => g.uid === target);
 		if (group) {
 			const st = home.groupStates[group.uid];
@@ -117,15 +131,20 @@
 	<label class="field">
 		<span>For</span>
 		<select bind:value={target} required>
-			<option value="" disabled>Pick a device or group</option>
+			<option value="" disabled>Pick a device or group{automations ? ', or an automation' : ''}</option>
 			{#if home.groups.length}
 				<optgroup label="Groups">
 					{#each targets.filter((t) => t.group) as t (t.uid)}<option value={t.uid}>{t.name}</option>{/each}
 				</optgroup>
 			{/if}
 			<optgroup label="Devices">
-				{#each targets.filter((t) => !t.group) as t (t.uid)}<option value={t.uid}>{t.name}</option>{/each}
+				{#each home.controllable as d (d.uid)}<option value={d.uid}>{d.name}</option>{/each}
 			</optgroup>
+			{#if runnable.length}
+				<optgroup label="Automations">
+					{#each runnable as a (a.uid)}<option value={a.uid}>{a.name}</option>{/each}
+				</optgroup>
+			{/if}
 		</select>
 	</label>
 {/if}

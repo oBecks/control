@@ -11,6 +11,8 @@ from control.engine.registry import Registry
 from .test_api import client  # noqa: F401 (a fixture)
 from .test_groups import home  # noqa: F401 (a fixture)
 from .test_groups import make
+from .test_hotkeys import add as add_hotkey
+from .test_hotkeys import hk  # noqa: F401 (a fixture)
 
 JERUSALEM = sun.Location("Jerusalem, Israel", 31.78, 35.22)
 
@@ -388,3 +390,59 @@ def test_the_builder_previews_a_draft_without_saving_it(home):
     assert out["triggers"][0]["label"] == "At 07:05, on Sat, Sun"
     assert out["summary"] == "When: at 07:05, on Sat, Sun. Then: nothing yet."
     assert c.get("/api/automations").json() == []
+
+
+# --- Run Automation: Hotkeys and Dashboards --------------------------------------------------
+
+
+def test_a_hotkey_runs_an_automation_skipping_its_conditions(hk, runner):  # noqa: F811
+    c, light = hk["client"], hk["lights"]["yeelight:1"]
+    a = create(c, conditions=[{"type": "time", "after": "03:00", "before": "03:01"}])
+    h = add_hotkey(c, "F13", a["uid"], {"do": "run"})
+    assert (h["target_name"], h["action_label"], h["repeats"]) == ("Evening", "Run", False)
+    assert c.post(f"/api/hotkeys/{h['uid']}/run").json() == {"name": "Evening", "text": "Running", "level": None}
+    runner.join(a["uid"])
+    done = c.get(f"/api/automations/{a['uid']}/runs").json()[0]
+    assert (done["cause"], done["outcome"]) == ("Hotkey F13", "succeeded")
+    assert light.state.on
+
+
+def test_only_an_automation_runs_and_it_only_runs(hk):  # noqa: F811
+    c = hk["client"]
+    a = create(c)
+    assert "only an Automation runs" in add_hotkey(c, "F13", a["uid"], {"do": "toggle"}, 422)["detail"]
+    assert "only an Automation runs" in add_hotkey(c, "F13", "yeelight:1", {"do": "run"}, 422)["detail"]
+    assert add_hotkey(c, "F13", "automation:nope", {"do": "run"}, 404)
+
+
+def test_an_automation_cant_control_another_yet(home):
+    a = create(home["client"])
+    resp = home["client"].post("/api/automations", json={
+        "name": "Chain", "actions": [{"do": "run", "target": a["uid"]}]})
+    assert resp.status_code == 422
+
+
+def test_deleting_an_automation_deletes_its_hotkeys_and_run_buttons(hk):  # noqa: F811
+    c = hk["client"]
+    a, b = create(c), create(c, name="Morning")
+    add_hotkey(c, "F13", a["uid"], {"do": "run"})
+    add_hotkey(c, "F14", b["uid"], {"do": "run"})
+    items = [{"kind": "run", "target": a["uid"], "x": 0, "y": 0},
+             {"kind": "run", "target": b["uid"], "x": 2, "y": 0, "w": 4, "h": 1}]
+    d = c.post("/api/dashboards", json={"name": "A", "items": items}).json()
+    assert [(i["w"], i["h"]) for i in d["items"]] == [(2, 2), (4, 1)]
+
+    c.delete(f"/api/automations/{a['uid']}")
+    assert [h["keys"] for h in c.get("/api/hotkeys").json()["hotkeys"]] == ["F14"]
+    assert [i["target"] for i in c.get(f"/api/dashboards/{d['uid']}").json()["items"]] == [b["uid"]]
+    # Forgetting a Device keeps Run Buttons: they point at an Automation, not a Device.
+    c.delete("/api/devices/yeelight:2")
+    assert len(c.get(f"/api/dashboards/{d['uid']}").json()["items"]) == 1
+
+
+def test_a_run_button_points_at_an_automation_and_a_tile_doesnt(home):
+    c = home["client"]
+    a = create(c)
+    for item in ({"kind": "run", "target": "yeelight:1", "x": 0, "y": 0},
+                 {"kind": "tile", "target": a["uid"], "x": 0, "y": 0}):
+        assert c.post("/api/dashboards", json={"name": "A", "items": [item]}).status_code == 404

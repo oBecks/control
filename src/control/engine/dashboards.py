@@ -9,7 +9,7 @@ import secrets
 COLUMNS = (4, 6, 8)  # a phone's, a tablet's, a desktop's
 
 # Each item kind: the smallest and largest height in rows, the fewest columns, its default (w, h), and
-# whether it points at a Device or Group. A default width of 0 means the whole grid.
+# whether it points at a Device or Group (a Run Button: an Automation). A default width of 0 means the whole grid.
 KINDS: dict[str, dict] = {
     "tile": {"rows": (2, 12), "cols": 1, "default": (2, 2), "targeted": True},
     "heading": {"rows": (1, 6), "cols": 1, "default": (0, 1), "targeted": False},
@@ -20,6 +20,8 @@ KINDS: dict[str, dict] = {
     # A Single Button: one remote button, or one Streamer App Shortcut.
     "button": {"rows": (1, 6), "cols": 1, "default": (1, 2), "targeted": True},
     "clock": {"rows": (1, 6), "cols": 1, "default": (2, 2), "targeted": False},
+    # A Run Button: starts an Automation's Run, skipping its Conditions (ADR 0012).
+    "run": {"rows": (1, 6), "cols": 1, "default": (2, 2), "targeted": True},
 }
 # A Big Control's kinds, each with its own sizes in place of the "big_control" kind's.
 CONTROLS: dict[str, dict] = {
@@ -50,9 +52,9 @@ def _whole(value, what: str) -> int:
     return value
 
 
-def check_items(items: list[dict], targets: set[str], columns: int) -> list[dict]:
+def check_items(items: list[dict], targets: set[str], columns: int, automations: set[str] = frozenset()) -> list[dict]:
     """The items as stored: known kinds, sizes and cells inside the grid, not overlapping, targets
-    that exist, one id each (new ones get one)."""
+    that exist (Devices and Groups, or `automations` for a Run Button), one id each (new ones get one)."""
     if len(items) > MAX_ITEMS:
         raise ValueError(f"a dashboard holds at most {MAX_ITEMS} items")
     out, ids, taken = [], set(), set()
@@ -93,7 +95,9 @@ def check_items(items: list[dict], targets: set[str], columns: int) -> list[dict
         kept = {"id": item_id, "kind": kind, "x": x, "y": y, "w": w, "h": h}
         if spec["targeted"]:
             target = item.get("target")
-            if target not in targets:
+            if kind == "run" and target not in automations:
+                raise LookupError(f"no Automation '{target}'")
+            if kind != "run" and target not in targets:
                 raise LookupError(f"no device or group '{target}'")
             kept["target"] = target
         if kind == "big_control":

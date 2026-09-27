@@ -73,7 +73,7 @@ Claude Code inside the Claude app uses the same connection. For the `claude` CLI
 | `edit_group` | Renames a Group or changes its devices |
 | `delete_group` | Deletes a Group |
 | `list_hotkeys` | Lists your Hotkeys |
-| `create_hotkey` | Makes a Hotkey, like Ctrl+Alt+L to toggle a light |
+| `create_hotkey` | Makes a Hotkey, like Ctrl+Alt+L to toggle a light or run an Automation |
 | `delete_hotkey` | Deletes a Hotkey |
 | `list_automations` | Lists your Automations |
 | `get_automation` | Reads one Automation and how its recent Runs went |
