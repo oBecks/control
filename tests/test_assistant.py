@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import anyio
 import httpx
@@ -287,17 +288,17 @@ def claude_desktop(tmp_path, monkeypatch):
 def test_connect_keeps_the_rest_of_claudes_config(claude_desktop):
     theirs = {"mcpServers": {"other": {"command": "x"}}, "preferences": {"theme": "dark"}}
     claude_desktop.write_text(json.dumps(theirs), encoding="utf-8")
-    assert claude.status() == "off"
+    assert claude.status() == ("off", None)
     claude.connect()
     config = json.loads(claude_desktop.read_text(encoding="utf-8"))
     assert config["preferences"] == {"theme": "dark"}
     assert config["mcpServers"]["other"] == {"command": "x"}
     assert config["mcpServers"]["control"]["args"][-1] == "--mcp"
     assert json.loads(claude_desktop.with_name(claude.CONFIG + ".bak").read_text(encoding="utf-8")) == theirs
-    assert claude.status() == "connected"
+    assert claude.status() == ("connected", None)
     claude.disconnect()
     assert json.loads(claude_desktop.read_text(encoding="utf-8")) == theirs
-    assert claude.status() == "off"
+    assert claude.status() == ("off", None)
 
 
 def test_connect_creates_the_file_when_claude_has_none(claude_desktop):
@@ -307,10 +308,25 @@ def test_connect_creates_the_file_when_claude_has_none(claude_desktop):
 
 def test_a_broken_config_is_left_alone(claude_desktop):
     claude_desktop.write_text("{not json", encoding="utf-8")
+    state, why = claude.status()
+    assert state == "broken" and "isn't valid JSON" in why and str(claude_desktop) in why
     with pytest.raises(ValueError, match="isn't valid JSON"):
         claude.connect()
     claude.disconnect()
     assert claude_desktop.read_text(encoding="utf-8") == "{not json"
+
+
+def test_an_unreadable_config_is_broken(claude_desktop, monkeypatch):
+    claude_desktop.write_text("{}", encoding="utf-8")
+
+    def denied(*args, **kwargs):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(Path, "read_text", denied)
+    state, why = claude.status()
+    assert state == "broken" and "can't be read" in why and "denied" not in why
+    with pytest.raises(ValueError, match="can't be read"):
+        claude.connect()
 
 
 def test_the_store_install_is_connected_too(claude_desktop, tmp_path):
@@ -320,23 +336,32 @@ def test_the_store_install_is_connected_too(claude_desktop, tmp_path):
     assert "control" in json.loads((store / claude.CONFIG).read_text(encoding="utf-8"))["mcpServers"]
 
 
+def test_only_one_install_connected_is_partial(claude_desktop, tmp_path):
+    claude.connect()
+    store = tmp_path / "Local" / "Packages" / "Claude_abc123" / "LocalCache" / "Roaming" / "Claude"
+    store.mkdir(parents=True)  # the Store install came later
+    assert claude.status() == ("partial", None)
+    claude.connect()
+    assert claude.status() == ("connected", None)
+
+
 def test_another_controls_entry_is_outdated_and_not_ours_to_remove(claude_desktop):
     theirs = {"mcpServers": {"control": {"command": "D:\\old\\Control.exe"}}}
     claude_desktop.write_text(json.dumps(theirs), encoding="utf-8")
-    assert claude.status() == "outdated"
+    assert claude.status() == ("outdated", None)
     claude.disconnect()  # e.g. uninstalling this copy
     assert json.loads(claude_desktop.read_text(encoding="utf-8")) == theirs
 
 
 def test_odd_mcp_servers_value_reads_as_off(claude_desktop):
     claude_desktop.write_text(json.dumps({"mcpServers": "?"}), encoding="utf-8")
-    assert claude.status() == "off"
+    assert claude.status() == ("off", None)
 
 
 def test_without_claude_desktop(tmp_path, monkeypatch):
     monkeypatch.setenv("APPDATA", str(tmp_path))
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    assert claude.status() == "missing"
+    assert claude.status() == ("missing", None)
     with pytest.raises(LookupError):
         claude.connect()
 
@@ -345,8 +370,22 @@ def test_connect_from_settings(client, claude_desktop):  # noqa: F811
     assert client.get("/api/assistant").json()["claude_desktop"] == "off"
     body = client.put("/api/assistant/claude").json()
     assert body["claude_desktop"] == "connected"
-    assert "claude mcp add --scope user control --" in body["claude_code_command"]
     assert client.delete("/api/assistant/claude").json()["claude_desktop"] == "off"
+
+
+def test_a_broken_config_is_explained_before_connecting(client, claude_desktop):  # noqa: F811
+    claude_desktop.write_text("{not json", encoding="utf-8")
+    body = client.get("/api/assistant").json()
+    assert body["claude_desktop"] == "broken" and "isn't valid JSON" in body["claude_desktop_error"]
+
+
+def test_the_claude_code_command_needs_the_claude_cli(client, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(claude.shutil, "which", lambda name: None)
+    assert client.get("/api/assistant").json()["claude_code_command"] is None
+    monkeypatch.setattr(claude.shutil, "which", lambda name: r"C:\bin\claude.cmd")
+    monkeypatch.setattr(claude, "command", lambda: [r"C:\Users\me\Control.exe", "--mcp"])
+    assert client.get("/api/assistant").json()["claude_code_command"] == (
+        r'claude mcp add --scope user control -- "C:\Users\me\Control.exe" --mcp')
 
 
 def test_connect_errors_reach_the_user(client, claude_desktop):  # noqa: F811
@@ -365,7 +404,10 @@ def test_phones_cant_connect_claude(client, claude_desktop):  # noqa: F811
     approve(client, p)
     assert p.get("/api/assistant").json()["can_change"] is False
     assert p.put("/api/assistant/claude").status_code == 403
-    assert claude.status() == "off"
+    assert claude.status() == ("off", None)
+    claude_desktop.write_text("{not json", encoding="utf-8")
+    body = p.get("/api/assistant").json()
+    assert body["claude_desktop"] == "broken" and body["claude_desktop_error"] is None  # the path is this PC's
 
 
 # --- After an update, say to restart Claude until the new server calls -------------------------
@@ -376,7 +418,7 @@ def test_after_an_update_settings_say_to_restart_claude_until_the_new_server_cal
     from control.api import assistant as assistant_api
 
     monkeypatch.setattr(assistant_api, "_restart_pending", None)
-    monkeypatch.setattr(claude, "status", lambda: "connected")
+    monkeypatch.setattr(claude, "status", lambda: ("connected", None))
     r = Registry()
     r.set_setting("version", "0.0.1")  # the Engine last ran an older Control
     r.close()
@@ -391,10 +433,10 @@ def test_the_restart_note_can_be_dismissed_and_needs_claude(client, monkeypatch)
     from control.api import assistant as assistant_api
 
     monkeypatch.setattr(assistant_api, "_restart_pending", None)
-    monkeypatch.setattr(claude, "status", lambda: "off")
+    monkeypatch.setattr(claude, "status", lambda: ("off", None))
     # No version recorded yet but devices exist: an update from before the note.
     assert client.get("/api/assistant").json()["restart_claude"] is None  # Claude isn't connected
-    monkeypatch.setattr(claude, "status", lambda: "connected")
+    monkeypatch.setattr(claude, "status", lambda: ("connected", None))
     assert client.get("/api/assistant").json()["restart_claude"] is not None
     assert client.delete("/api/assistant/restart-note").json()["restart_claude"] is None
     assert client.get("/api/assistant").json()["restart_claude"] is None

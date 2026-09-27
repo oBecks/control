@@ -1,7 +1,8 @@
 <script lang="ts">
 	// Settings → Assistant (ADR 0005): Connect Claude writes Claude Desktop's config so Claude starts
-	// Control's MCP server; Claude Code gets a command to paste. Only on the computer running Control,
-	// since both are about that computer's programs.
+	// Control's MCP server; Claude Code gets a command to paste when its CLI is installed (inside the
+	// Claude app it uses Claude Desktop's config). Only on the computer running Control, since both are
+	// about that computer's programs.
 	import { Check, Copy } from '@lucide/svelte';
 	import { api, type Assistant } from '$lib/api';
 	import { home } from '$lib/home.svelte';
@@ -41,7 +42,7 @@
 	}
 
 	async function copyCommand() {
-		if (!status) return;
+		if (!status?.claude_code_command) return;
 		try {
 			await navigator.clipboard.writeText(status.claude_code_command);
 			copied = true;
@@ -70,6 +71,10 @@
 						Connected
 					{:else if status.claude_desktop === 'outdated'}
 						Connected to another copy of Control
+					{:else if status.claude_desktop === 'partial'}
+						Connected in only one of its two installs
+					{:else if status.claude_desktop === 'broken'}
+						{status.claude_desktop_error}
 					{:else}
 						Not connected
 					{/if}
@@ -77,9 +82,9 @@
 			</span>
 			{#if status.claude_desktop === 'connected'}
 				<Button size="sm" variant="ghost" disabled={busy} onclick={() => setConnected(false)}>Disconnect</Button>
-			{:else if status.claude_desktop !== 'missing'}
+			{:else if status.claude_desktop !== 'missing' && status.claude_desktop !== 'broken'}
 				<Button size="sm" variant="primary" disabled={busy} onclick={() => setConnected(true)}>
-					{status.claude_desktop === 'outdated' ? 'Connect again' : 'Connect Claude'}
+					{status.claude_desktop === 'off' ? 'Connect Claude' : 'Connect again'}
 				</Button>
 			{/if}
 		</div>
@@ -98,18 +103,24 @@
 		<div class="code">
 			<span class="what">
 				<strong>Claude Code</strong>
-				<small>Run this once in a terminal:</small>
+				{#if status.claude_code_command}
+					<small>Run this once in a terminal:</small>
+				{:else}
+					<small>In the Claude app, Claude Code uses the Claude Desktop connection above.</small>
+				{/if}
 			</span>
-			<div class="command">
-				<code>{status.claude_code_command}</code>
-				<Button size="sm" variant="ghost" onclick={copyCommand} aria-label="Copy the command">
-					{#if copied}<Check size={16} strokeWidth={2.3} />{:else}<Copy size={16} strokeWidth={2.3} />{/if}
-				</Button>
-			</div>
+			{#if status.claude_code_command}
+				<div class="command">
+					<code>{status.claude_code_command}</code>
+					<Button size="sm" variant="ghost" onclick={copyCommand} aria-label="Copy the command">
+						{#if copied}<Check size={16} strokeWidth={2.3} />{:else}<Copy size={16} strokeWidth={2.3} />{/if}
+					</Button>
+				</div>
+			{/if}
 		</div>
 		<p class="hint">
-			Claude asks you before it changes anything, unless you tell it not to. Other assistants that support MCP can run
-			the same command.
+			Claude asks you before it changes anything, unless you tell it not to. Other assistants that support MCP can start
+			<code class="inline">Control.exe --mcp</code> as a local server.
 		</p>
 	</section>
 {/if}
@@ -143,10 +154,12 @@
 	.what {
 		display: flex;
 		flex-direction: column;
+		min-inline-size: 0;
 	}
 	.what small {
 		color: var(--text-2);
 		font-size: var(--fs-sm);
+		overflow-wrap: anywhere; /* a broken config's message holds its path */
 	}
 	.note {
 		padding: var(--s-3) var(--s-4);
@@ -175,11 +188,14 @@
 		border: 1px solid var(--border);
 		background: var(--surface);
 	}
-	code {
+	.command code {
 		flex: 1;
 		min-inline-size: 0;
 		padding-block: var(--s-2);
 		overflow-wrap: break-word;
 		font-size: var(--fs-sm);
+	}
+	code.inline {
+		font-size: inherit;
 	}
 </style>

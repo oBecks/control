@@ -75,11 +75,13 @@ def test_settings_show_a_found_update(pc, in_app):
 def test_an_update_says_to_restart_claude_only_when_claude_uses_control(pc, in_app, monkeypatch):
     from control.assistant import claude
 
-    monkeypatch.setattr(claude, "status", lambda: "connected")
+    monkeypatch.setattr(claude, "status", lambda: ("connected", None))
     assert pc.get("/api/desktop").json()["claude_connected"] is False  # no update, nothing to say
     desktop_api.state.update = updates.Update("0.3.0", "https://example.test/ControlSetup.exe")
     assert pc.get("/api/desktop").json()["claude_connected"] is True
-    monkeypatch.setattr(claude, "status", lambda: "off")
+    monkeypatch.setattr(claude, "status", lambda: ("partial", None))
+    assert pc.get("/api/desktop").json()["claude_connected"] is True
+    monkeypatch.setattr(claude, "status", lambda: ("off", None))
     assert pc.get("/api/desktop").json()["claude_connected"] is False
 
 

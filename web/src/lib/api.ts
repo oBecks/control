@@ -310,10 +310,15 @@ export interface DesktopApp {
 }
 
 export interface Assistant {
-	/** missing: not installed on this PC. outdated: connected to another copy of Control. */
-	claude_desktop: 'missing' | 'connected' | 'outdated' | 'off';
-	/** Adds Control to Claude Code. */
-	claude_code_command: string;
+	/**
+	 * missing: not installed on this PC. broken: a settings file Control won't touch.
+	 * outdated: connected to another copy of Control. partial: only one of its two installs.
+	 */
+	claude_desktop: 'missing' | 'broken' | 'connected' | 'outdated' | 'partial' | 'off';
+	/** Why it's broken. */
+	claude_desktop_error: string | null;
+	/** Adds Control to Claude Code; null without the claude CLI on this PC. */
+	claude_code_command: string | null;
 	/** Control was updated to this version and Claude still runs the old tools: restart Claude. */
 	restart_claude: string | null;
 	/** Only on the computer running the Engine. */
