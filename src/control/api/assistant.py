@@ -68,7 +68,8 @@ def _status(request: Request) -> AssistantOut:
     with closing(Registry()) as r:
         _note_version(r)
         restart = __version__ if _restart_pending and status in ("connected", "outdated", "partial") else None
-    return AssistantOut(claude_desktop=status, claude_desktop_error=error,
+    # The reason holds a path on this PC: only for this PC, the only one that shows it.
+    return AssistantOut(claude_desktop=status, claude_desktop_error=error if request.state.local else None,
                         claude_code_command=claude.claude_code_command(),
                         can_change=request.state.local, restart_claude=restart)
 

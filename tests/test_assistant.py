@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import anyio
 import httpx
@@ -315,6 +316,19 @@ def test_a_broken_config_is_left_alone(claude_desktop):
     assert claude_desktop.read_text(encoding="utf-8") == "{not json"
 
 
+def test_an_unreadable_config_is_broken(claude_desktop, monkeypatch):
+    claude_desktop.write_text("{}", encoding="utf-8")
+
+    def denied(*args, **kwargs):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(Path, "read_text", denied)
+    state, why = claude.status()
+    assert state == "broken" and "can't be read" in why and "denied" not in why
+    with pytest.raises(ValueError, match="can't be read"):
+        claude.connect()
+
+
 def test_the_store_install_is_connected_too(claude_desktop, tmp_path):
     store = tmp_path / "Local" / "Packages" / "Claude_abc123" / "LocalCache" / "Roaming" / "Claude"
     store.mkdir(parents=True)
@@ -391,6 +405,9 @@ def test_phones_cant_connect_claude(client, claude_desktop):  # noqa: F811
     assert p.get("/api/assistant").json()["can_change"] is False
     assert p.put("/api/assistant/claude").status_code == 403
     assert claude.status() == ("off", None)
+    claude_desktop.write_text("{not json", encoding="utf-8")
+    body = p.get("/api/assistant").json()
+    assert body["claude_desktop"] == "broken" and body["claude_desktop_error"] is None  # the path is this PC's
 
 
 # --- After an update, say to restart Claude until the new server calls -------------------------

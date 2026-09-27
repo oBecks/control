@@ -50,6 +50,8 @@ def _read(path: Path) -> dict:
         config = json.loads(path.read_text(encoding="utf-8") or "{}")
     except (ValueError, UnicodeDecodeError):
         raise ValueError(f"Claude's settings file isn't valid JSON, so Control left it alone: {path}") from None
+    except OSError:
+        raise ValueError(f"Claude's settings file can't be read, so Control left it alone: {path}") from None
     if not isinstance(config, dict):
         raise ValueError(f"Claude's settings file isn't a JSON object, so Control left it alone: {path}")
     return config
