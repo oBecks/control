@@ -184,3 +184,86 @@ export interface Dashboard {
 	columns: 4 | 6 | 8;
 	items: DashboardItem[];
 }
+
+// --- Automations (ADR 0006, 0012; engine/automations.py) ---------------------------
+
+/** Weekday numbers, Monday 0 to Sunday 6. */
+export type Weekday = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+
+/** The "When" of an Automation: any one starts a Run. Times are "HH:MM", the PC's local time. */
+export type Trigger =
+	| { type: 'time'; at: string; days: Weekday[] }
+	/** offset: minutes before (negative) or after. */
+	| { type: 'sun'; event: 'sunrise' | 'sunset'; offset: number; days: Weekday[] };
+
+/** The "Only if": checked once when a Trigger fires. */
+export type Condition =
+	| { type: 'state'; target: string; on: boolean }
+	| { type: 'app'; target: string; app: string }
+	/** May cross midnight. */
+	| { type: 'time'; after: string; before: string }
+	| { type: 'days'; days: Weekday[] }
+	| { type: 'sun'; is: 'dark' | 'light' };
+
+/** The "Then", in order: a Hotkey's action on a Device or Group, a wait, or a notification. */
+export type AutomationAction =
+	(HotkeyAction & { target: string }) | { do: 'wait'; seconds: number } | { do: 'notify'; text: string };
+
+/** A part as the Engine sends it back: with its plain-language label. */
+export type Labelled<T> = T & { label: string };
+
+export type RunOutcome = 'running' | 'succeeded' | 'partly_failed' | 'skipped' | 'missed' | 'interrupted' | 'restarted';
+
+/** One time an Automation went. */
+export interface Run {
+	id: number;
+	/** e.g. "At 07:00, every day" or "Run by hand". */
+	cause: string;
+	/** Seconds since 1970. */
+	started: number;
+	ended: number | null;
+	outcome: RunOutcome;
+	steps: { label: string; result: 'done' | 'failed' | 'not_run'; detail?: string; wait?: boolean }[];
+	/** e.g. which Condition wasn't met. */
+	note: string;
+}
+
+export interface Automation {
+	uid: string;
+	name: string;
+	enabled: boolean;
+	/** The Conditions: all must hold, or any one. */
+	match: 'all' | 'any';
+	triggers: Labelled<Trigger>[];
+	conditions: Labelled<Condition>[];
+	actions: Labelled<AutomationAction>[];
+	/** The whole Automation in plain language. */
+	summary: string;
+	/** Why it switched itself off, e.g. a Device it used was forgotten. */
+	attention: string | null;
+	made_by: 'user' | 'assistant';
+	running: boolean;
+	last_run: Run | null;
+	/** When a Trigger fires next (seconds since 1970), if it's on and has one. */
+	next_run: number | null;
+}
+
+/** The home's location, for sunrise and sunset, with today's times ("HH:MM"). */
+export interface HomeLocation {
+	name: string;
+	lat: number;
+	lon: number;
+	sunrise: string | null;
+	sunset: string | null;
+}
+
+/** A notification from an Automation, also shown as a Windows notification on the PC. */
+export interface Notice {
+	id: number;
+	time: number;
+	/** The Automation's name. */
+	title: string;
+	text: string;
+	automation: string | null;
+	seen: boolean;
+}

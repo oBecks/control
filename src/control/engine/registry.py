@@ -101,7 +101,44 @@ CREATE TABLE IF NOT EXISTS dashboards (
     position  INTEGER NOT NULL,             -- order in the Dashboards list
     created   REAL NOT NULL
 );
+-- Automations (ADR 0006, 0012): When (triggers) -> Only if (conditions) -> Then (actions), engine/automations.py.
+CREATE TABLE IF NOT EXISTS automations (
+    uid         TEXT PRIMARY KEY,
+    name        TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    enabled     INTEGER NOT NULL DEFAULT 1,
+    match       TEXT NOT NULL DEFAULT 'all',   -- the Conditions: 'all' or 'any'
+    triggers    TEXT NOT NULL DEFAULT '[]',    -- JSON
+    conditions  TEXT NOT NULL DEFAULT '[]',
+    actions     TEXT NOT NULL DEFAULT '[]',
+    attention   TEXT,                          -- why it switched itself off, e.g. its last Action's Device was forgotten
+    made_by     TEXT NOT NULL DEFAULT 'user',  -- 'user' or 'assistant'
+    armed       REAL NOT NULL,                 -- since when its Triggers count: earlier times aren't missed Runs
+    created     REAL NOT NULL
+);
+-- Each Automation's last Runs (RUNS_KEPT).
+CREATE TABLE IF NOT EXISTS automation_runs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    automation  TEXT NOT NULL,
+    cause       TEXT NOT NULL,                 -- what started it, e.g. "At 07:00, every day" or "Run by hand"
+    started     REAL NOT NULL,
+    ended       REAL,
+    outcome     TEXT NOT NULL,                 -- engine/automations.py OUTCOMES
+    steps       TEXT NOT NULL DEFAULT '[]',    -- JSON: [{"label", "result": done|failed|not_run, "detail"?}]
+    note        TEXT NOT NULL DEFAULT ''       -- e.g. which Condition wasn't met
+);
+-- Notifications from Automations: a Windows notification from the tray, and a notice in the UI.
+CREATE TABLE IF NOT EXISTS notices (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    time        REAL NOT NULL,
+    title       TEXT NOT NULL,
+    text        TEXT NOT NULL,
+    automation  TEXT,
+    seen        INTEGER NOT NULL DEFAULT 0
+);
 """
+
+RUNS_KEPT = 50  # per Automation (ADR 0012)
+NOTICES_KEPT = 50
 
 
 def _hash_token(token: str) -> str:
@@ -170,6 +207,42 @@ class Dashboard:
     name: str
     columns: int
     items: list[dict]  # engine/dashboards.py
+
+
+@dataclass
+class Automation:
+    uid: str
+    name: str
+    enabled: bool
+    match: str  # the Conditions: "all" or "any"
+    triggers: list[dict]  # engine/automations.py
+    conditions: list[dict]
+    actions: list[dict]
+    attention: str | None  # why it switched itself off
+    made_by: str  # "user" or "assistant"
+    armed: float  # since when its Triggers count
+
+
+@dataclass
+class Run:
+    id: int
+    automation: str
+    cause: str
+    started: float
+    ended: float | None
+    outcome: str
+    steps: list[dict]
+    note: str
+
+
+@dataclass
+class Notice:
+    id: int
+    time: float
+    title: str
+    text: str
+    automation: str | None
+    seen: bool
 
 
 @dataclass
@@ -287,6 +360,7 @@ class Registry:
             self._leave_groups(uid)
             self._drop_hotkeys(uid)
             self._drop_dashboard_items()
+            self._trim_automations()
 
     # --- Links ---------------------------------------------------------------
 
@@ -424,6 +498,7 @@ class Registry:
             self._leave_groups(uid)
             self._drop_hotkeys(uid)
             self._drop_dashboard_items()
+            self._trim_automations()
 
     # --- Groups --------------------------------------------------------------
 
@@ -468,6 +543,7 @@ class Registry:
                 raise LookupError(f"no group '{uid}'")
             self._drop_hotkeys(uid)
             self._drop_dashboard_items()
+            self._trim_automations()
 
     def _set_members(self, uid: str, members: list[str]) -> None:
         self._db.execute("DELETE FROM group_members WHERE group_uid = ?", (uid,))
@@ -598,6 +674,153 @@ class Registry:
             if len(kept) != len(items):
                 self._db.execute("UPDATE dashboards SET items = ? WHERE uid = ?", (json.dumps(kept), r["uid"]))
 
+    # --- Automations -----------------------------------------------------------
+
+    def add_automation(self, name: str, triggers: list[dict], conditions: list[dict], actions: list[dict],
+                       match: str = "all", enabled: bool = True, made_by: str = "user") -> str:
+        uid = f"automation:{uuid.uuid4().hex[:12]}"
+        try:
+            with self._db:
+                self._db.execute(
+                    """INSERT INTO automations (uid, name, enabled, match, triggers, conditions, actions, made_by,
+                                              armed, created)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (uid, name, int(enabled), match, json.dumps(triggers), json.dumps(conditions),
+                     json.dumps(actions), made_by, time.time(), time.time()),
+                )
+        except sqlite3.IntegrityError:
+            raise ValueError(f"an Automation named '{name}' already exists") from None
+        return uid
+
+    def automations(self) -> list[Automation]:
+        rows = self._db.execute("SELECT * FROM automations ORDER BY created").fetchall()
+        return [self._to_automation(r) for r in rows]
+
+    def get_automation(self, uid: str) -> Automation:
+        row = self._db.execute("SELECT * FROM automations WHERE uid = ?", (uid,)).fetchone()
+        if row is None:
+            raise LookupError(f"no Automation '{uid}'")
+        return self._to_automation(row)
+
+    def update_automation(self, uid: str, name: str | None = None, enabled: bool | None = None,
+                          match: str | None = None, triggers: list[dict] | None = None,
+                          conditions: list[dict] | None = None, actions: list[dict] | None = None) -> None:
+        """Change what's given. Any change clears `attention`: the user has looked at it since."""
+        self.get_automation(uid)  # 404s early
+        values = {"name": name, "enabled": None if enabled is None else int(enabled), "match": match}
+        values |= {k: json.dumps(v) for k, v in (("triggers", triggers), ("conditions", conditions),
+                                                  ("actions", actions)) if v is not None}
+        try:
+            with self._db:
+                for column, value in values.items():
+                    if value is not None:
+                        self._db.execute(f"UPDATE automations SET {column} = ? WHERE uid = ?", (value, uid))  # noqa: S608
+                self._db.execute("UPDATE automations SET attention = NULL WHERE uid = ?", (uid,))
+                if triggers is not None or enabled:
+                    self._db.execute("UPDATE automations SET armed = ? WHERE uid = ?", (time.time(), uid))
+        except sqlite3.IntegrityError:
+            raise ValueError(f"an Automation named '{name}' already exists") from None
+
+    def forget_automation(self, uid: str) -> None:
+        with self._db:
+            if self._db.execute("DELETE FROM automations WHERE uid = ?", (uid,)).rowcount == 0:
+                raise LookupError(f"no Automation '{uid}'")
+            self._db.execute("DELETE FROM automation_runs WHERE automation = ?", (uid,))
+
+    def _trim_automations(self) -> None:
+        """Forgetting a Device or deleting a Group removes only the parts naming it (ADR 0012). One that
+        loses its last Trigger (it would quietly become manual-only) or its last Action is switched off."""
+        from . import automations
+
+        targets = self.targets()
+        for a in self.automations():
+            gone = automations.targets_of(a) - targets
+            if not gone:
+                continue
+            triggers, conditions, actions = automations.without(a.triggers, a.conditions, a.actions, gone)
+            lost = ("Trigger" if a.triggers and not triggers else None) or ("Action" if not actions else None)
+            self._db.execute(
+                "UPDATE automations SET triggers = ?, conditions = ?, actions = ? WHERE uid = ?",
+                (json.dumps(triggers), json.dumps(conditions), json.dumps(actions), a.uid),
+            )
+            if lost:
+                self._db.execute(
+                    "UPDATE automations SET enabled = 0, attention = ? WHERE uid = ?",
+                    (f"Switched off: its last {lost} was for a Device or Group that was removed", a.uid),
+                )
+
+    # Runs
+
+    def add_run(self, automation: str, cause: str, outcome: str = "running", steps: list[dict] | None = None,
+                started: float | None = None) -> int:
+        now = time.time()
+        with self._db:
+            cur = self._db.execute(
+                "INSERT INTO automation_runs (automation, cause, started, ended, outcome, steps) VALUES (?, ?, ?, ?, ?, ?)",
+                (automation, cause, started or now, None if outcome == "running" else now, outcome,
+                 json.dumps(steps or [])),
+            )
+            self._db.execute(
+                """DELETE FROM automation_runs WHERE automation = ? AND id NOT IN
+                   (SELECT id FROM automation_runs WHERE automation = ? ORDER BY id DESC LIMIT ?)""",
+                (automation, automation, RUNS_KEPT),
+            )
+        return cur.lastrowid
+
+    def update_run(self, run_id: int, steps: list[dict], outcome: str = "running", note: str = "") -> None:
+        """Save a Run's progress; any outcome but running ends it."""
+        ended = None if outcome == "running" else time.time()
+        with self._db:
+            self._db.execute("UPDATE automation_runs SET steps = ?, outcome = ?, ended = ?, note = ? WHERE id = ?",
+                             (json.dumps(steps), outcome, ended, note, run_id))
+
+    def runs(self, automation: str | None = None, limit: int = RUNS_KEPT, outcome: str | None = None) -> list[Run]:
+        """Newest first."""
+        where, args = [], []
+        if automation is not None:
+            where.append("automation = ?")
+            args.append(automation)
+        if outcome is not None:
+            where.append("outcome = ?")
+            args.append(outcome)
+        sql = "SELECT * FROM automation_runs" + (" WHERE " + " AND ".join(where) if where else "")
+        rows = self._db.execute(sql + " ORDER BY id DESC LIMIT ?", (*args, limit)).fetchall()
+        return [self._to_run(r) for r in rows]
+
+    def last_runs(self) -> dict[str, Run]:
+        """Each Automation's latest Run."""
+        rows = self._db.execute(
+            "SELECT * FROM automation_runs WHERE id IN (SELECT MAX(id) FROM automation_runs GROUP BY automation)"
+        ).fetchall()
+        return {r["automation"]: self._to_run(r) for r in rows}
+
+    # Notices
+
+    def add_notice(self, title: str, text: str, automation: str | None = None) -> int:
+        with self._db:
+            cur = self._db.execute(
+                "INSERT INTO notices (time, title, text, automation) VALUES (?, ?, ?, ?)",
+                (time.time(), title, text, automation),
+            )
+            self._db.execute(
+                "DELETE FROM notices WHERE id NOT IN (SELECT id FROM notices ORDER BY id DESC LIMIT ?)", (NOTICES_KEPT,)
+            )
+        return cur.lastrowid
+
+    def notices(self, after: int = 0, unseen: bool = False) -> list[Notice]:
+        """Oldest first."""
+        sql = "SELECT * FROM notices WHERE id > ?" + (" AND seen = 0" if unseen else "") + " ORDER BY id"
+        return [Notice(id=r["id"], time=r["time"], title=r["title"], text=r["text"], automation=r["automation"],
+                       seen=bool(r["seen"])) for r in self._db.execute(sql, (after,)).fetchall()]
+
+    def mark_notices_seen(self, ids: list[int] | None = None) -> None:
+        """All of them when `ids` is None."""
+        with self._db:
+            if ids is None:
+                self._db.execute("UPDATE notices SET seen = 1")
+            else:
+                self._db.executemany("UPDATE notices SET seen = 1 WHERE id = ?", [(i,) for i in ids])
+
     # --- Settings ------------------------------------------------------------
 
     def setting(self, key: str, default=None):
@@ -657,6 +880,16 @@ class Registry:
     def _to_hotkey(self, r: sqlite3.Row) -> Hotkey:
         return Hotkey(uid=r["uid"], keys=r["keys"], target=r["target"], action=json.loads(r["action"]),
                       made_by=r["made_by"])
+
+    def _to_automation(self, r: sqlite3.Row) -> Automation:
+        return Automation(uid=r["uid"], name=r["name"], enabled=bool(r["enabled"]), match=r["match"],
+                          triggers=json.loads(r["triggers"]), conditions=json.loads(r["conditions"]),
+                          actions=json.loads(r["actions"]), attention=r["attention"], made_by=r["made_by"],
+                          armed=r["armed"])
+
+    def _to_run(self, r: sqlite3.Row) -> Run:
+        return Run(id=r["id"], automation=r["automation"], cause=r["cause"], started=r["started"], ended=r["ended"],
+                   outcome=r["outcome"], steps=json.loads(r["steps"]), note=r["note"])
 
     def _to_browser(self, r: sqlite3.Row) -> ApprovedBrowser:
         return ApprovedBrowser(id=r["id"], name=r["name"], approved_at=r["approved_at"], last_seen=r["last_seen"])

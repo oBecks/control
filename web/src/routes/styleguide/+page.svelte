@@ -26,6 +26,7 @@
 	import SectionHeader from '$lib/ui/SectionHeader.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
 	import Slider from '$lib/ui/Slider.svelte';
+	import Switch from '$lib/ui/Switch.svelte';
 	import Tile from '$lib/ui/Tile.svelte';
 	import LightControls from '$lib/controls/LightControls.svelte';
 	import ClimateControls from '$lib/controls/ClimateControls.svelte';
@@ -166,6 +167,7 @@
 		byControl(c).filter((d) => d.state.on && !d.offline).length;
 
 	let activeScene = $state<string | null>(null);
+	let demoSwitch = $state(true);
 	let demoSlider = $state(40);
 
 	const SURFACES = ['--bg', '--surface', '--surface-2', '--surface-3', '--border'];
@@ -340,6 +342,11 @@
 				<Button variant="ghost">Cancel</Button>
 				<Button size="sm">Small</Button>
 				<Button disabled>Disabled</Button>
+			</div>
+			<div class="row">
+				<Switch checked={demoSwitch} label="Demo switch" onchange={(on) => (demoSwitch = on)} />
+				<Switch checked={false} label="Off" onchange={() => {}} />
+				<Switch checked label="Disabled" disabled onchange={() => {}} />
 			</div>
 			<div class="row">
 				<SceneChip label="Movie night" icon={Clapperboard} active />

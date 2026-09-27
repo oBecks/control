@@ -103,7 +103,7 @@ One step in the "Then" of an Automation, done in order: control a Device or Grou
 _Avoid_: Step, command, task
 
 **Run**:
-One time an Automation went: what triggered it, what each Action did, and how it ended (succeeded, partly failed, skipped by its Conditions, missed while the PC was off, or interrupted). A Trigger firing during a Run restarts it.
+One time an Automation went: what triggered it, what each Action did, and how it ended (succeeded, partly failed, skipped by its Conditions, missed while the PC was off, interrupted, or started again). A Trigger firing during a Run restarts it: the old Run ends as started again.
 _Avoid_: Execution, job, history entry
 
 **Person**:

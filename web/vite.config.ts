@@ -14,7 +14,8 @@ export default defineConfig({
 		})
 	],
 	server: {
-		// In development the UI runs on Vite and talks to the Engine API.
-		proxy: { '/api': 'http://127.0.0.1:8321' }
+		// In development the UI runs on Vite and talks to the Engine API (CONTROL_ENGINE_PORT: another
+		// Engine than the one on 8321, e.g. a test copy beside the installed app).
+		proxy: { '/api': `http://127.0.0.1:${process.env.CONTROL_ENGINE_PORT ?? 8321}` }
 	}
 });

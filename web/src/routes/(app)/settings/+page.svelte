@@ -4,6 +4,21 @@
 	import PhoneAccessSettings from '$lib/access/PhoneAccessSettings.svelte';
 	import DesktopSettings from '$lib/desktop/DesktopSettings.svelte';
 	import AssistantSettings from '$lib/assistant/AssistantSettings.svelte';
+	import LocationPicker from '$lib/automations/LocationPicker.svelte';
+	import { api } from '$lib/api';
+	import type { HomeLocation } from '$lib/types';
+
+	let location = $state<HomeLocation | null>(null);
+	let locationLoaded = $state(false);
+	$effect(() => {
+		api.location().then(
+			(l) => {
+				location = l;
+				locationLoaded = true;
+			},
+			() => {}
+		);
+	});
 </script>
 
 <svelte:head><title>Settings · Control</title></svelte:head>
@@ -25,6 +40,12 @@
 				theme.apply();
 			}}
 		/>
+	</section>
+	<section>
+		<h2>Location</h2>
+		{#if locationLoaded}
+			<LocationPicker {location} onchange={(l) => (location = l)} />
+		{/if}
 	</section>
 	<PhoneAccessSettings />
 	<AssistantSettings />

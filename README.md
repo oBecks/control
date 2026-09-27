@@ -28,6 +28,7 @@ Everything stays on your home network.
 - Group devices ("Living room lights") and switch them together.
 - Arrange your own Dashboards: Tiles, a brightness bar, a colour wheel, the AC, a TV remote, single buttons like "Netflix" and a clock, placed where you want them. Turn an old phone into a remote.
 - Set Hotkeys: keys on your PC that toggle a light, dim it while held, or press Volume + on the TV, from any app. Keys can also do something else when pressed twice or held, or start a sequence (Ctrl+Alt+L, then 1).
+- Make Automations: at a time or at sunset, only if something's true, do a few things in order ("at 19:00 on weekdays, if it's dark, turn on the living room lights, wait 3 hours, turn them off"). Control runs them itself while it's running, and tells you when something didn't work.
 - Use it from your phone, or just ask Claude.
 
 ## Works with
@@ -74,12 +75,19 @@ Claude Code inside the Claude app uses the same connection. For the `claude` CLI
 | `list_hotkeys` | Lists your Hotkeys |
 | `create_hotkey` | Makes a Hotkey, like Ctrl+Alt+L to toggle a light |
 | `delete_hotkey` | Deletes a Hotkey |
+| `list_automations` | Lists your Automations |
+| `get_automation` | Reads one Automation and how its recent Runs went |
+| `create_automation` | Makes an Automation, like "at sunset, turn on the living room lights" |
+| `edit_automation` | Changes an Automation |
+| `set_automation_enabled` | Switches an Automation on or off |
+| `run_automation` | Runs an Automation now |
+| `delete_automation` | Deletes an Automation |
 
 It only works in Claude on the same PC. Claude on the web or your phone can't reach your home network.
 
 ## Coming next
 
-Automations, then Scenes. Later, Samsung TVs, Rooms and more brands. See the [roadmap](docs/roadmap.md).
+Automations that react to devices (the TV turning on, a bulb going offline), then Scenes. Later, Samsung TVs, Rooms and more brands. See the [roadmap](docs/roadmap.md).
 
 <details>
 <summary>Run from source</summary>

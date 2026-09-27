@@ -9,7 +9,7 @@ import {
 	type GroupState,
 	type ScanResult
 } from './api';
-import type { AppShortcut, StateChange } from './types';
+import type { AppShortcut, Notice, StateChange } from './types';
 
 const POLL_MS = 8000;
 /** Phones asking for access are polled faster, since someone is standing there waiting. */
@@ -30,6 +30,8 @@ class Home {
 	lock = $state<Lock | null>(null);
 	/** Phones waiting for someone to approve their code. */
 	accessRequests = $state<AccessRequest[]>([]);
+	/** Automations' notifications nobody has dismissed yet. */
+	notices = $state<Notice[]>([]);
 	scanning = $state(false);
 	toast = $state<string | null>(null);
 
@@ -84,7 +86,8 @@ class Home {
 		await Promise.all([
 			...this.controllable.filter((d) => !grouped.has(d.uid)).map((d) => this.#readState(d.uid)),
 			...this.groups.map((g) => this.#readGroup(g)),
-			this.#readRequests()
+			this.#readRequests(),
+			this.#readNotices()
 		]);
 	}
 
@@ -129,6 +132,24 @@ class Home {
 			this.accessRequests = await api.accessRequests();
 		} catch (e) {
 			this.lock = lockOf(e) ?? this.lock;
+		}
+	}
+
+	async #readNotices() {
+		try {
+			this.notices = await api.notices();
+		} catch {
+			// Reading devices already says when the Engine is unreachable.
+		}
+	}
+
+	/** Dismiss notices, on every browser: these, or all those shown (not one arriving meanwhile). */
+	async dismissNotices(ids = this.notices.map((n) => n.id)) {
+		this.notices = this.notices.filter((n) => !ids.includes(n.id));
+		try {
+			await api.noticesSeen(ids);
+		} catch {
+			// They show again with the next reading.
 		}
 	}
 

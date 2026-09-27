@@ -10,7 +10,7 @@ import mimetypes
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import closing
+from contextlib import asynccontextmanager, closing
 from dataclasses import asdict
 from pathlib import Path
 from typing import Literal
@@ -38,10 +38,18 @@ from ..engine.found_device import Category
 from ..engine.links import tuya_link
 from ..engine.registry import Group, KnownDevice, Registry, RemoteDevice
 from ..engine.scan import DEFAULT_TIMEOUT, scan_and_remember
-from . import access, assistant, dashboards, desktop, hotkeys
+from . import access, assistant, automations, dashboards, desktop, hotkeys
 from .deps import registry
 
-app = FastAPI(title="Control Engine", version=__version__)
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    automations.runner.start()  # Automations run while the Engine does (ADR 0006)
+    yield
+    automations.runner.stop()
+
+
+app = FastAPI(title="Control Engine", version=__version__, lifespan=_lifespan)
 app.middleware("http")(assistant.note_mcp)
 app.middleware("http")(access.gate)
 app.include_router(access.router)
@@ -49,6 +57,7 @@ app.include_router(desktop.router)
 app.include_router(assistant.router)
 app.include_router(hotkeys.router)
 app.include_router(dashboards.router)
+app.include_router(automations.router)
 
 
 @app.exception_handler(LookupError)
@@ -170,6 +179,7 @@ def forget_device(uid: str, r: Registry = Depends(registry)):
     (r.forget_remote if uid.startswith("remote:") else r.forget)(uid)
     androidtv_streamer.forget(uid)
     hotkeys.listener.bump()  # its Hotkeys went with it
+    automations.runner.changed()  # and the parts of Automations that named it
 
 
 # --- Scan ------------------------------------------------------------------
@@ -400,6 +410,7 @@ def patch_group(uid: str, patch: GroupPatch, r: Registry = Depends(registry)):
 def forget_group(uid: str, r: Registry = Depends(registry)):
     r.forget_group(uid)
     hotkeys.listener.bump()  # its Hotkeys went with it
+    automations.runner.changed()  # and the parts of Automations that named it
 
 
 def _member_reading(r: Registry, uid: str, desired: StateIn | None) -> dict:
