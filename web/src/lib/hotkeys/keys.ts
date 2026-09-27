@@ -85,7 +85,8 @@ export type Choice =
 	| 'temp_down'
 	| 'climate'
 	| 'press'
-	| 'open_app';
+	| 'open_app'
+	| 'run';
 
 export interface Params {
 	/** % for brightness, ° for temperature. */
@@ -111,7 +112,7 @@ export const DEFAULT_PARAMS: Params = {
 
 /** What a target can do, for the choices. */
 export interface Abilities {
-	control: 'light' | 'plug' | 'climate' | 'remote' | 'streamer' | 'power' | null;
+	control: 'light' | 'plug' | 'climate' | 'remote' | 'streamer' | 'power' | 'automation' | null;
 	/** Has power that can be toggled (a Power Toggle counts). */
 	toggle: boolean;
 	/** Can be turned on or off for sure. */
@@ -123,6 +124,7 @@ export interface Abilities {
 }
 
 export function choicesFor(a: Abilities): { value: Choice; label: string }[] {
+	if (a.control === 'automation') return [{ value: 'run', label: 'Run it' }];
 	const out: { value: Choice; label: string }[] = [];
 	if (a.toggle) out.push({ value: 'toggle', label: 'Toggle on and off' });
 	if (a.onOff) out.push({ value: 'on', label: 'Turn on' }, { value: 'off', label: 'Turn off' });
@@ -178,6 +180,8 @@ export function actionOf(choice: Choice, p: Params): HotkeyAction {
 			return { do: 'press', button: p.button };
 		case 'open_app':
 			return { do: 'open_app', app: p.app };
+		case 'run':
+			return { do: 'run' };
 	}
 }
 
@@ -190,6 +194,8 @@ export function choiceOf(action: HotkeyAction): { choice: Choice; params: Partia
 			return { choice: 'press', params: { button: action.button } };
 		case 'open_app':
 			return { choice: 'open_app', params: { app: action.app } };
+		case 'run':
+			return { choice: 'run', params: {} };
 		case 'step': {
 			const up = action.by > 0;
 			const choice =

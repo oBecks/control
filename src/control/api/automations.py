@@ -401,6 +401,8 @@ def _without_target(action: dict) -> dict:
 
 
 def _checked_target(r: Registry, uid: str) -> hotkeys_api.Target:
+    if uid.startswith("automation:"):  # a Hotkey's target, not yet an Automation's (chaining comes later)
+        raise ValueError(f"there's no Device or Group '{uid}'")
     try:
         return hotkeys_api.target(r, uid)
     except LookupError:

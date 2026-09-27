@@ -111,7 +111,7 @@ Someone who lives in the home, known to Control by the phone(s) the user marked 
 _Avoid_: User, member, resident
 
 **Hotkey**:
-Keys pressed on the PC running Control that do one thing to one Device or Group: toggle it, set anything its Device Controls can set, step its brightness or temperature up or down, press one of its buttons, open a Streamer's app, or (later) run an Automation or Scene. Forgetting the Device or Group deletes its Hotkeys. It can be a combination (Ctrl+Alt+L), a sequence (Ctrl+Alt+L, then 1), a double or long press, or a key held to keep dimming. Works in any app and any keyboard layout, including media keys and Bluetooth buttons that act as keys. The keys go only to Control, never also to the app in front.
+Keys pressed on the PC running Control that do one thing to one Device or Group: toggle it, set anything its Device Controls can set, step its brightness or temperature up or down, press one of its buttons, open a Streamer's app, or run an Automation (skipping its Only if), and later a Scene. Forgetting the Device or Group, or deleting the Automation, deletes its Hotkeys. It can be a combination (Ctrl+Alt+L), a sequence (Ctrl+Alt+L, then 1), a double or long press, or a key held to keep dimming. Works in any app and any keyboard layout, including media keys and Bluetooth buttons that act as keys. The keys go only to Control, never also to the app in front.
 _Avoid_: Shortcut, key binding, macro
 
 ### Screens
@@ -121,7 +121,7 @@ The main screen: Scenes and Groups on top, then every controllable Device as a T
 _Avoid_: Main page
 
 **Dashboard**:
-A named screen the user arranges by hand, holding only the Tiles (and other items) they placed on it, e.g. "Phone remote". Each browser can pick one to open to instead of Home. Items sit exactly where the user put them on a grid whose width (in columns) the Dashboard has chosen for a phone, a tablet or a desktop; empty cells stay empty. It is one layout, not separate phone and desktop layouts: a screen too narrow for it shows its items in reading order. It starts empty or as a copy of Home. Anyone who can control the home can make and arrange Dashboards. Forgetting a Device or deleting a Group takes it off every Dashboard.
+A named screen the user arranges by hand, holding only the Tiles (and other items) they placed on it, e.g. "Phone remote". Each browser can pick one to open to instead of Home. Items sit exactly where the user put them on a grid whose width (in columns) the Dashboard has chosen for a phone, a tablet or a desktop; empty cells stay empty. It is one layout, not separate phone and desktop layouts: a screen too narrow for it shows its items in reading order. It starts empty or as a copy of Home. Anyone who can control the home can make and arrange Dashboards. Forgetting a Device or deleting a Group or Automation takes it off every Dashboard.
 _Avoid_: Custom home, board, panel, page
 
 **Tile**:
@@ -135,6 +135,10 @@ _Avoid_: Remote widget, keypad
 **Single Button**:
 A Dashboard item that is one remote button (e.g. HDMI 1) or one Streamer App Shortcut (e.g. Netflix) on its own.
 _Avoid_: Shortcut, widget
+
+**Run Button**:
+A Dashboard item that starts an Automation's Run, skipping its Only if like any Run by hand. It looks like a Single Button with the Automation's name, and lights up while the Run goes on.
+_Avoid_: Automation button, trigger button
 
 **Big Control**:
 A Dashboard item that puts one of a Device's or Group's controls right on the Dashboard, larger than on a Tile: a brightness slider, a colour wheel, or an AC's temperature and mode.

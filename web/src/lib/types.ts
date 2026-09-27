@@ -109,14 +109,16 @@ export type HotkeyAction =
 	| { do: 'set'; state: StateChange }
 	| { do: 'step'; field: 'brightness' | 'target_temp'; by: number }
 	| { do: 'press'; button: string }
-	| { do: 'open_app'; app: string };
+	| { do: 'open_app'; app: string }
+	/** An Automation's Run, skipping its Only if (ADR 0012). */
+	| { do: 'run' };
 
 /** Keys on the PC running Control that do one thing to one Device or Group (ADR 0007). */
 export interface Hotkey {
 	uid: string;
 	/** e.g. "Ctrl+Alt+L", "F13", "Volume Up" */
 	keys: string;
-	/** A Device's or Group's uid. */
+	/** A Device's, Group's or Automation's uid. */
 	target: string;
 	target_name: string;
 	action: HotkeyAction;
@@ -160,6 +162,8 @@ export type NewDashboardItem =
 	/** A Single Button: presses one remote button, or opens one Streamer app (by package). */
 	| { id: string; kind: 'button'; w: number; h: number; target: string; button?: string; app?: string }
 	| { id: string; kind: 'clock'; w: number; h: number }
+	/** A Run Button: starts an Automation's Run (target is its uid). */
+	| { id: string; kind: 'run'; w: number; h: number; target: string }
 	| {
 			id: string;
 			kind: 'heading';

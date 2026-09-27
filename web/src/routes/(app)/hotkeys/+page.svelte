@@ -37,7 +37,8 @@
 		{/key}
 	{:else}
 		<p class="hint">
-			Keys on this computer that switch a device or group, dim a light, or press a remote button, in any app.
+			Keys on this computer that switch a device or group, dim a light, press a remote button, or run an automation, in
+			any app.
 		</p>
 		{#if !hotkeys.listening}
 			<p class="note">
@@ -48,7 +49,10 @@
 			<HotkeyList list={hotkeys.list} showTarget onopen={(uid) => (editor = { uid })} />
 		{:else}
 			<div class="empty">
-				<p>No Hotkeys yet. Make one here, or with <b>Add Hotkey</b> in a device's or group's controls.</p>
+				<p>
+					No Hotkeys yet. Make one here, or with <b>Add Hotkey</b> in a device's or group's controls or on an automation's
+					page.
+				</p>
 				<Button variant="primary" onclick={() => (editor = { uid: null })}>
 					<Plus size={16} strokeWidth={2.4} /> Add Hotkey
 				</Button>

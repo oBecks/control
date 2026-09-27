@@ -1,4 +1,5 @@
-"""Hotkeys (see CONTEXT.md, ADR 0007): keys on the PC that do one thing to one Device or Group.
+"""Hotkeys (see CONTEXT.md, ADR 0007): keys on the PC that do one thing to one Device or Group, or
+run one Automation.
 
 Keys are written as text, e.g. "Ctrl+Alt+L", "F13" or "Volume Up": modifiers first, then one key.
 A Trigger adds how they're pressed: "Ctrl+Alt+L (double)", "Ctrl+Alt+L (long)", or a sequence,
@@ -14,6 +15,7 @@ An action is one of:
     {"do": "step", "field": "brightness" | "target_temp", "by": 10}   negative steps down
     {"do": "press", "button": "volume_up"}     a remote's or a Streamer's button
     {"do": "open_app", "app": "com.netflix.ninja"}   a Streamer's app, by package
+    {"do": "run"}                              an Automation's Run, skipping its Conditions (ADR 0012)
 Holding the keys repeats steps and presses; the others fire once.
 """
 
@@ -261,6 +263,10 @@ def check_action(action: dict, control: str | None, settable: set[str], buttons:
     """The action cleaned up, or ValueError saying why the target can't do it.
     `settable`: the StateIn fields the target takes; `buttons`: its buttons (name → label)."""
     do = action.get("do")
+    if (do == "run") != (control == "automation"):
+        raise ValueError("only an Automation runs, and it only runs")
+    if do == "run":
+        return {"do": "run"}
     if do == "toggle":
         if "on" not in settable and "power" not in buttons:
             raise ValueError("it has no power to toggle")
@@ -300,7 +306,7 @@ def check_action(action: dict, control: str | None, settable: set[str], buttons:
         if not isinstance(app, str) or not app:
             raise ValueError("say which app")
         return {"do": "open_app", "app": app}
-    raise ValueError("the action is toggle, set, step, press or open_app")
+    raise ValueError("the action is toggle, set, step, press, open_app or run")
 
 
 def describe(action: dict, buttons: dict[str, str], app_names: dict[str, str]) -> str:
@@ -308,6 +314,8 @@ def describe(action: dict, buttons: dict[str, str], app_names: dict[str, str]) -
     do = action["do"]
     if do == "toggle":
         return "Toggle"
+    if do == "run":
+        return "Run"
     if do == "step":
         by, field = action["by"], action["field"]
         direction = "up" if by > 0 else "down"

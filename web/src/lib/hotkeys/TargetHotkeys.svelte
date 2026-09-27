@@ -1,12 +1,13 @@
 <script lang="ts">
-	// A Device's or Group's Hotkeys, at the end of its controls. Only on the computer running Control.
+	// A Device's, Group's or Automation's Hotkeys, at the end of its controls or page. Only on the
+	// computer running Control.
 	import { Keyboard } from '@lucide/svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import HotkeyList from './HotkeyList.svelte';
 	import { hotkeys } from './hotkeys.svelte';
 
 	interface Props {
-		/** The Device's or Group's uid. */
+		/** The Device's, Group's or Automation's uid. */
 		uid: string;
 		onadd: () => void;
 		onopen: (uid: string) => void;
