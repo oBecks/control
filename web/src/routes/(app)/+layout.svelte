@@ -28,6 +28,19 @@
 	const isActive = (href: string) =>
 		page.url.pathname === href || (href !== resolve('/') && page.url.pathname.startsWith(`${href}/`));
 
+	/** Which side a phone held sideways has its notch on. The phone reports the space to keep clear on
+	 * both sides (the other one for its rounded corners), which is too much margin; the angle tells them apart. */
+	const notchSide = () => {
+		const angle = screen.orientation?.angle;
+		return angle === 90 ? 'left' : angle === 270 ? 'right' : undefined;
+	};
+	let notch = $state(notchSide());
+	$effect(() => {
+		const update = () => (notch = notchSide());
+		screen.orientation?.addEventListener('change', update);
+		return () => screen.orientation?.removeEventListener('change', update);
+	});
+
 	/** On a Dashboard, a phone on its side hides the tab bar so the Dashboard gets the whole screen. */
 	const onDashboard = $derived(page.url.pathname.startsWith(`${resolve('/dashboards')}/`));
 
@@ -56,7 +69,7 @@
 		<p>Turn it on in Control's Settings on the computer running Control. This page reconnects by itself.</p>
 	</div>
 {:else}
-	<div class="shell" class:on-dashboard={onDashboard}>
+	<div class="shell" class:on-dashboard={onDashboard} data-notch={notch}>
 		<aside class="sidebar">
 			<span class="brand">Control</span>
 			<nav aria-label="Main">
@@ -123,6 +136,15 @@
 	.content {
 		padding: var(--s-6) max(var(--s-4), env(safe-area-inset-right)) calc(88px + env(safe-area-inset-bottom))
 			max(var(--s-4), env(safe-area-inset-left));
+	}
+	/* Screen sides, not reading sides: the notch is where it is in any language. */
+	@media (max-width: 959px) {
+		[data-notch='left'] .content {
+			padding-right: var(--s-4);
+		}
+		[data-notch='right'] .content {
+			padding-left: var(--s-4);
+		}
 	}
 
 	/* Phone: bottom tab bar */
