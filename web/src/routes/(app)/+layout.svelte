@@ -28,6 +28,9 @@
 	const isActive = (href: string) =>
 		page.url.pathname === href || (href !== resolve('/') && page.url.pathname.startsWith(`${href}/`));
 
+	/** On a Dashboard, a phone on its side hides the tab bar so the Dashboard gets the whole screen. */
+	const onDashboard = $derived(page.url.pathname.startsWith(`${resolve('/dashboards')}/`));
+
 	// Opening Control lands on this browser's Dashboard instead of Home, if it picked one and it still exists.
 	// Home stays hidden meanwhile, so it doesn't flash first.
 	const landsOn = page.url.pathname === resolve('/') ? dashboards.openTo : null;
@@ -53,7 +56,7 @@
 		<p>Turn it on in Control's Settings on the computer running Control. This page reconnects by itself.</p>
 	</div>
 {:else}
-	<div class="shell">
+	<div class="shell" class:on-dashboard={onDashboard}>
 		<aside class="sidebar">
 			<span class="brand">Control</span>
 			<nav aria-label="Main">
@@ -116,8 +119,10 @@
 	.shell {
 		min-block-size: 100dvh;
 	}
+	/* On its side, a phone's notch and rounded corners are at the start and end. */
 	.content {
-		padding: var(--s-6) var(--s-4) calc(88px + env(safe-area-inset-bottom));
+		padding: var(--s-6) max(var(--s-4), env(safe-area-inset-right)) calc(88px + env(safe-area-inset-bottom))
+			max(var(--s-4), env(safe-area-inset-left));
 	}
 
 	/* Phone: bottom tab bar */
@@ -131,7 +136,8 @@
 		z-index: 10;
 		display: flex;
 		justify-content: space-around;
-		padding: var(--s-2) 0 calc(var(--s-3) + env(safe-area-inset-bottom));
+		padding: var(--s-2) env(safe-area-inset-right) calc(var(--s-3) + env(safe-area-inset-bottom))
+			env(safe-area-inset-left);
 		background: color-mix(in oklab, var(--bg) 82%, transparent);
 		backdrop-filter: blur(14px);
 		border-block-start: 1px solid var(--border);
@@ -158,6 +164,19 @@
 		block-size: 8px;
 		border-radius: var(--r-pill);
 		background: var(--accent);
+	}
+
+	/* A phone on its side, on a Dashboard: no tab bar (the Dashboard has its own way back). */
+	@media (orientation: landscape) and (max-height: 500px) and (max-width: 959px) {
+		.on-dashboard .tabbar {
+			display: none;
+		}
+		.on-dashboard .content {
+			padding-block: var(--s-3) calc(var(--s-4) + env(safe-area-inset-bottom));
+		}
+		.on-dashboard .toast {
+			inset-block-end: calc(var(--s-4) + env(safe-area-inset-bottom));
+		}
 	}
 
 	/* Desktop: sidebar */
