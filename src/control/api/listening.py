@@ -17,6 +17,7 @@ Rules decided with the user (2026-09-27):
   by Devices is switched off. Each says so in a notice.
 """
 
+import ctypes
 import queue
 import sys
 import threading
@@ -24,7 +25,7 @@ import time
 from collections import deque
 from contextlib import closing
 
-from ..engine import automations, connect, streamer
+from ..engine import automations, connect, scan, streamer
 from ..engine.registry import Automation, Registry
 
 MINUTE = 60  # seconds (tests shorten it)
@@ -32,6 +33,16 @@ OFFLINE_AFTER = 60  # seconds without an answer
 BY_AUTOMATION = 10  # seconds a change on a Device an Automation just controlled counts as its doing
 MAX_HOPS = 5  # Automations triggering each other in a row
 MAX_PER_MINUTE = 10  # Runs of one Automation started by Devices
+SLEPT = 60  # seconds of sleep during a "stays so" count that make it start again rather than fire
+
+
+def awake() -> float:
+    """Seconds the PC has been awake: unlike time.monotonic() on Windows, it stops while it sleeps."""
+    if sys.platform == "win32":
+        ticks = ctypes.c_ulonglong()
+        ctypes.windll.kernel32.QueryUnbiasedInterruptTime(ctypes.byref(ticks))
+        return ticks.value / 1e7  # 100 ns units
+    return time.monotonic()  # elsewhere it already stops while suspended
 
 
 def _automations_api():
@@ -52,7 +63,10 @@ class Listening:
         self._states: dict[str, dict] = {}  # uid -> {"on", "app"?} as last heard
         self._online: dict[str, bool] = {}
         self._lost: dict[str, threading.Timer] = {}  # counting to Offline
-        self._stays: dict[tuple, threading.Timer] = {}  # (automation, index, trigger) -> counting "stays so"
+        self._stays: dict[tuple, tuple[threading.Timer, float, float]] = {}  # key -> (timer, monotonic, awake)
+        self._stayed_keys: set[tuple] = set()  # "stays so" that fired: again only after it changes
+        self._heard: set[str] = set()  # Devices that answered since they were listened to
+        self._listened: frozenset[str] = frozenset()  # a snapshot for other threads
         self._by: dict[str, tuple[str, int, float]] = {}  # device -> (automation, hops, until) it just controlled
         self._fired: dict[str, deque] = {}  # automation -> when Devices last started it
         self._automations: list[Automation] = []
@@ -61,12 +75,16 @@ class Listening:
     # --- From any thread ----------------------------------------------------------------------
 
     def start(self) -> None:
+        if self.sync not in scan.after_scan:
+            scan.after_scan.append(self.sync)  # a Scan may move a Device, or miss one that's answering
         if self._thread is None:
             self._thread = threading.Thread(target=self._loop, name="listening", daemon=True)
             self._thread.start()
         self.sync()
 
     def stop(self) -> None:
+        if self.sync in scan.after_scan:
+            scan.after_scan.remove(self.sync)
         if self._thread is not None:
             self._queue.put(None)
             self._thread.join(timeout=5)
@@ -95,8 +113,8 @@ class Listening:
         """Wait until everything so far is handled (tests)."""
         self._queue.join()
 
-    def listened(self) -> set[str]:
-        return set(self._watches)
+    def listened(self) -> frozenset[str]:
+        return self._listened
 
     # --- The listening thread -------------------------------------------------------------------
 
@@ -123,9 +141,10 @@ class Listening:
         for w in self._watches.values():
             if w is not None:
                 w.close()
-        for timer in [*self._lost.values(), *self._stays.values()]:
+        for timer in [*self._lost.values(), *(t for t, _, _ in self._stays.values())]:
             timer.cancel()
         self._watches.clear()
+        self._listened = frozenset()
         self._lost.clear()
         self._stays.clear()
 
@@ -139,13 +158,15 @@ class Listening:
                 self._unwatch(uid)
             for uid in wanted - set(self._watches):
                 self._watch(r, uid)
-            for uid in self._watches:
+            self._listened = frozenset(self._watches)
+            for uid in self._heard:
                 device = r.get(uid)
                 if device is not None and self._online.get(uid) and uid not in self._lost and not device.online:
                     r.mark_online(uid)  # a Scan missed it, but it's answering us
         keys = {self._stay_key(a, i, t) for a in self._automations for i, t in enumerate(a.triggers)}
         for key in [k for k in self._stays if k not in keys]:
-            self._stays.pop(key).cancel()
+            self._stays.pop(key)[0].cancel()
+        self._stayed_keys &= keys
         # Count "stays so" from now for what's already so (a Device already heard, or a Remote Device).
         for a in self._automations:
             for i, t in enumerate(a.triggers):
@@ -176,6 +197,7 @@ class Listening:
             timer.cancel()
         self._states.pop(uid, None)
         self._online.pop(uid, None)
+        self._heard.discard(uid)
 
     def _acting(self, uids: list[str], automation: str, hops: int) -> None:
         until = time.monotonic() + BY_AUTOMATION
@@ -191,6 +213,7 @@ class Listening:
             return
         if timer := self._lost.pop(uid, None):
             timer.cancel()
+        self._heard.add(uid)
         if self._online.get(uid) is False:
             self._online[uid] = True
             with closing(Registry()) as r:
@@ -256,8 +279,9 @@ class Listening:
     def _state_changed(self, a: Automation, i: int, t: dict, was: bool | None, now: bool | None, uid: str) -> None:
         key = self._stay_key(a, i, t)
         if now != t["on"]:
-            if timer := self._stays.pop(key, None):
-                timer.cancel()
+            if counting := self._stays.pop(key, None):
+                counting[0].cancel()
+            self._stayed_keys.discard(key)  # it left the state: it may fire again next time
             return
         if was is None:  # the first reading: nothing changed, but "stays so" counts from now
             if t["minutes"]:
@@ -265,6 +289,7 @@ class Listening:
             return
         if was == now:
             return
+        self._stayed_keys.discard(key)
         if t["minutes"]:
             self._stay(a, i, t, uid, restart=True)
         else:
@@ -279,18 +304,30 @@ class Listening:
         if key in self._stays:
             if not restart:
                 return
-            self._stays.pop(key).cancel()
-        self._stays[key] = self._later(t["minutes"] * MINUTE, "stayed", key, uid)
+            self._stays.pop(key)[0].cancel()
+        elif key in self._stayed_keys and not restart:
+            return  # it fired and hasn't changed since
+        timer = self._later(t["minutes"] * MINUTE, "stayed", key, uid)
+        self._stays[key] = (timer, time.monotonic(), awake())
 
     def _stayed(self, key: tuple, uid: str) -> None:
-        if self._stays.pop(key, None) is None:
+        counting = self._stays.pop(key, None)
+        if counting is None:
             return  # cancelled meanwhile
         a = next((a for a in self._automations if a.uid == key[0]), None)
         if a is None or key[1] >= len(a.triggers):
             return
         t = a.triggers[key[1]]
-        if self._value(t["target"]) == t["on"]:
-            self._fire(a, t, uid)
+        if self._value(t["target"]) != t["on"]:
+            return
+        _, since, since_awake = counting
+        if (time.monotonic() - since) - (awake() - since_awake) > SLEPT:
+            # The PC slept through part of it, so nobody saw whether it stayed so: count again from
+            # now rather than act on a guess (never late, ADR 0012).
+            self._stay(a, key[1], t, uid, restart=True)
+            return
+        self._stayed_keys.add(key)
+        self._fire(a, t, uid)
 
     # --- Starting Runs, with the loop guard -------------------------------------------------------
 

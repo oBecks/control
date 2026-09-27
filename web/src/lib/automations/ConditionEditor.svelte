@@ -2,14 +2,15 @@
 	// One "Only if" of an Automation: a Device's or Group's state, a Streamer's app, a time window,
 	// some days, or dark or light. Checked once, when a Trigger fires.
 	import { Trash2 } from '@lucide/svelte';
-	import { home } from '$lib/home.svelte';
 	import type { Condition, HomeLocation, Weekday } from '$lib/types';
 	import Button from '$lib/ui/Button.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
 	import DaysPicker from './DaysPicker.svelte';
 	import LocationPicker from './LocationPicker.svelte';
 	import './editor.css';
+	import OnOffTargetSelect from './OnOffTargetSelect.svelte';
 	import { EVERY_DAY } from './parts';
+	import { appsOf, onOffTargets, streamerDevices } from './targets';
 
 	interface Props {
 		/** The Condition to change; none to add one. */
@@ -36,16 +37,9 @@
 	let problem = $state<string | null>(null);
 	let saving = $state(false);
 
-	/** Devices whose on/off Control knows: not a Power Toggle. Groups always know. */
-	const withState = $derived([
-		...home.groups.map((g) => ({ uid: g.uid, name: g.name, group: true })),
-		...home.controllable.filter((d) => !d.group_problem).map((d) => ({ uid: d.uid, name: d.name, group: false }))
-	]);
-	const streamers = $derived(home.controllable.filter((d) => d.control === 'streamer'));
-	const apps = $derived.by(() => {
-		const st = home.states[target];
-		return st?.control === 'streamer' ? st.features.apps : [];
-	});
+	const withState = $derived(onOffTargets());
+	const streamers = $derived(streamerDevices());
+	const apps = $derived(appsOf(target));
 
 	const KINDS = $derived([
 		{ value: 'state', label: 'A device or group is on or off' },
@@ -103,17 +97,7 @@
 	{#if type === 'state'}
 		<label class="field">
 			<span>Device or group</span>
-			<select bind:value={target} required>
-				<option value="" disabled>Pick one</option>
-				{#if home.groups.length}
-					<optgroup label="Groups">
-						{#each withState.filter((t) => t.group) as t (t.uid)}<option value={t.uid}>{t.name}</option>{/each}
-					</optgroup>
-				{/if}
-				<optgroup label="Devices">
-					{#each withState.filter((t) => !t.group) as t (t.uid)}<option value={t.uid}>{t.name}</option>{/each}
-				</optgroup>
-			</select>
+			<OnOffTargetSelect bind:value={target} targets={withState} />
 		</label>
 		<Segmented
 			label="Is"

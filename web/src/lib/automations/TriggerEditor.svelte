@@ -3,14 +3,15 @@
 	// Device or Group turning on or off (and staying so a while), a TV box opening an app, a Device
 	// going offline or coming back. The Engine listens to the Devices these name (ADR 0011).
 	import { Trash2 } from '@lucide/svelte';
-	import { home } from '$lib/home.svelte';
 	import type { HomeLocation, Trigger, Weekday } from '$lib/types';
 	import Button from '$lib/ui/Button.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
 	import DaysPicker from './DaysPicker.svelte';
 	import LocationPicker from './LocationPicker.svelte';
 	import './editor.css';
+	import OnOffTargetSelect from './OnOffTargetSelect.svelte';
 	import { EVERY_DAY } from './parts';
+	import { appsOf, connectedDevices, onOffTargets, streamerDevices } from './targets';
 
 	interface Props {
 		/** The Trigger to change; none to add one. */
@@ -41,20 +42,10 @@
 	let problem = $state<string | null>(null);
 	let saving = $state(false);
 
-	/** Devices whose on/off Control knows: not a Power Toggle. Groups always know. */
-	const withState = $derived([
-		...home.groups.map((g) => ({ uid: g.uid, name: g.name, group: true })),
-		...home.controllable.filter((d) => !d.group_problem).map((d) => ({ uid: d.uid, name: d.name, group: false }))
-	]);
-	const streamers = $derived(home.controllable.filter((d) => d.control === 'streamer'));
-	/** Devices with a connection of their own: an AC, TV or fan behind a Hub is never offline itself. */
-	const connected = $derived(
-		home.controllable.filter((d) => d.kind === 'network' && ['light', 'plug', 'streamer'].includes(d.control ?? ''))
-	);
-	const apps = $derived.by(() => {
-		const st = home.states[target];
-		return st?.control === 'streamer' ? st.features.apps : [];
-	});
+	const withState = $derived(onOffTargets());
+	const streamers = $derived(streamerDevices());
+	const connected = $derived(connectedDevices());
+	const apps = $derived(appsOf(target));
 
 	const KINDS = $derived([
 		{ value: 'time', label: 'At a time' },
@@ -140,17 +131,7 @@
 	{:else if type === 'state'}
 		<label class="field">
 			<span>Device or group</span>
-			<select bind:value={target} required>
-				<option value="" disabled>Pick one</option>
-				{#if home.groups.length}
-					<optgroup label="Groups">
-						{#each withState.filter((t) => t.group) as t (t.uid)}<option value={t.uid}>{t.name}</option>{/each}
-					</optgroup>
-				{/if}
-				<optgroup label="Devices">
-					{#each withState.filter((t) => !t.group) as t (t.uid)}<option value={t.uid}>{t.name}</option>{/each}
-				</optgroup>
-			</select>
+			<OnOffTargetSelect bind:value={target} targets={withState} />
 		</label>
 		<Segmented
 			label="Turns"

@@ -197,7 +197,6 @@ class ScanOut(BaseModel):
 @app.post("/api/scan", response_model=ScanOut)
 def scan(timeout: float = DEFAULT_TIMEOUT, r: Registry = Depends(registry)):
     result, report = scan_and_remember(r, timeout)
-    listening.sync()  # a listened-to Device may have moved, or a Scan missed one that's answering
     return ScanOut(
         added=report.added, moved=report.moved, missing=report.missing, errors=result.errors,
         devices=list_devices(r),

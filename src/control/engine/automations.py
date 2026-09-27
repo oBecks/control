@@ -96,8 +96,9 @@ def check_trigger(t: dict, location: sun.Location | None) -> dict:
         if not isinstance(t.get("on"), bool):
             raise ValueError("a state Trigger says turns on (true) or off (false)")
         minutes = 0 if t.get("minutes") is None else t["minutes"]
-        if not isinstance(minutes, int | float) or isinstance(minutes, bool) or not 0 <= minutes <= MAX_STAYS:
-            raise ValueError("it stays so for 0 minutes (at once) up to 24 hours")
+        if (not isinstance(minutes, int | float) or isinstance(minutes, bool) or minutes != int(minutes)
+                or not 0 <= minutes <= MAX_STAYS):
+            raise ValueError("it stays so for whole minutes, 0 (at once) up to 24 hours")
         return {"type": "state", "target": _target(t), "on": t["on"], "minutes": int(minutes)}
     if kind == "app":
         if not isinstance(t.get("app"), str) or not t["app"]:

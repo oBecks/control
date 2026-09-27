@@ -97,6 +97,7 @@ def test_device_triggers_read_as_sentences(listening):
 @pytest.mark.parametrize("trigger, message", [
     ({"type": "state", "target": "yeelight:1"}, "turns on \\(true\\) or off"),
     ({"type": "state", "target": "yeelight:1", "on": True, "minutes": 2000}, "up to 24 hours"),
+    ({"type": "state", "target": "yeelight:1", "on": True, "minutes": 0.5}, "whole minutes"),
     ({"type": "app", "target": "yeelight:1", "app": NETFLIX}, "only a Streamer"),
     ({"type": "offline", "target": "yeelight:1"}, "goes Offline \\(true\\)"),
 ])
@@ -167,6 +168,58 @@ def test_stays_on_for_n_minutes(listening):
     seen(listening, "tuya:abc", {"on": True})
     settle(listening, a["uid"], seconds=0.3)
     assert runs(c, a["uid"])[0]["cause"] == "Outlet turns on and stays on for 1 min"
+
+
+def test_stays_on_fires_once_until_it_changes(listening):
+    c = listening["client"]
+    a = create(c, triggers=[{"type": "state", "target": "tuya:abc", "on": True, "minutes": 1}], actions=notify())
+    settle(listening)
+    seen(listening, "tuya:abc", {"on": False})
+    seen(listening, "tuya:abc", {"on": True})
+    settle(listening, a["uid"], seconds=0.3)
+    assert len(runs(c, a["uid"])) == 1
+    create(c, name="Other")  # any change makes listening sync again; the plug is still on
+    settle(listening, a["uid"], seconds=0.3)
+    assert len(runs(c, a["uid"])) == 1
+    seen(listening, "tuya:abc", {"on": False})
+    seen(listening, "tuya:abc", {"on": True})
+    settle(listening, a["uid"], seconds=0.3)
+    assert len(runs(c, a["uid"])) == 2
+
+
+def test_a_stays_on_count_the_pc_slept_through_starts_again(listening, monkeypatch):
+    c = listening["client"]
+    monkeypatch.setattr(listening_api, "SLEPT", 0.1)
+    asleep = [True]
+    real = listening_api.awake
+    monkeypatch.setattr(listening_api, "awake", lambda: 0.0 if asleep[0] else real())
+    a = create(c, triggers=[{"type": "state", "target": "tuya:abc", "on": True, "minutes": 1}], actions=notify())
+    settle(listening)
+    seen(listening, "tuya:abc", {"on": False})
+    seen(listening, "tuya:abc", {"on": True})
+    settle(listening, seconds=0.3)  # the whole count went by "asleep"
+    assert runs(c, a["uid"]) == []
+    asleep[0] = False
+    settle(listening, a["uid"], seconds=0.4)  # counted again from the wake, awake this time
+    assert len(runs(c, a["uid"])) == 1
+
+
+def test_a_scan_that_missed_a_device_that_answers_is_overruled(listening):
+    c = listening["client"]
+    create(c, triggers=[{"type": "state", "target": "yeelight:1", "on": True},
+                        {"type": "state", "target": "yeelight:2", "on": True}], actions=notify())
+    settle(listening)
+    seen(listening, "yeelight:1", {"on": False})  # yeelight:2 hasn't answered yet
+    with closing(Registry()) as r:
+        r.mark_offline("yeelight:1")  # as a Scan that missed them would
+        r.mark_offline("yeelight:2")
+    listening["listening"].sync()
+    settle(listening)
+    online = {uid: c.get(f"/api/devices/{uid}").json()["online"] for uid in ("yeelight:1", "yeelight:2")}
+    assert online == {"yeelight:1": True, "yeelight:2": False}
+    from control.engine import scan
+
+    assert listening["listening"].sync in scan.after_scan  # every Scan, wherever it starts
 
 
 def test_stays_on_counts_from_when_listening_starts(listening):
@@ -325,7 +378,11 @@ class FakeRemote:
     def add_is_on_updated_callback(self, cb):
         self.callbacks.append(cb)
 
+    def remove_is_on_updated_callback(self, cb):
+        self.callbacks.remove(cb)
+
     add_current_app_updated_callback = add_is_available_updated_callback = add_is_on_updated_callback
+    remove_current_app_updated_callback = remove_is_available_updated_callback = remove_is_on_updated_callback
 
     def drop(self):
         self.available = False
@@ -364,6 +421,34 @@ def test_a_streamer_that_moved_is_listened_to_at_its_new_address(monkeypatch):
         assert tried == ["10.0.0.9", "10.0.0.20"]
         assert None in reports and reports[-1] == {"on": True, "app": NETFLIX}
     finally:
+        remote = atv._remotes["androidtv:moved"]
         watch.close()
         asyncio.run_coroutine_threadsafe(asyncio.sleep(0), atv._loop).result(1)
         atv._remotes.pop("androidtv:moved", None)
+    assert remote.callbacks == []  # listening again won't pile them up
+
+
+def test_a_plugs_heartbeat_answer_or_closing_is_told_apart():
+    import socket
+
+    from control.engine.adapters.tuya_plug import TuyaWatch
+
+    class Dev:
+        retry = True
+
+        def __init__(self, sock):
+            self.socket = sock
+
+        def receive(self):
+            assert self.retry is False  # an empty answer is the whole answer: don't wait for more
+            self.socket.recv(4096)
+            return None
+
+    ours, plug = socket.socketpair()
+    dev = Dev(ours)
+    assert TuyaWatch._read(dev) is None  # nothing to read: a command read it meanwhile
+    plug.send(bytes(28))  # a heartbeat's empty answer
+    assert TuyaWatch._read(dev) is None and dev.retry is True
+    plug.close()
+    assert TuyaWatch._read(dev) is False  # the plug closed the connection
+    ours.close()

@@ -139,15 +139,15 @@ async def _connected(uid: str, ip: str) -> _Remote:
 
 RETRY_SECONDS = 5
 _watchers: dict[str, Callable[[str, dict | None], None]] = {}  # uid -> report (touched only on the loop)
-_attached: dict[str, _Remote] = {}
+_attached: dict[str, tuple[_Remote, Callable]] = {}  # uid -> the connection and the callback on it
 _lost: dict[str, asyncio.Event] = {}  # set while a listened-to Streamer's connection is down
 
 
 def _attach(uid: str, remote: _Remote) -> None:
     report = _watchers.get(uid)
-    if report is None or _attached.get(uid) is remote:
+    if report is None or (uid in _attached and _attached[uid][0] is remote):
         return
-    _attached[uid] = remote
+    _detach(uid)
 
     def changed(_value=None) -> None:
         if _remotes.get(uid) is not remote or _watchers.get(uid) is not report:
@@ -162,7 +162,22 @@ def _attach(uid: str, remote: _Remote) -> None:
     remote.add_is_on_updated_callback(changed)
     remote.add_current_app_updated_callback(changed)
     remote.add_is_available_updated_callback(changed)
+    _attached[uid] = (remote, changed)
     changed()
+
+
+def _detach(uid: str) -> None:
+    """Take listening's callback off a connection, so listening again doesn't pile them up."""
+    attached = _attached.pop(uid, None)
+    if attached is None:
+        return
+    remote, changed = attached
+    for remove in (remote.remove_is_on_updated_callback, remote.remove_current_app_updated_callback,
+                   remote.remove_is_available_updated_callback):
+        try:
+            remove(changed)
+        except ValueError:
+            pass
 
 
 class AndroidTVWatch:
@@ -205,7 +220,7 @@ class AndroidTVWatch:
 
         async def stop():
             _watchers.pop(uid, None)
-            _attached.pop(uid, None)
+            _detach(uid)
             _lost.pop(uid, None)
 
         task.cancel()

@@ -32,8 +32,8 @@
 	</header>
 
 	<p class="hint">
-		Things Control does by itself: at a time or at sunset, only if something's true, a few steps in order. They run
-		while Control is running on the computer.
+		Things Control does by itself: at a time or at sunset, or when a device changes, only if something's true, a few
+		steps in order. They run while Control is running on the computer.
 	</p>
 
 	{#if !automations.loaded}

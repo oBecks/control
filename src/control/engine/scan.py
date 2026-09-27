@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
@@ -7,6 +8,8 @@ from .scanners import SCANNERS
 
 # Tuya only announces every ~5s, so shorter scans miss devices.
 DEFAULT_TIMEOUT = 7.0
+
+after_scan: list[Callable[[], None]] = []  # called after each remembered Scan (listening, ADR 0011)
 
 
 @dataclass
@@ -41,4 +44,6 @@ def scan_and_remember(
 ) -> tuple[ScanResult, MergeReport]:
     result = run_scan(timeout, brands)
     report = registry.merge_scan(result.devices, brands=result.covered_brands)
+    for then in after_scan:
+        then()
     return result, report
