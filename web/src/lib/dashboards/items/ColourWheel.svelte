@@ -56,15 +56,25 @@
 		onchange({ rgb: hsToRgb(hue, sat) });
 	}
 
-	/** Arrow keys: left and right turn the hue, up and down change how full the colour is. */
-	function key(e: KeyboardEvent) {
-		const now = point ?? { hue: 0, sat: 1 };
-		const turn = { ArrowLeft: [-10, 0], ArrowRight: [10, 0], ArrowUp: [0, 0.1], ArrowDown: [0, -0.1] }[e.key];
+	const TURNS: Record<string, [number, number]> = {
+		ArrowLeft: [-10, 0],
+		ArrowRight: [10, 0],
+		ArrowUp: [0, 0.1],
+		ArrowDown: [0, -0.1]
+	};
+
+	/** Arrow keys: left and right turn the hue, up and down change how full the colour is. The marker
+	 * moves while a key is held and the colour is sent on release, so a held key doesn't flood the bulb. */
+	function keydown(e: KeyboardEvent) {
+		const turn = TURNS[e.key];
 		if (!turn) return;
 		e.preventDefault();
-		const hue = (now.hue + turn[0] + 360) % 360;
-		const sat = Math.max(0, Math.min(1, now.sat + turn[1]));
-		onchange({ rgb: hsToRgb(hue, sat) });
+		const now = point ?? { hue: 0, sat: 1 };
+		dragging = { hue: (now.hue + turn[0] + 360) % 360, sat: Math.max(0, Math.min(1, now.sat + turn[1])) };
+	}
+
+	function keyup(e: KeyboardEvent) {
+		if (TURNS[e.key]) up();
 	}
 </script>
 
@@ -92,7 +102,9 @@
 				onpointermove={move}
 				onpointerup={up}
 				onpointercancel={() => (dragging = null)}
-				onkeydown={key}
+				onkeydown={keydown}
+				onkeyup={keyup}
+				onblur={up}
 			>
 				{#if point}
 					{@const rad = (point.hue * Math.PI) / 180}

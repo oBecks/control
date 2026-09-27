@@ -135,6 +135,7 @@ def test_big_controls_remote_pads_buttons_and_clocks():
     ({"kind": "pad", "target": "a", "h": 3}, "rows"),
     ({"kind": "button", "target": "a"}, "one remote button"),
     ({"kind": "button", "target": "a", "button": "power", "app": "x"}, "one remote button"),
+    ({"kind": "button", "target": "a", "app": "x" * 81}, "at most"),  # cut short, it'd name another app
     ({"kind": "pad", "target": "gone"}, "no device"),
 ])
 def test_items_that_make_no_sense_are_refused(item, problem):

@@ -103,7 +103,9 @@ def check_items(items: list[dict], targets: set[str], columns: int) -> list[dict
             if len(given) != 1:
                 raise ValueError("a button presses one remote button or opens one app")
             key, name = given[0]
-            kept[key] = name[:MAX_NAME]
+            if len(name) > MAX_NAME:
+                raise ValueError(f"a button's {key} is at most {MAX_NAME} characters")
+            kept[key] = name
         if kind == "heading":
             kept["text"] = str(item.get("text") or "").strip()[:MAX_TEXT]
             kept["align"] = item.get("align") or "start"
