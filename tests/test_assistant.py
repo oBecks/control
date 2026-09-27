@@ -476,7 +476,14 @@ def test_create_run_and_read_an_automation(home, client, runner):  # noqa: F811
     assert light.state.on
     got = ok(srv, "get_automation", automation="Evening")
     assert got["running"] and got["recent_runs"][0]["started_by"] == "Run by hand"
-    assert got["actions"][0] == "Turn on Yeelight color" and got["match"] == "all"
+    assert got["actions"][0] == {"action": "on", "device": "yeelight:1", "label": "Turn on Yeelight color"}
+    assert got["triggers"] == [{"type": "time", "at": "19:30", "days": ["mon", "sun"], "label": "At 19:30, on Mon, Sun"}]
+    assert got["match"] == "all"
+    # The parts go straight back into edit_automation: adding one Action keeps the others as they were.
+    kept = [{k: v for k, v in x.items() if k != "label"} for x in got["actions"]]
+    out = ok(srv, "edit_automation", automation="Evening", actions=[*kept, {"action": "off", "device": "yeelight"}])
+    assert out["summary"].endswith("then Notify: Evening on, then Turn off Yeelight color.")
+    assert "Set AC to heat, 24°" in out["summary"] and "Wait 30 s" in out["summary"]
     assert got["recent_runs"][0]["actions"][0] == "Turn on Yeelight color: done"
 
 

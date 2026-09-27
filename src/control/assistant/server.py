@@ -351,6 +351,68 @@ def day_numbers(days: list[str] | None) -> list[int] | None:
     return out
 
 
+def _days_in(days: list[int]) -> list[str] | None:
+    return None if len(days) == 7 else [DAY_NAMES[d] for d in days]
+
+
+def _without_none(part: dict) -> dict:
+    return {k: v for k, v in part.items() if v is not None}
+
+
+# An Automation's parts as the Engine keeps them, back in the shape create_automation and
+# edit_automation take (with the Engine's `label`), so an edit can pass the ones that stay unchanged.
+# Devices are given by uid, buttons and apps by the names Control keeps.
+
+
+def trigger_in(t: dict) -> dict:
+    if t["type"] == "time":
+        return _without_none({"type": "time", "at": t["at"], "days": _days_in(t["days"]), "label": t["label"]})
+    return _without_none({"type": "sun", "event": t["event"], "offset_minutes": t["offset"],
+                          "days": _days_in(t["days"]), "label": t["label"]})
+
+
+def condition_in(c: dict) -> dict:
+    kind, label = c["type"], c["label"]
+    if kind == "state":
+        return {"type": kind, "device": c["target"], "on": c["on"], "label": label}
+    if kind == "app":
+        return {"type": kind, "device": c["target"], "app": c["app"], "label": label}
+    if kind == "time":
+        return {"type": kind, "after": c["after"], "before": c["before"], "label": label}
+    if kind == "days":
+        return {"type": kind, "days": [DAY_NAMES[d] for d in c["days"]], "label": label}
+    return {"type": kind, "dark": c["is"] == "dark", "label": label}
+
+
+_SET_FIELDS = {"brightness": "brightness", "kelvin": "kelvin", "mode": "mode", "target_temp": "temperature",
+               "fan": "fan"}
+
+
+def action_in(a: dict) -> dict:
+    do, label = a["do"], a["label"]
+    if do == "wait":
+        return {"action": "wait", "minutes": a["seconds"] / 60, "label": label}
+    if do == "notify":
+        return {"action": "notify", "text": a["text"], "label": label}
+    out: dict = {"device": a["target"], "label": label}
+    if do == "toggle":
+        return {"action": "toggle"} | out
+    if do == "press":
+        return {"action": "press", "button": a["button"]} | out
+    if do == "open_app":
+        return {"action": "open_app", "app": a["app"]} | out
+    if do == "step":
+        kind = "brightness" if a["field"] == "brightness" else "temperature"
+        return {"action": f"{kind}_{'up' if a['by'] > 0 else 'down'}", "step": abs(a["by"])} | out
+    state = a["state"]
+    if set(state) == {"on"}:
+        return {"action": "on" if state["on"] else "off"} | out
+    fields = {_SET_FIELDS[k]: v for k, v in state.items() if k in _SET_FIELDS}
+    if state.get("rgb"):
+        fields["color"] = "#{:02x}{:02x}{:02x}".format(*state["rgb"])
+    return {"action": "set"} | fields | out
+
+
 def _when(ts: float) -> str:
     return time.strftime("%a %d %b %H:%M", time.localtime(ts))
 
@@ -674,10 +736,10 @@ def create_server(engine: Engine) -> MCPServer:
         a = lookup_automation(automation)
         full = engine.call("GET", f"/automations/{a['uid']}")
         out = automation_summary(full) | {
-            "triggers": [t["label"] for t in full["triggers"]],
-            "conditions": [c["label"] for c in full["conditions"]],
+            "triggers": [trigger_in(t) for t in full["triggers"]],
+            "conditions": [condition_in(c) for c in full["conditions"]],
             "match": full["match"],
-            "actions": [x["label"] for x in full["actions"]],
+            "actions": [action_in(x) for x in full["actions"]],
         }
         out["recent_runs"] = [run_summary(run) for run in engine.call("GET", f"/automations/{a['uid']}/runs")[:10]]
         return out
