@@ -4,7 +4,7 @@
 	import { beforeNavigate, goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import { Bold, GripVertical, Pencil, Plus, Redo2, Trash2, Undo2, X } from '@lucide/svelte';
+	import { Bold, ChevronLeft, GripVertical, Pencil, Plus, Redo2, Trash2, Undo2, X } from '@lucide/svelte';
 	import { MediaQuery } from 'svelte/reactivity';
 	import AddItems from '$lib/dashboards/AddItems.svelte';
 	import ItemView from '$lib/dashboards/ItemView.svelte';
@@ -276,7 +276,7 @@
 <svelte:head><title>{dash?.name ?? 'Dashboard'} · Control</title></svelte:head>
 
 <div class="dash" class:with-panel={desktop.current}>
-	<main bind:clientWidth={width}>
+	<main bind:clientWidth={width} style:--cols={placed ? columns : flowColumns}>
 		{#if !dash}
 			{#if dashboards.loaded}
 				<div class="empty">
@@ -302,6 +302,9 @@
 						</Button>
 					</div>
 				{:else}
+					<a class="back" href={resolve('/dashboards')} aria-label="Dashboards" title="Dashboards">
+						<ChevronLeft size={20} strokeWidth={2.4} />
+					</a>
 					<h1>{dash.name}</h1>
 					{#if placed}
 						<Button variant="ghost" size="sm" onclick={startArranging}>
@@ -552,6 +555,51 @@
 		border: 1px solid var(--accent);
 		outline: none;
 	}
+	/* Only shown on a phone on its side, where the tab bar is hidden. */
+	.back {
+		display: none;
+		place-items: center;
+		flex: none;
+		inline-size: 36px;
+		block-size: 36px;
+		margin-inline-start: calc(-1 * var(--s-2));
+		border-radius: var(--r-pill);
+		color: var(--text-2);
+	}
+	.back:hover {
+		background: var(--surface-2);
+	}
+	:global([dir='rtl']) .back :global(svg) {
+		transform: scaleX(-1);
+	}
+	header h1 {
+		flex: 1;
+		min-inline-size: 0;
+	}
+
+	/* A phone on its side: the Dashboard gets the screen. A short header, and cells no wider than
+	   on a big phone held upright, so a phone Dashboard keeps its look, centered. */
+	@media (orientation: landscape) and (max-height: 500px) and (max-width: 959px) {
+		main {
+			gap: var(--s-3);
+			max-inline-size: calc(var(--cols) * 120px + (var(--cols) - 1) * var(--s-3));
+			margin-inline: auto;
+		}
+		header {
+			min-block-size: 36px;
+		}
+		.back {
+			display: grid;
+		}
+		h1,
+		.title {
+			font-size: var(--fs-lg);
+		}
+		.grid {
+			max-inline-size: none;
+		}
+	}
+
 	.note {
 		margin: 0;
 		padding: var(--s-3);
@@ -734,6 +782,11 @@
 	@media (min-width: 960px) {
 		.bar {
 			inset-block-end: var(--s-6);
+		}
+	}
+	@media (orientation: landscape) and (max-height: 500px) and (max-width: 959px) {
+		.bar {
+			inset-block-end: calc(var(--s-3) + env(safe-area-inset-bottom));
 		}
 	}
 

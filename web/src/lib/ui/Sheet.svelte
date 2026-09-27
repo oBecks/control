@@ -42,6 +42,13 @@
 		box-shadow: var(--shadow-2);
 		animation: rise var(--dur-slow) var(--ease);
 	}
+	/* A phone on its side: a sheet as wide as the phone held upright, not the whole screen. */
+	@media (orientation: landscape) and (max-height: 500px) {
+		.sheet {
+			max-inline-size: 560px;
+			margin-inline: auto;
+		}
+	}
 	.grabber {
 		inline-size: 40px;
 		block-size: 5px;
