@@ -80,6 +80,7 @@
 		onchange={(c) => home.changeGroup(group.uid, c)}
 		onclose={() => panel.close()}
 		onedit={() => panel.openEditor(group.uid)}
+		onrename={(name) => home.editGroup(group.uid, { name })}
 		onopenmember={(uid) => (panel.selectedUid = uid)}
 	/>
 	{@render targetHotkeys(group.uid)}

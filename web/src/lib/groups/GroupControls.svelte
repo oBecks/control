@@ -1,11 +1,12 @@
 <script lang="ts">
-	import { ChevronRight, Info, Pencil, WifiOff, X } from '@lucide/svelte';
+	import { Check, ChevronRight, Info, Pencil, WifiOff, X } from '@lucide/svelte';
 	import type { Component } from 'svelte';
 	import type { Group, GroupState } from '$lib/api';
 	import ClimateControls from '$lib/controls/ClimateControls.svelte';
 	import LightControls from '$lib/controls/LightControls.svelte';
 	import PlugControls from '$lib/controls/PlugControls.svelte';
 	import type { StateChange } from '$lib/types';
+	import Button from '$lib/ui/Button.svelte';
 
 	export interface MemberRow {
 		uid: string;
@@ -23,12 +24,43 @@
 		offline: boolean;
 		onchange: (change: StateChange) => void;
 		onclose: () => void;
+		/** Open the Group editor: name, members and Delete. */
 		onedit: () => void;
+		/** Resolves true when the rename was saved. */
+		onrename: (name: string) => Promise<boolean>;
 		/** Open one member's own Device Controls. */
 		onopenmember: (uid: string) => void;
 	}
 
-	let { group, value, members, offline, onchange, onclose, onedit, onopenmember }: Props = $props();
+	let { group, value, members, offline, onchange, onclose, onedit, onrename, onopenmember }: Props = $props();
+
+	// The pencil beside the name only renames, like a Device's; the whole Group is edited from "Edit group".
+	let renaming = $state(false);
+	let draft = $state('');
+	let saving = $state(false);
+
+	function startRename() {
+		draft = group.name;
+		renaming = true;
+	}
+
+	async function saveName(e: SubmitEvent) {
+		e.preventDefault();
+		if (draft.trim() === group.name) {
+			renaming = false;
+			return;
+		}
+		saving = true;
+		if (await onrename(draft.trim())) renaming = false;
+		saving = false;
+	}
+
+	// Switching to another Group abandons an unsaved rename. Tracking the uid: polling hands over fresh objects.
+	const uid = $derived(group.uid);
+	$effect(() => {
+		void uid;
+		renaming = false;
+	});
 
 	const subtitle = $derived(
 		[
@@ -42,13 +74,30 @@
 
 <div class="head">
 	<div class="name">
-		<h2>
-			{group.name}
-			<button class="edit" aria-label="Edit {group.name}" onclick={onedit}
-				><Pencil size={15} strokeWidth={2.4} /></button
-			>
-		</h2>
-		<p>{subtitle}</p>
+		{#if renaming}
+			<form onsubmit={saveName} class="rename">
+				<!-- svelte-ignore a11y_autofocus -->
+				<input
+					bind:value={draft}
+					aria-label="Group name"
+					autofocus
+					maxlength="40"
+					required
+					onkeydown={(e) => e.key === 'Escape' && (renaming = false)}
+				/>
+				<button type="submit" aria-label="Save name" disabled={saving || !draft.trim()}
+					><Check size={18} strokeWidth={2.6} /></button
+				>
+			</form>
+		{:else}
+			<h2>
+				{group.name}
+				<button class="edit" aria-label="Rename {group.name}" onclick={startRename}
+					><Pencil size={15} strokeWidth={2.4} /></button
+				>
+			</h2>
+			<p>{subtitle}</p>
+		{/if}
 	</div>
 	<button class="close" aria-label="Close" onclick={onclose}><X size={18} strokeWidth={2.4} /></button>
 </div>
@@ -91,6 +140,9 @@
 				</li>
 			{/each}
 		</ul>
+		<div class="edit-group">
+			<Button variant="secondary" onclick={onedit}><Pencil size={16} strokeWidth={2.4} /> Edit group</Button>
+		</div>
 	</section>
 </div>
 
@@ -137,6 +189,33 @@
 	.edit:hover {
 		background: var(--surface-2);
 		color: var(--text);
+	}
+	.rename {
+		display: flex;
+		gap: var(--s-2);
+	}
+	.rename input {
+		flex: 1;
+		min-inline-size: 0;
+		min-block-size: 40px;
+		padding-inline: var(--s-3);
+		border-radius: var(--r-md);
+		border: 1px solid var(--accent);
+		background: var(--surface-2);
+		font-size: var(--fs-lg);
+		font-weight: var(--fw-bold);
+	}
+	.rename button {
+		display: grid;
+		place-items: center;
+		inline-size: 40px;
+		border: 0;
+		border-radius: var(--r-md);
+		background: var(--accent);
+		color: var(--on-accent);
+	}
+	.rename button:disabled {
+		opacity: 0.5;
 	}
 	.close {
 		inline-size: 32px;
@@ -227,6 +306,10 @@
 	.status {
 		font-size: var(--fs-sm);
 		color: var(--text-2);
+	}
+	.edit-group {
+		display: grid;
+		margin-block-start: var(--s-3);
 	}
 	:global([dir='rtl']) .member > :global(svg:last-child) {
 		transform: scaleX(-1);
