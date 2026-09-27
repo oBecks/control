@@ -15,6 +15,12 @@ from .test_groups import make
 JERUSALEM = sun.Location("Jerusalem, Israel", 31.78, 35.22)
 
 
+@pytest.fixture(autouse=True)
+def israel_time(monkeypatch):
+    """Sun times are the PC's local time: as on a PC in Israel in September, whatever this one's zone."""
+    monkeypatch.setattr(sun, "_local_zone", lambda day: dt.timezone(dt.timedelta(hours=3)))
+
+
 def local(text: str) -> dt.datetime:
     return dt.datetime.fromisoformat(text)
 
