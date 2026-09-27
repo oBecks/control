@@ -41,7 +41,9 @@
 			return seconds > 0 ? { do: 'wait', seconds } : null;
 		}
 		if (kind === 'notify') return text.trim() ? { do: 'notify', text: text.trim() } : null;
-		return fieldsReady ? { ...actionOf(choice, params), target } : null;
+		const action = actionOf(choice, params);
+		// Automations aren't offered here (no chaining yet), so a Run never comes up.
+		return fieldsReady && action.do !== 'run' ? { ...action, target } : null;
 	});
 
 	async function save(e: SubmitEvent) {
