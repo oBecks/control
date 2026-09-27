@@ -797,7 +797,10 @@ def create_server(engine: Engine) -> MCPServer:
                           conditions: list[ConditionIn] | None = None, match: Literal["all", "any"] = "all",
                           enabled: bool = True) -> dict:
         """Create an Automation. It's active right away. Triggers (any one starts it; none: it runs
-        only by hand): a time ("07:00") on some days, or sunrise/sunset with an offset in minutes.
+        only by hand): a time ("07:00") on some days; sunrise/sunset with an offset in minutes; a
+        Device or Group turning on or off (`state`: `device`, `on`, optionally `stays_minutes` it must
+        stay so first); a Streamer opening an app (`app`: `device`, `app`, optionally `stays_minutes`);
+        or a Device going Offline or coming back online (`offline`: `device`, `offline`).
         Conditions (checked once when a Trigger fires; `match`: all of them, or any one): a Device or
         Group on/off, a Streamer's open app, a time window (may cross midnight), days, dark/light.
         Actions, in order: what a Hotkey can do to a Device or Group (on, off, toggle, set, step,

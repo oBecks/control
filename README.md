@@ -87,7 +87,7 @@ It only works in Claude on the same PC. Claude on the web or your phone can't re
 
 ## Coming next
 
-Automations that react to devices (the TV turning on, a bulb going offline), then Scenes. Later, Samsung TVs, Rooms and more brands. See the [roadmap](docs/roadmap.md).
+Automations that run each other (chaining), then Scenes. Later, Samsung TVs, Rooms and more brands. See the [roadmap](docs/roadmap.md).
 
 <details>
 <summary>Run from source</summary>

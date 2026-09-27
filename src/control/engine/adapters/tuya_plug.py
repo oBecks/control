@@ -22,7 +22,7 @@ class TuyaPlug:
     def __init__(self, device_id: str, ip: str, local_key: str, version: str):
         self._ip = ip
         self._watch = _watches.get(device_id)
-        if self._watch is not None and self._watch.connected:
+        if self._watch is not None and self._watch.wait_connected():
             return
         self._watch = None
         self._dev = _device(device_id, ip, local_key, version)
@@ -89,8 +89,11 @@ class TuyaWatch:
         self._stop = threading.Event()
         self._dev: tinytuya.OutletDevice | None = None
         self.connected = False
+        self._connecting = threading.Event()  # set while it's opening the plug's one connection
+        self._ready = threading.Event()  # set while connected
         self.on: bool | None = None
         _watches[self._id] = self
+        self._connecting.set()  # from the start, so a command right away waits for it
         self._thread = threading.Thread(target=self._loop, name=f"listen-{uid}", daemon=True)
         self._thread.start()
 
@@ -102,6 +105,13 @@ class TuyaWatch:
             self.connected = False
             if self._dev is not None:
                 self._dev.close()
+
+    def wait_connected(self, seconds: float = 4.0) -> bool:
+        """Whether commands can go over this connection. While it's being opened, wait for it rather
+        than open a second one, which the plug would refuse."""
+        if self._connecting.is_set():
+            self._ready.wait(seconds)
+        return self.connected
 
     def switch(self, on: bool) -> None:
         """A command from Control, over the listening connection."""
@@ -128,6 +138,8 @@ class TuyaWatch:
                 pass
             finally:
                 self.connected = False
+                self._ready.clear()
+                self._connecting.clear()
                 with self._lock:
                     if self._dev is not None:
                         self._dev.close()
@@ -156,11 +168,14 @@ class TuyaWatch:
         ip = self._address()
         if not ip:
             return
+        self._connecting.set()
         with self._lock:
             self._dev = dev = _device(self._id, ip, self._key, self._version)
             dev.set_socketPersistent(True)
             status = _checked(dev.status(), ip)
         self.connected = True
+        self._ready.set()
+        self._connecting.clear()
         self._heard(status)
         heard = beat = time.monotonic()
         while not self._stop.is_set():

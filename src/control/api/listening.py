@@ -198,6 +198,7 @@ class Listening:
         w = self._watches.pop(uid)
         if w is not None:
             w.close()
+        self._by.pop(uid, None)
         if timer := self._lost.pop(uid, None):
             timer.cancel()
         self._states.pop(uid, None)
@@ -354,7 +355,10 @@ class Listening:
         now = time.monotonic()
         hops = 0
         by = self._by.get(uid)
-        if by and by[2] > now:
+        if by and by[2] <= now:
+            del self._by[uid]  # long past: keeps _by to Devices an Automation just controlled
+            by = None
+        if by:
             if by[0] == a.uid:
                 return  # its own change
             hops = by[1] + 1

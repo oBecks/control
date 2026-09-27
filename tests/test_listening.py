@@ -475,3 +475,50 @@ def test_a_streamer_keeping_an_app_open_for_n_minutes(listening):
     seen(listening, BOX, {"on": True, "app": "com.google.android.backdrop"})  # the screensaver: still Netflix
     settle(listening, a["uid"], seconds=0.3)
     assert [r["cause"] for r in runs(c, a["uid"])] == ["Box opens Netflix and keeps it open for 1 min"]
+
+
+def test_a_command_while_the_plug_is_being_connected_waits_for_that_connection(monkeypatch):
+    import socket
+
+    from control.engine.adapters import tuya_plug
+
+    opened = []
+
+    class Dev:
+        def __init__(self):
+            self.socket, self._plug = socket.socketpair()
+            self.address = "10.0.0.3"
+            self.retry = True
+
+        def set_socketPersistent(self, _):
+            pass
+
+        def status(self):
+            time.sleep(0.3)  # the plug takes a moment to answer
+            return {"dps": {"1": True}}
+
+        def turn_off(self, switch):
+            return {"dps": {"1": False}}
+
+        def heartbeat(self, nowait):
+            pass
+
+        def close(self):
+            self.socket.close()
+            self._plug.close()
+
+    def device(*args):
+        opened.append(args)
+        return Dev()
+
+    monkeypatch.setattr(tuya_plug, "_device", device)
+    reports = []
+    watch = tuya_plug.TuyaWatch("tuya:x", "k", "3.3", lambda: "10.0.0.3", lambda uid, s: reports.append(s))
+    try:
+        plug = tuya_plug.TuyaPlug("x", "10.0.0.3", "k", "3.3")  # while the watch is still connecting
+        assert len(opened) == 1  # it waited and used the watch's connection: no second one
+        assert plug.get_state().on is True
+        plug.turn_off()
+        assert watch.on is False and reports[-1] == {"on": False}
+    finally:
+        watch.close()
