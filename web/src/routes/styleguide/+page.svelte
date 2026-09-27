@@ -30,6 +30,8 @@
 	import LightControls from '$lib/controls/LightControls.svelte';
 	import ClimateControls from '$lib/controls/ClimateControls.svelte';
 	import PlugControls from '$lib/controls/PlugControls.svelte';
+	import type { Group, GroupState } from '$lib/api';
+	import GroupControls from '$lib/groups/GroupControls.svelte';
 
 	// --- Demo devices (shaped like the Engine API; your real ones) ---------------
 
@@ -95,6 +97,33 @@
 		{ uid: 'p1', name: 'Outlet', control: 'plug', state: { on: true } },
 		{ uid: 'p2', name: 'Kettle', control: 'plug', state: { on: false }, isNew: true }
 	]);
+
+	// A Group of the first two lights, for Group Controls.
+	let demoGroup = $state<Group>({
+		uid: 'g1',
+		name: 'Living room',
+		members: ['l1', 'l2'],
+		control: 'light',
+		category: 'light',
+		made_by: 'user'
+	});
+	// Its shared light, changed like a demo device.
+	let groupLight = $state<Demo>({
+		uid: 'g1',
+		name: 'Living room',
+		control: 'light',
+		state: { on: true, brightness: 55, mode: 'white', rgb: null, kelvin: 2700 }
+	});
+	const groupValue = $derived<GroupState>({
+		control: 'light',
+		features: LIGHT,
+		state: groupLight.state as LightState,
+		assumed: false,
+		on_count: 2,
+		total: 2,
+		members: {},
+		failed: {}
+	});
 
 	const ICONS: Record<Exclude<Control, 'remote' | 'streamer'>, Component> = {
 		light: Lightbulb,
@@ -343,6 +372,36 @@
 					{@render controlsFor(d)}
 				</div>
 			{/each}
+		</div>
+		<h3 class="block-sub">Group Controls</h3>
+		<p class="note">
+			The pencil beside a name only renames, for a Group as for a Device. <b>Edit group</b> under the Devices list opens the
+			whole Group: its name, its members and Delete.
+		</p>
+		<div class="control-cards">
+			<div class="panel-card">
+				<GroupControls
+					group={demoGroup}
+					value={groupValue}
+					members={devices.slice(0, 2).map((d) => ({
+						uid: d.uid,
+						name: d.name,
+						status: statusOf(d),
+						icon: iconOf(d),
+						on: d.state.on,
+						offline: false
+					}))}
+					offline={false}
+					onchange={(c) => apply(groupLight, c)}
+					onclose={() => {}}
+					onedit={() => {}}
+					onrename={async (name) => {
+						demoGroup.name = name;
+						return true;
+					}}
+					onopenmember={() => {}}
+				/>
+			</div>
 		</div>
 	</section>
 
