@@ -9,7 +9,8 @@ import {
 	type GroupState,
 	type ScanResult
 } from './api';
-import type { AppShortcut, Notice, StateChange } from './types';
+import { sceneActive } from './scenes/active';
+import type { AppShortcut, Notice, Scene, ScenePart, StateChange } from './types';
 
 const POLL_MS = 8000;
 /** Phones asking for access are polled faster, since someone is standing there waiting. */
@@ -23,6 +24,9 @@ class Home {
 	states = $state<Record<string, DeviceState>>({});
 	groups = $state<Group[]>([]);
 	groupStates = $state<Record<string, GroupState>>({});
+	scenes = $state<Scene[]>([]);
+	/** The Scene being set right now: its chip shows it lit meanwhile. */
+	settingScene = $state<string | null>(null);
 	/** Result of each device's last state read: true = didn't answer. Beats the Scan's view, which can go stale. */
 	unreachable = $state<Record<string, boolean>>({});
 	loaded = $state(false);
@@ -42,6 +46,19 @@ class Home {
 	/** Controllable devices only; Transmitters and not-yet-ready devices live in Add Devices. */
 	controllable = $derived(this.devices.filter((d) => d.control !== null));
 	newCount = $derived(this.devices.filter((d) => d.is_new).length);
+
+	/** Whether a Scene is active: every Device in it as the Scene says (ADR 0013). */
+	isSceneActive(scene: Scene) {
+		if (this.settingScene === scene.uid) return true;
+		return sceneActive(scene, {
+			reading: (uid) => this.states[uid],
+			members: (uid) => this.groups.find((g) => g.uid === uid)?.members ?? null,
+			offline: (uid) => {
+				const d = this.devices.find((x) => x.uid === uid);
+				return !d || this.isOffline(d);
+			}
+		});
+	}
 
 	isOffline(d: Device) {
 		return this.unreachable[d.uid] ?? !d.online;
@@ -70,7 +87,7 @@ class Home {
 
 	async refresh() {
 		try {
-			[this.devices, this.groups] = await Promise.all([api.devices(), api.groups()]);
+			[this.devices, this.groups, this.scenes] = await Promise.all([api.devices(), api.groups(), api.scenes()]);
 			this.engineDown = false;
 			this.lock = null;
 		} catch (e) {
@@ -259,6 +276,76 @@ class Home {
 			this.notify(e instanceof Error ? e.message : String(e));
 		} finally {
 			for (const k of [uid, ...members]) this.#pending.delete(k);
+		}
+	}
+
+	/** Set a Scene: every part at once. The chip stays lit meanwhile; readings come back with the answer. */
+	async setScene(uid: string) {
+		const scene = this.scenes.find((s) => s.uid === uid);
+		if (!scene || this.settingScene) return;
+		this.settingScene = uid;
+		const targets = scene.parts.map((p) => p.target);
+		for (const t of targets) this.#pending.add(t);
+		try {
+			const res = await api.setScene(uid);
+			for (const t of targets) this.#pending.delete(t);
+			for (const [t, reading] of Object.entries(res.readings)) {
+				if (t.startsWith('group:')) this.#takeGroup(t, reading as GroupState);
+				else {
+					this.states[t] = reading as DeviceState;
+					this.unreachable[t] = false;
+				}
+			}
+			for (const f of res.failed) if (f.unreachable) this.unreachable[f.target] = true;
+			if (res.failed.length === 1) this.notify(`${res.name}: ${res.failed[0].reason}`);
+			else if (res.failed.length) this.notify(`${res.name}: ${res.failed.length} devices didn't respond`);
+			// Groups holding a changed Device read differently now.
+			const changed = new Set(Object.keys(res.readings));
+			for (const g of this.groups) if (!changed.has(g.uid) && g.members.some((m) => changed.has(m))) this.#readGroup(g);
+		} catch (e) {
+			this.notify(e instanceof Error ? e.message : String(e));
+		} finally {
+			for (const t of targets) this.#pending.delete(t);
+			this.settingScene = null;
+		}
+	}
+
+	/** Create (uid null) or change a Scene; returns it, or null if the Engine refused (already said). */
+	async saveScene(
+		uid: string | null,
+		scene: { name: string; icon: string; parts: ScenePart[] }
+	): Promise<Scene | null> {
+		try {
+			const saved = uid ? await api.patchScene(uid, scene) : await api.addScene(scene);
+			this.scenes = this.scenes.some((s) => s.uid === saved.uid)
+				? this.scenes.map((s) => (s.uid === saved.uid ? saved : s))
+				: [...this.scenes, saved];
+			return saved;
+		} catch (e) {
+			this.notify(e instanceof Error ? e.message : String(e));
+			return null;
+		}
+	}
+
+	async deleteScene(uid: string): Promise<boolean> {
+		try {
+			await api.deleteScene(uid);
+			this.scenes = this.scenes.filter((s) => s.uid !== uid);
+			return true;
+		} catch (e) {
+			this.notify(e instanceof Error ? e.message : String(e));
+			return false;
+		}
+	}
+
+	async orderScenes(uids: string[]) {
+		const before = this.scenes;
+		this.scenes = uids.map((u) => before.find((s) => s.uid === u)).filter((s): s is Scene => !!s);
+		try {
+			await api.orderScenes(uids);
+		} catch (e) {
+			this.scenes = before;
+			this.notify(e instanceof Error ? e.message : String(e));
 		}
 	}
 

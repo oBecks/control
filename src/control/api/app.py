@@ -38,7 +38,7 @@ from ..engine.found_device import Category
 from ..engine.links import tuya_link
 from ..engine.registry import Group, KnownDevice, Registry, RemoteDevice
 from ..engine.scan import DEFAULT_TIMEOUT, scan_and_remember
-from . import access, assistant, automations, dashboards, desktop, hotkeys
+from . import access, assistant, automations, dashboards, desktop, hotkeys, scenes
 from .deps import registry
 from .listening import listening
 
@@ -59,6 +59,7 @@ app.include_router(assistant.router)
 app.include_router(hotkeys.router)
 app.include_router(dashboards.router)
 app.include_router(automations.router)
+app.include_router(scenes.router)
 
 
 @app.exception_handler(LookupError)

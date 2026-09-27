@@ -103,6 +103,38 @@ export interface StateChange {
 	open_app?: string;
 }
 
+/** How one Device or Group should be in a Scene: only what the user chose (engine/scenes.py).
+ * Setting anything but `on` also turns it on; `on: false` comes alone. `app`: a Streamer's, by package. */
+export interface SceneState {
+	on?: boolean;
+	brightness?: number;
+	rgb?: RGB;
+	kelvin?: number;
+	mode?: string;
+	target_temp?: number;
+	fan?: string;
+	swing?: string;
+	app?: string;
+}
+
+export interface ScenePart {
+	/** A Device's or Group's uid. */
+	target: string;
+	state: SceneState;
+}
+
+/** A named end state for several Devices, set in one tap (ADR 0013). */
+export interface Scene {
+	uid: string;
+	name: string;
+	icon: string;
+	/** `label`: the state in words, e.g. "On · 20% · 2700 K". */
+	parts: (ScenePart & { target_name: string; label: string })[];
+	/** Why it needs looking at, e.g. nothing is left in it. */
+	attention: string | null;
+	made_by: 'user' | 'assistant';
+}
+
 /** What a Hotkey does (see engine/hotkeys.py). */
 export type HotkeyAction =
 	| { do: 'toggle' }

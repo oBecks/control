@@ -27,6 +27,8 @@ import type {
 	Labelled,
 	Notice,
 	Run,
+	Scene,
+	ScenePart,
 	Trigger
 } from './types';
 
@@ -86,6 +88,13 @@ export type GroupState = (
 	/** Members that didn't answer, or refused the change. */
 	failed: Record<string, { reason: string; unreachable: boolean }>;
 };
+
+/** What setting a Scene did: the parts (or a Group's members) that failed, and each reading afterwards. */
+export interface SceneSetResult {
+	name: string;
+	failed: { target: string; reason: string; unreachable: boolean }[];
+	readings: Record<string, DeviceState | GroupState>;
+}
 
 /** Apps to pick from: those installed (read with adb) or Control's catalogue. */
 export interface AppChoices {
@@ -149,6 +158,17 @@ export const api = {
 		call<Device>('PATCH', `/devices/${enc(uid)}`, patch),
 	scan: () => call<ScanResult>('POST', '/scan'),
 	markAllSeen: () => call<void>('POST', '/devices/seen'),
+
+	// Scenes
+	scenes: () => call<Scene[]>('GET', '/scenes'),
+	addScene: (scene: { name: string; icon: string; parts: ScenePart[] }) => call<Scene>('POST', '/scenes', scene),
+	patchScene: (uid: string, patch: { name?: string; icon?: string; parts?: ScenePart[] }) =>
+		call<Scene>('PATCH', `/scenes/${enc(uid)}`, patch),
+	deleteScene: (uid: string) => call<void>('DELETE', `/scenes/${enc(uid)}`),
+	orderScenes: (uids: string[]) => call<void>('PUT', '/scenes/order', { uids }),
+	setScene: (uid: string) => call<SceneSetResult>('POST', `/scenes/${enc(uid)}/set`),
+	captureScene: (targets: string[]) =>
+		call<{ parts: ScenePart[]; failed: Record<string, string> }>('POST', '/scenes/capture', { targets }),
 
 	// Groups
 	groups: () => call<Group[]>('GET', '/groups'),

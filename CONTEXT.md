@@ -83,23 +83,23 @@ A named set of Devices controlled as if it were one Device (e.g. "Living room li
 _Avoid_: Light group, zone, Room, Scene
 
 **Scene**:
-A named, one-tap set of target states across several Devices (e.g. "Movie night"). A Scene never fires by itself; an Automation can run one.
-_Avoid_: Preset, routine, macro
+A named end state for several Devices (e.g. "Movie night": ceiling light off, lamp at 20% warm, AC at 24° cool), set in one tap. It says how things should look, not what to do in which order: no waits, Conditions or notifications, which belong to an Automation. Because it's a state, a Scene is active while every Device in it matches, and one can be made from how things are right now. It holds Devices and Groups, each with only the parts the user chose (power, brightness, colour, AC mode and temperature, a Streamer's open app); button presses and Remote Devices with only a Power Toggle are left out, since they aren't states. Setting an active Scene again sends it again; a Scene has no "off". A Scene never fires by itself; an Automation can set one, or react to one being set.
+_Avoid_: Preset, routine, macro, mode
 
 **Automation**:
-A user-made rule that the Engine runs on its own: when something happens (a time, sunrise, a Device changing state, the PC waking…), do something (control Devices or Groups, run a Scene). Runs only while the Engine is running. Made in the app or by describing it to the Assistant, never by writing code.
+A user-made rule that the Engine runs on its own: when something happens (a time, sunrise, a Device changing state, the PC waking…), do something (control Devices or Groups, set a Scene). Runs only while the Engine is running. Made in the app or by describing it to the Assistant, never by writing code.
 _Avoid_: Routine, rule, script
 
 **Trigger**:
-The "When" of an Automation: something that happens and starts a Run (a time, sunset, a Device turning on…). An Automation can have several; any one of them starts it.
+The "When" of an Automation: something that happens and starts a Run (a time, sunset, a Device turning on, a Scene being set…). An Automation can have several; any one of them starts it.
 _Avoid_: Event, when-clause
 
 **Condition**:
-The "Only if" of an Automation: something that must be true when a Trigger fires for the Run to go ahead (a Device's state, a time window). It's checked, never waited for.
+The "Only if" of an Automation: something that must be true when a Trigger fires for the Run to go ahead (a Device's state, a Scene being active, a time window). It's checked, never waited for.
 _Avoid_: Filter, guard, constraint
 
 **Action**:
-One step in the "Then" of an Automation, done in order: control a Device or Group, run another Automation (skipping its Only if, without waiting for it), wait, or notify.
+One step in the "Then" of an Automation, done in order: control a Device or Group, set a Scene, run another Automation (skipping its Only if, without waiting for it), wait, or notify.
 _Avoid_: Step, command, task
 
 **Run**:
@@ -111,7 +111,7 @@ Someone who lives in the home, known to Control by the phone(s) the user marked 
 _Avoid_: User, member, resident
 
 **Hotkey**:
-Keys pressed on the PC running Control that do one thing to one Device or Group: toggle it, set anything its Device Controls can set, step its brightness or temperature up or down, press one of its buttons, open a Streamer's app, or run an Automation (skipping its Only if), and later a Scene. Forgetting the Device or Group, or deleting the Automation, deletes its Hotkeys. It can be a combination (Ctrl+Alt+L), a sequence (Ctrl+Alt+L, then 1), a double or long press, or a key held to keep dimming. Works in any app and any keyboard layout, including media keys and Bluetooth buttons that act as keys. The keys go only to Control, never also to the app in front.
+Keys pressed on the PC running Control that do one thing to one Device or Group: toggle it, set anything its Device Controls can set, step its brightness or temperature up or down, press one of its buttons, open a Streamer's app, run an Automation (skipping its Only if), or set a Scene. Forgetting the Device or Group, or deleting the Automation, deletes its Hotkeys. It can be a combination (Ctrl+Alt+L), a sequence (Ctrl+Alt+L, then 1), a double or long press, or a key held to keep dimming. Works in any app and any keyboard layout, including media keys and Bluetooth buttons that act as keys. The keys go only to Control, never also to the app in front.
 _Avoid_: Shortcut, key binding, macro
 
 ### Screens
@@ -135,6 +135,10 @@ _Avoid_: Remote widget, keypad
 **Single Button**:
 A Dashboard item that is one remote button (e.g. HDMI 1) or one Streamer App Shortcut (e.g. Netflix) on its own.
 _Avoid_: Shortcut, widget
+
+**Scene Button**:
+A Dashboard item that sets a Scene. It looks like a Single Button with the Scene's name, and lights up while the Scene is active.
+_Avoid_: Scene tile, preset button
 
 **Run Button**:
 A Dashboard item that starts an Automation's Run, skipping its Only if like any Run by hand. It looks like a Single Button with the Automation's name, and lights up while the Run goes on.

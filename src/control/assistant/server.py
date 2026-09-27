@@ -48,6 +48,14 @@ Group of lights takes what every one of its lights can do, a Group of ACs likewi
 only on/off. You can create, edit and delete Groups when the user asks; the app marks them as made
 by the Assistant.
 
+Scenes: a Scene is a named end state for several Devices and Groups (e.g. "Movie night": the ceiling
+light off, the lamp at 20% warm white, the AC at 24° cool, the SHIELD on Netflix), set in one go with
+set_scene. It holds states, not steps or button presses, and each Device sets only what the Scene
+says (a lamp that's just "off" keeps its colour). A Scene is active while every Device in it is as
+the Scene says (an AC's Assumed State counts). A Remote Device with only a Power Toggle can't be in
+one. You can create (from how things are now, or with the values the user gives), edit and delete
+Scenes when the user asks; the app marks them as made by the Assistant.
+
 Hotkeys: keys on this PC (e.g. Ctrl+Alt+L, F13, or a media key such as Play/Pause) that do one thing
 to one Device or Group: toggle it, turn it on or off, step brightness or temperature, set it, press
 one of its buttons, or open a Streamer's app; or that run one Automation. You can list, create and
@@ -297,6 +305,35 @@ def parse_color(text: str) -> list[int]:
 
 DAY_NAMES = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 DEVICE_TRIGGERS = ("state", "app", "offline")
+
+
+class SceneDeviceIn(BaseModel):
+    """One Device or Group in a Scene, and how it should be. Give no values (or as_now) to keep how
+    it is now."""
+
+    device: str = Field(description="a Device's or Group's name or uid")
+    as_now: bool = Field(False, description="keep how it is right now (the other values are then ignored)")
+    on: bool | None = Field(None, description="false: off (then nothing else); setting anything else turns it on")
+    brightness: int | None = Field(None, description="a light: 1-100")
+    color: str | None = Field(None, description="a light: #RRGGBB")
+    kelvin: int | None = Field(None, description="a light: white temperature")
+    mode: str | None = Field(None, description="an AC's mode")
+    temperature: float | None = Field(None, description="an AC's temperature")
+    fan: str | None = Field(None, description="an AC's fan speed")
+    swing: str | None = Field(None, description="an AC's swing")
+    app: str | None = Field(None, description='a Streamer: the app it has open, e.g. "Netflix"')
+
+
+def scene_summary(sc: dict, active: dict | None = None) -> dict:
+    out = {"name": sc["name"], "uid": sc["uid"],
+           "devices": {p["target_name"]: p["label"] for p in sc["parts"]}}
+    if sc["attention"]:
+        out["needs_attention"] = sc["attention"]
+    if active is not None:
+        out["active"] = active["active"]
+        if not active["active"]:
+            out["not_as_the_scene_says"] = [p["target_name"] for p, ok in zip(sc["parts"], active["parts"]) if not ok]
+    return out
 
 
 class TriggerIn(BaseModel):
@@ -640,6 +677,94 @@ def create_server(engine: Engine) -> MCPServer:
         g = lookup_group(group)
         engine.call("DELETE", f"/groups/{g['uid']}")
         return {"deleted": g["name"]}
+
+    def lookup_scene(ref: str) -> dict:
+        return find([sc | {"category": "scene"} for sc in engine.call("GET", "/scenes")], ref, "Scene")
+
+    def scene_parts(devices: list[SceneDeviceIn]) -> list[dict]:
+        """The parts, with those to keep as they are now read from the Devices."""
+        known = home_devices() + engine.call("GET", "/groups")
+        parts, now = [], []
+        for spec in devices:
+            d = controllable(find(known, spec.device))
+            state = {"on": spec.on, "brightness": spec.brightness, "kelvin": spec.kelvin, "mode": spec.mode,
+                     "target_temp": spec.temperature, "fan": spec.fan, "swing": spec.swing}
+            if spec.color is not None:
+                state["rgb"] = parse_color(spec.color)
+            if spec.app is not None:
+                if d["control"] != "streamer":
+                    raise ToolError(f"'{d['name']}' isn't a Streamer, so it has no app to open.")
+                apps = engine.call("GET", f"/devices/{d['uid']}/state")["features"]["apps"]
+                state["app"] = app_package(apps, spec.app)
+            state = {k: v for k, v in state.items() if v is not None}
+            parts.append({"target": d["uid"], "state": state})
+            if spec.as_now or not state:
+                now.append(len(parts) - 1)
+        if now:
+            got = engine.call("POST", "/scenes/capture", {"targets": [parts[i]["target"] for i in now]})
+            if got["failed"]:
+                raise ToolError("Couldn't keep how these are now: " + "; ".join(got["failed"].values()))
+            for i, part in zip(now, got["parts"]):
+                parts[i] = part
+        return parts
+
+    @server.tool(title="List Scenes", annotations=READ)
+    def list_scenes(include_state: bool = False) -> dict:
+        """List the Scenes: each one's name and what it sets on each Device. include_state also says
+        which are active right now (every Device as the Scene says), which takes a few seconds."""
+        found = engine.call("GET", "/scenes")
+        active = engine.call("GET", "/scenes/state") if include_state and found else {}
+        return {"scenes": [scene_summary(sc, active.get(sc["uid"]) if include_state else None) for sc in found]}
+
+    @server.tool(title="Set a Scene", annotations=SET)
+    def set_scene(scene: str) -> dict:
+        """Set a Scene: every Device in it goes to how the Scene says, all at once."""
+        sc = lookup_scene(scene)
+        body = engine.call("POST", f"/scenes/{sc['uid']}/set")
+        out: dict = {"set": body["name"]}
+        if body["failed"]:
+            out["not_answering"] = [f["reason"] for f in body["failed"]]
+        return out
+
+    @server.tool(title="Create a Scene", annotations=CREATE)
+    def create_scene(name: str, devices: list[SceneDeviceIn]) -> dict:
+        """Create a Scene from Devices and Groups (by name or uid) and how each should be. A Device
+        given without values (or with as_now) keeps how it is right now, so "save this as Movie night"
+        is every Device the user means, with as_now. Only states: power, a light's brightness and
+        colour or white, an AC's mode, temperature, fan and swing, a Streamer's app. It isn't set now;
+        set_scene does that."""
+        sc = engine.call("POST", "/scenes", {"name": name, "parts": scene_parts(devices), "by_assistant": True})
+        return scene_summary(sc)
+
+    @server.tool(title="Edit a Scene", annotations=SET)
+    def edit_scene(scene: str, name: str | None = None, set_devices: list[SceneDeviceIn] | None = None,
+                   remove: list[str] | None = None) -> dict:
+        """Rename a Scene, add Devices to it or change how its Devices should be (set_devices, like
+        create_scene's devices: a Device already in it is replaced), or remove Devices from it."""
+        sc = lookup_scene(scene)
+        if name is None and not set_devices and not remove:
+            raise ToolError("Say what to change: a new name, Devices to set, or Devices to remove.")
+        parts = [{"target": p["target"], "state": p["state"]} for p in sc["parts"]]
+        if set_devices:
+            new = scene_parts(set_devices)
+            changed = {p["target"] for p in new}
+            parts = [p for p in parts if p["target"] not in changed] + new
+        if remove:
+            known = home_devices() + engine.call("GET", "/groups")
+            gone = {find(known, ref)["uid"] for ref in remove}
+            parts = [p for p in parts if p["target"] not in gone]
+        if not parts:
+            raise ToolError(f"That would leave '{sc['name']}' empty. Use delete_scene to remove it.")
+        body = {"name": name, "parts": parts if set_devices or remove else None}
+        sc = engine.call("PATCH", f"/scenes/{sc['uid']}", {k: v for k, v in body.items() if v is not None})
+        return scene_summary(sc)
+
+    @server.tool(title="Delete a Scene", annotations=DELETE)
+    def delete_scene(scene: str) -> dict:
+        """Delete a Scene. Its Devices stay as they are; only the Scene goes."""
+        sc = lookup_scene(scene)
+        engine.call("DELETE", f"/scenes/{sc['uid']}")
+        return {"deleted": sc["name"]}
 
     @server.tool(title="List Hotkeys", annotations=READ)
     def list_hotkeys() -> dict:
