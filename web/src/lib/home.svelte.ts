@@ -143,9 +143,9 @@ class Home {
 		}
 	}
 
-	/** Dismiss notices, on every browser: these, or all of them. */
-	async dismissNotices(ids?: number[]) {
-		this.notices = ids ? this.notices.filter((n) => !ids.includes(n.id)) : [];
+	/** Dismiss notices, on every browser: these, or all those shown (not one arriving meanwhile). */
+	async dismissNotices(ids = this.notices.map((n) => n.id)) {
+		this.notices = this.notices.filter((n) => !ids.includes(n.id));
 		try {
 			await api.noticesSeen(ids);
 		} catch {

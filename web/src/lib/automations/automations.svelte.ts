@@ -28,7 +28,10 @@ class Automations {
 		const tick = async (first = false) => {
 			clearTimeout(timer);
 			if (first || visible()) await this.load();
-			if (!stopped) timer = setTimeout(tick, this.list.some((a) => a.running) ? RUNNING_POLL_MS : POLL_MS);
+			if (stopped) return;
+			// A tick that started meanwhile (the page became visible) scheduled one already: keep a single chain.
+			clearTimeout(timer);
+			timer = setTimeout(tick, this.list.some((a) => a.running) ? RUNNING_POLL_MS : POLL_MS);
 		};
 		const onVisible = () => visible() && tick();
 		tick(true);

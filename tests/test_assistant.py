@@ -476,6 +476,7 @@ def test_create_run_and_read_an_automation(home, client, runner):  # noqa: F811
     assert light.state.on
     got = ok(srv, "get_automation", automation="Evening")
     assert got["running"] and got["recent_runs"][0]["started_by"] == "Run by hand"
+    assert got["actions"][0] == "Turn on Yeelight color" and got["match"] == "all"
     assert got["recent_runs"][0]["actions"][0] == "Turn on Yeelight color: done"
 
 
@@ -499,6 +500,8 @@ def test_automations_the_engine_refuses_say_why(home, runner):
     assert "Power Toggle" in error(srv, "create_automation", name="TV",
                                    conditions=[{"type": "state", "device": "Living room TV", "on": True}],
                                    actions=[{"action": "on", "device": "yeelight"}])
+    assert "`dark`" in error(srv, "create_automation", name="Night", conditions=[{"type": "sun"}],
+                             actions=[{"action": "on", "device": "yeelight"}])
     assert "'someday' isn't a day" in error(srv, "create_automation", name="x",
                                             triggers=[{"type": "time", "at": "07:00", "days": ["someday"]}],
                                             actions=[{"action": "on", "device": "yeelight"}])

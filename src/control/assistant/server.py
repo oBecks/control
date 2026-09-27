@@ -641,6 +641,8 @@ def create_server(engine: Engine) -> MCPServer:
             return {"type": "time", "after": c.after, "before": c.before}
         if c.type == "days":
             return {"type": "days", "days": day_numbers(c.days)}
+        if c.dark is None:
+            raise ToolError("A sun Condition says `dark`: true (after sunset, before sunrise) or false (daylight).")
         return {"type": "sun", "is": "dark" if c.dark else "light"}
 
     def automation_action(a: ActionIn) -> dict:
@@ -666,10 +668,17 @@ def create_server(engine: Engine) -> MCPServer:
 
     @server.tool(title="Get an Automation", annotations=READ)
     def get_automation(automation: str) -> dict:
-        """One Automation, by name or uid, with its recent Runs (newest first): what started each,
-        how it ended, and what each Action did."""
+        """One Automation, by name or uid: each of its Triggers, Conditions and Actions (edit_automation
+        replaces a whole list, so keep the ones that stay), and its recent Runs (newest first): what
+        started each, how it ended, and what each Action did."""
         a = lookup_automation(automation)
-        out = automation_summary(engine.call("GET", f"/automations/{a['uid']}"))
+        full = engine.call("GET", f"/automations/{a['uid']}")
+        out = automation_summary(full) | {
+            "triggers": [t["label"] for t in full["triggers"]],
+            "conditions": [c["label"] for c in full["conditions"]],
+            "match": full["match"],
+            "actions": [x["label"] for x in full["actions"]],
+        }
         out["recent_runs"] = [run_summary(run) for run in engine.call("GET", f"/automations/{a['uid']}/runs")[:10]]
         return out
 

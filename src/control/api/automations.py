@@ -16,6 +16,7 @@ set Automations up, phones included, like Groups. Device logic stays in `app.py`
 """
 
 import datetime as dt
+import sys
 import threading
 import time
 from contextlib import closing
@@ -37,6 +38,7 @@ LOCATION = "location"  # setting: {"name", "lat", "lon"}
 LAST_CHECK = "automations_last_check"  # setting: when the Runner last looked for due Triggers
 LATE = 60  # seconds past its time that a Trigger still fires, or an Action still happens
 CHECK_AT_MOST = 300  # seconds between looks for due Triggers, so waking from sleep is noticed soon
+RETRY_SECONDS = 30  # after a check for due Triggers failed
 WAIT_CHUNK = 30  # a Wait looks at the clock at least this often (seconds)
 WATCH_SECONDS = 25
 BY_HAND = "Run by hand"
@@ -120,10 +122,14 @@ class Runner:
                 with self._cond:
                     revision = self._revision
                 now = clock()
-                self.check(r, last, now)
-                last = now
-                r.set_setting(LAST_CHECK, now)
-                due = self.next_due(r, now)
+                try:
+                    self.check(r, last, now)
+                    last = now
+                    r.set_setting(LAST_CHECK, now)
+                    due = self.next_due(r, now)
+                except Exception as exc:  # e.g. the database was locked: one bad pass mustn't stop every Automation
+                    print(f"Automations: checking for due Triggers failed, trying again soon: {exc!r}", file=sys.stderr)
+                    due = clock() + RETRY_SECONDS
                 with self._cond:
                     if self._revision == revision and not self._closing:
                         # Nothing due: sleep until something changes. Otherwise wake at least every

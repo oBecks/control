@@ -48,7 +48,7 @@ def test_sunset_with_an_offset():
     t = automations.check_trigger({"type": "sun", "event": "sunset", "offset": -30}, JERUSALEM)
     at = automations.next_occurrence(t, local("2026-09-27T12:00"), JERUSALEM)
     sunset = sun.event_at(JERUSALEM, dt.date(2026, 9, 27), "sunset")
-    assert 17 <= sunset.hour <= 18  # about 17:40 in late September
+    assert (sunset.hour, sunset.minute // 10) == (18, 2)  # about 18:29 Israel summer time
     assert at == (sunset - dt.timedelta(minutes=30)).replace(second=0, microsecond=0)
 
 
