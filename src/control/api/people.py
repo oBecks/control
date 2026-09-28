@@ -10,8 +10,8 @@ on every address of the home subnet (a sweep): at once when it starts, when this
 changes and when the network comes back; and for a phone missing SWEEP_AFTER, then every
 SWEEP_BACKOFF while it stays missing, which keeps the network quiet while someone is away all day.
 
-While Control can't see the network (this PC has no address on it, or nothing answers, not even
-the router), nobody is home or away: everyone becomes unknown until it sees again, so a power cut
+While Control can't see the network (this PC has no address on it, or the router doesn't answer:
+it's nudged with the phones, since an idle PC's entry for it goes stale too), nobody is home or away: everyone becomes unknown until it sees again, so a power cut
 doesn't make everyone leave.
 
 Anyone who may use the Engine may set People up, phones included, like Groups. "This is my phone"
@@ -111,11 +111,11 @@ class Presence:
     def check(self, ips: dict[str, str]) -> None:
         """One look: nudge, wait, read, and act on what changed."""
         now = awake()
-        own = lan.lan_ips()
-        if not own:
+        own, router = lan.lan_ips(), neighbors.gateway()
+        if not own or router is None:
             self._go_blind(now)
             return
-        targets = {ip for ip in ips.values() if ip}
+        targets = {ip for ip in ips.values() if ip} | {router}
         if self._sweep_due(now, own):
             self._swept = now
             self._sweeps += 1
@@ -125,8 +125,8 @@ class Presence:
         if self._sleep(neighbors.SETTLE):
             return
         table = neighbors.table()
-        if not any(n.reachable for n in table):
-            self._go_blind(awake())  # not even the router answered
+        if not any(n.reachable and n.ip == router for n in table):
+            self._go_blind(awake())  # the router didn't answer: the network is down, not everyone gone
             return
         answered = {n.mac: n.ip for n in table if n.reachable and n.mac in ips}
         with closing(Registry()) as r:

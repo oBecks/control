@@ -92,14 +92,15 @@ def network(monkeypatch):
     """A fake home network: of `answering` (ip -> mac), what the last look nudged answers (Windows
     only asks for what it sends to), and the router always; nudges are recorded; no waiting."""
     net = {"answering": {"10.0.0.50": MAC}, "nudged": []}
-    router = Neighbor("10.0.0.254", "b0:bb:e5:79:42:27", True)  # the PC talks through it all day
+    net["answering"]["10.0.0.254"] = "b0:bb:e5:79:42:27"  # the router
 
     def table():
         asked = net["nudged"][-1] if net["nudged"] else set()
-        return [router] + [Neighbor(ip, mac, ip in asked) for ip, mac in net["answering"].items()]
+        return [Neighbor(ip, mac, ip in asked) for ip, mac in net["answering"].items()]
 
     monkeypatch.setattr(neighbors, "nudge", lambda ips: net["nudged"].append(set(ips)))
     monkeypatch.setattr(neighbors, "table", table)
+    monkeypatch.setattr(neighbors, "gateway", lambda: "10.0.0.254")
     monkeypatch.setattr(neighbors, "SETTLE", 0)
     monkeypatch.setattr(people.time, "sleep", lambda s: None)
     monkeypatch.setattr(people.lan, "lan_ips", lambda: ["10.0.0.1"])
@@ -166,10 +167,11 @@ def test_presence_finds_a_phone_that_moved(client, network, monkeypatch):  # noq
     monkeypatch.setattr(people, "SWEEP_AFTER", 0)  # missing long enough to look everywhere
     dana = add_person(client)
     client.post(f"/api/people/{dana['uid']}/phones", json={"mac": MAC, "ip": "10.0.0.9"})
-    network["answering"] = {"10.0.0.51": MAC}  # a new address from the router
+    del network["answering"]["10.0.0.50"]
+    network["answering"]["10.0.0.51"] = MAC  # a new address from the router
     people.presence.check({MAC: "10.0.0.9"})
     assert people.presence.home(dana["uid"]) is True  # seen: home (from unknown, so nothing fired)
-    assert network["nudged"][-1] == {"10.0.0.9"} | set(neighbors.subnet_hosts(["10.0.0.1"]))
+    assert network["nudged"][-1] == {"10.0.0.9"} | set(neighbors.subnet_hosts(["10.0.0.1"]))  # the router among them
     with closing(Registry()) as r:
         assert r.phone(MAC).ip == "10.0.0.51"
     assert client.get("/api/people").json()[0]["phones"][0]["seen"] is not None
@@ -282,7 +284,7 @@ def test_sweeps_at_start_then_only_for_a_missing_phone_backing_off(client, netwo
     p.check({MAC: "10.0.0.50"})
     assert not swept(network)  # every phone answered: only their own addresses
 
-    network["answering"] = {}  # Dana left
+    del network["answering"]["10.0.0.50"]  # Dana left
     looks = []
     for _ in range(80):  # 40 minutes, a look every 30 s
         clock["t"] += 30
@@ -292,7 +294,7 @@ def test_sweeps_at_start_then_only_for_a_missing_phone_backing_off(client, netwo
     # First after 5 minutes missing, then every 30 minutes: 2 sweeps in 40 minutes, not 8.
     assert len(sweeps) == 2 and (sweeps[1] - sweeps[0]) * 30 == people.SWEEP_BACKOFF
 
-    network["answering"] = {"10.0.0.61": MAC}  # back, on a new address
+    network["answering"]["10.0.0.61"] = MAC  # back, on a new address
     clock["t"] += 30
     p.check({MAC: "10.0.0.50"})  # not found at the old address, and no sweep due yet
     assert p.home(dana["uid"]) is False

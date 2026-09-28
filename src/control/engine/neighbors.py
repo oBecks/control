@@ -10,6 +10,7 @@ Nothing here needs admin rights.
 import ctypes
 import ipaddress
 import socket
+import struct
 import sys
 from dataclasses import dataclass
 
@@ -58,6 +59,23 @@ def subnet_hosts(own_ips) -> list[str]:
         net = ipaddress.ip_network(f"{own}/24", strict=False)
         hosts += [str(h) for h in net.hosts() if str(h) != own]
     return list(dict.fromkeys(hosts))[:MAX_SWEEP]
+
+
+class _Route(ctypes.Structure):  # MIB_IPFORWARDROW
+    _fields_ = [(name, ctypes.c_ulong) for name in (
+        "dest", "mask", "policy", "next_hop", "if_index", "type", "proto", "age", "next_hop_as",
+        "metric1", "metric2", "metric3", "metric4", "metric5")]
+
+
+def gateway() -> str | None:
+    """The router this PC reaches the internet through, or None (no network, or not Windows)."""
+    if sys.platform != "win32":
+        return None
+    route = _Route()
+    outside = struct.unpack("<I", socket.inet_aton("1.1.1.1"))[0]  # any address beyond the home network
+    if ctypes.windll.iphlpapi.GetBestRoute(outside, 0, ctypes.byref(route)) != 0 or not route.next_hop:
+        return None
+    return socket.inet_ntoa(struct.pack("<I", route.next_hop))
 
 
 class _Row(ctypes.Structure):  # MIB_IPNET_ROW2
