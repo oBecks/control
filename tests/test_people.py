@@ -89,10 +89,17 @@ def test_macs_and_addresses():
 
 @pytest.fixture
 def network(monkeypatch):
-    """A fake home network: `answering` (ip -> mac) answers; nudges are recorded; no waiting."""
+    """A fake home network: of `answering` (ip -> mac), what the last look nudged answers (Windows
+    only asks for what it sends to), and the router always; nudges are recorded; no waiting."""
     net = {"answering": {"10.0.0.50": MAC}, "nudged": []}
+    router = Neighbor("10.0.0.254", "b0:bb:e5:79:42:27", True)  # the PC talks through it all day
+
+    def table():
+        asked = net["nudged"][-1] if net["nudged"] else set()
+        return [router] + [Neighbor(ip, mac, ip in asked) for ip, mac in net["answering"].items()]
+
     monkeypatch.setattr(neighbors, "nudge", lambda ips: net["nudged"].append(set(ips)))
-    monkeypatch.setattr(neighbors, "table", lambda: [Neighbor(ip, mac, True) for ip, mac in net["answering"].items()])
+    monkeypatch.setattr(neighbors, "table", table)
     monkeypatch.setattr(neighbors, "SETTLE", 0)
     monkeypatch.setattr(people.time, "sleep", lambda s: None)
     monkeypatch.setattr(people.lan, "lan_ips", lambda: ["10.0.0.1"])
@@ -115,14 +122,14 @@ def test_a_person_and_a_phone_from_the_nearby_list(client, network):  # noqa: F8
     nearby = client.get("/api/people/nearby").json()
     # The Yeelight at 10.0.0.2 is a Device, not a phone; private MACs come first.
     assert [(n["ip"], n["private"], n["name"]) for n in nearby] == [
-        ("10.0.0.50", True, "iPhone"), ("10.0.0.60", False, "iPhone")]
+        ("10.0.0.50", True, "iPhone"), ("10.0.0.60", False, "iPhone"), ("10.0.0.254", False, "iPhone")]
     assert len(network["nudged"][0]) == 253  # the whole subnet
 
     resp = client.post(f"/api/people/{dana['uid']}/phones", json={"mac": MAC.upper(), "ip": "10.0.0.50",
                                                                    "name": "iPhone"})
     assert resp.status_code == 201, resp.text
     assert [(p["mac"], p["name"], p["private"]) for p in resp.json()["phones"]] == [(MAC, "iPhone", True)]
-    assert [n["ip"] for n in client.get("/api/people/nearby").json()] == ["10.0.0.60"]  # marked: left out
+    assert [n["ip"] for n in client.get("/api/people/nearby").json()] == ["10.0.0.60", "10.0.0.254"]  # marked: left out
     assert len(network["nudged"]) == 1  # the second browser got the same sweep's answers
 
     assert client.delete(f"/api/people/{dana['uid']}/phones/{MAC}").status_code == 204
@@ -247,3 +254,91 @@ def test_deleting_a_person_removes_the_parts_naming_them(home, dana):  # noqa: F
     assert c.delete(f"/api/people/{dana}").status_code == 204
     after = c.get(f"/api/automations/{a['uid']}").json()
     assert after["triggers"] == [] and after["enabled"] is False and "Person" in after["attention"]
+
+
+# --- Sweeps and outages -------------------------------------------------------------------
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    """The PC's awake time, moved by hand."""
+    now = {"t": 1000.0}
+    monkeypatch.setattr(people, "awake", lambda: now["t"])
+    return now
+
+
+def swept(network):
+    """Whether the last look covered the whole subnet."""
+    return len(network["nudged"][-1]) > 2
+
+
+def test_sweeps_at_start_then_only_for_a_missing_phone_backing_off(client, network, clock):  # noqa: F811
+    dana = add_person(client)
+    client.post(f"/api/people/{dana['uid']}/phones", json={"mac": MAC, "ip": "10.0.0.50"})
+    p = people.presence
+    p.check({MAC: "10.0.0.50"})
+    assert swept(network)  # Control just started: the phones may be anywhere now
+    clock["t"] += 30
+    p.check({MAC: "10.0.0.50"})
+    assert not swept(network)  # every phone answered: only their own addresses
+
+    network["answering"] = {}  # Dana left
+    looks = []
+    for _ in range(80):  # 40 minutes, a look every 30 s
+        clock["t"] += 30
+        p.check({MAC: "10.0.0.50"})
+        looks.append(swept(network))
+    sweeps = [i for i, s in enumerate(looks) if s]
+    # First after 5 minutes missing, then every 30 minutes: 2 sweeps in 40 minutes, not 8.
+    assert len(sweeps) == 2 and (sweeps[1] - sweeps[0]) * 30 == people.SWEEP_BACKOFF
+
+    network["answering"] = {"10.0.0.61": MAC}  # back, on a new address
+    clock["t"] += 30
+    p.check({MAC: "10.0.0.50"})  # not found at the old address, and no sweep due yet
+    assert p.home(dana["uid"]) is False
+    clock["t"] += people.SWEEP_BACKOFF
+    p.check({MAC: "10.0.0.50"})
+    assert p.home(dana["uid"]) is True
+
+
+def test_a_new_address_for_this_pc_sweeps_at_once(client, network, clock, monkeypatch):  # noqa: F811
+    dana = add_person(client)
+    client.post(f"/api/people/{dana['uid']}/phones", json={"mac": MAC, "ip": "10.0.0.50"})
+    people.presence.check({MAC: "10.0.0.50"})
+    clock["t"] += 30
+    monkeypatch.setattr(people.lan, "lan_ips", lambda: ["10.0.0.7"])  # the router gave the PC a new one
+    people.presence.check({MAC: "10.0.0.50"})
+    assert swept(network)
+
+
+def test_an_outage_makes_nobody_leave_or_arrive(home, dana, runner, clock):  # noqa: F811
+    c = home["client"]
+    left = create(c, name="Bye", triggers=[{"type": "home", "occupied": False}], actions=notify())
+    back = create(c, name="Hi", triggers=[{"type": "home", "occupied": True}], actions=notify())
+    p = people.presence
+    p.check({MAC: "10.0.0.50"})
+    assert p.home(dana) is True
+
+    people.neighbors.table, real = (lambda: []), people.neighbors.table  # the router is off: nothing answers
+    try:
+        for _ in range(40):  # 20 minutes
+            clock["t"] += 30
+            p.check({MAC: "10.0.0.50"})
+        assert p.home(dana) is None and p.anyone() is None  # can't tell, rather than "everyone left"
+    finally:
+        people.neighbors.table = real
+    clock["t"] += 30
+    p.check({MAC: "10.0.0.50"})  # the network is back, and so is Dana's phone
+    assert p.home(dana) is True
+    assert c.get(f"/api/automations/{left['uid']}/runs").json() == []
+    assert c.get(f"/api/automations/{back['uid']}/runs").json() == []
+
+
+def test_no_address_on_the_home_network_is_an_outage_too(client, network, clock, monkeypatch):  # noqa: F811
+    dana = add_person(client)
+    client.post(f"/api/people/{dana['uid']}/phones", json={"mac": MAC, "ip": "10.0.0.50"})
+    people.presence.check({MAC: "10.0.0.50"})
+    monkeypatch.setattr(people.lan, "lan_ips", lambda: [])  # the PC lost its Wi-Fi
+    clock["t"] += 30
+    people.presence.check({MAC: "10.0.0.50"})
+    assert people.presence.home(dana["uid"]) is None
