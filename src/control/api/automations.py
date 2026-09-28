@@ -8,9 +8,11 @@ The rules every Run follows (ADR 0012):
   the rest: the Run is *interrupted*, and a notification says what didn't happen. A Run cut short by
   Control quitting is found *running* at the next start, and handled the same way.
 - A failed Action doesn't stop the others; the Run ends *partly failed* and a notification says which.
-- Running by hand skips the Conditions, and so does a Run another Automation starts (chaining).
-- The loop guard: a chain of Automations starting each other, by an Action or by changing a Device
-  another one listens to, stops after `listening.MAX_HOPS`, and the one it stopped keeps a skipped Run.
+- Running by hand skips the Conditions, and so does a Run another Automation starts (chaining). A
+  Scene being set is a Trigger like any other: its Runs check their Conditions.
+- The loop guard: a chain of Automations starting each other, by an Action, by setting a Scene
+  another one's Trigger is, or by changing a Device another one listens to, stops after
+  `listening.MAX_HOPS`, and the one it stopped keeps a skipped Run.
 
 Notifications go to the UI as notices, and to Windows through the Desktop App, which watches
 `/api/notices/watch` like the Hotkey listener watches its Hotkeys. Anyone who may use the Engine may
@@ -33,6 +35,7 @@ from ..engine.errors import DeviceUnreachable
 from ..engine.registry import Automation, Registry, Run
 from . import hotkeys as hotkeys_api
 from . import listening as listening_api
+from . import scenes as scenes_api
 from .deps import registry
 from .listening import listening
 
@@ -40,6 +43,7 @@ router = APIRouter()
 
 LOCATION = "location"  # setting: {"name", "lat", "lon"}
 LAST_CHECK = "automations_last_check"  # setting: when the Runner last looked for due Triggers
+NEW = "automation:new"  # an Automation not saved yet, for the loop check
 LATE = 60  # seconds past its time that a Trigger still fires, or an Action still happens
 CHECK_AT_MOST = 300  # seconds between looks for due Triggers, so waking from sleep is noticed soon
 RETRY_SECONDS = 30  # after a check for due Triggers failed
@@ -263,8 +267,9 @@ class Runner:
             elif action["do"] == "notify":
                 self.notify(r, a.name, action["text"], a.uid)
                 step["result"] = "done"
-            elif action["do"] == "run":
-                problem = self._chain(r, action["target"], active)
+            elif action["do"] in ("run", "set_scene"):
+                chain = self._chain if action["do"] == "run" else self._set_scene
+                problem = chain(r, action["target"], active)
                 step["result"] = "failed" if problem else "done"
                 if problem:
                     step["detail"] = problem
@@ -296,6 +301,37 @@ class Runner:
             return "stopped, since it may be a loop"
         self.run(r, uid, cause, by_hand=True, hops=active.hops + 1)
         return None
+
+    def _set_scene(self, r: Registry, uid: str, active: _Active) -> str | None:
+        """Set a Scene, which starts the Automations whose Trigger it is, one hop further down the
+        chain; what went wrong, or None."""
+        if self._closing:
+            return "Control quit"
+        try:
+            sc = r.get_scene(uid)
+            devices = [m for p in sc.parts
+                       for m in (r.get_group(p["target"]).members if p["target"].startswith("group:") else [p["target"]])]
+            listening.acting(devices, active.automation.uid, active.hops)
+            out = scenes_api.apply(r, uid, hops=active.hops + 1)
+        except LookupError:
+            return "that Scene was deleted"
+        except ValueError as exc:
+            return str(exc)
+        return "; ".join(f.reason for f in out.failed) or None
+
+    def scene_set(self, r: Registry, scene: str, hops: int = 0) -> None:
+        """A Scene was set (from anywhere): start the Runs of the Automations whose Trigger it is.
+        `hops`: how far down a chain of Automations it was set (0: by a person)."""
+        if self._closing:
+            return
+        names = _names(r)
+        for a in r.automations():
+            t = next((t for t in a.triggers if t["type"] == "scene" and t["target"] == scene), None)
+            if not a.enabled or t is None:
+                continue
+            label = automations.trigger_label(t, names)
+            if not self.stopped_loop(r, a, label, hops):
+                self.run(r, a.uid, label, hops=hops)
 
     def stopped_loop(self, r: Registry, a: Automation, cause: str, hops: int) -> bool:
         """The loop guard (ADR 0012): a Run `hops` Automations down a chain, past MAX_HOPS, doesn't
@@ -383,7 +419,13 @@ def _unmet(r: Registry, a: Automation) -> str | None:
     unmet = []
     for c in a.conditions:
         label = automations.condition_label(c, names, _app_names(r, c.get("target")))
-        if c["type"] in ("state", "app"):
+        if c["type"] == "scene":
+            try:
+                holds = scenes_api.is_active(r, c["target"]) == c["active"]
+            except Exception as exc:
+                unmet.append(f"{label}: couldn't tell ({exc})")
+                continue
+        elif c["type"] in ("state", "app"):
             try:
                 state = _reading(r, c["target"])["state"]
             except Exception as exc:  # a Device that doesn't answer can't be said to be on
@@ -410,6 +452,7 @@ def _names(r: Registry) -> dict[str, str]:
     names |= {d.uid: d.name for d in r.remotes()}
     names |= {g.uid: g.name for g in r.groups()}
     names |= {a.uid: a.name for a in r.automations()}
+    names |= {sc.uid: sc.name for sc in r.scenes()}
     return names
 
 
@@ -444,7 +487,7 @@ def _without_target(action: dict) -> dict:
 
 
 def _checked_target(r: Registry, uid: str) -> hotkeys_api.Target:
-    if uid.startswith(("automation:", "scene:")):  # only a run or Scene part names one
+    if uid.startswith(("automation:", "scene:")):  # only a run Action, or a Scene part, names one
         raise ValueError(f"there's no Device or Group '{uid}'")
     try:
         return hotkeys_api.target(r, uid)
@@ -458,8 +501,19 @@ def _check_on_off(t: hotkeys_api.Target) -> None:
         raise ValueError(f"'{t.name}' {why} whether it's on")
 
 
+def _check_scene(r: Registry, uid: str) -> None:
+    if not uid.startswith("scene:"):
+        raise ValueError("pick a Scene")
+    try:
+        r.get_scene(uid)
+    except LookupError:
+        raise ValueError(f"there's no Scene '{uid}'") from None
+
+
 def _check_trigger(r: Registry, t: dict, where) -> dict:
     clean = automations.check_trigger(t, where)
+    if clean["type"] == "scene":
+        _check_scene(r, clean["target"])
     if clean["type"] == "state":
         _check_on_off(_checked_target(r, clean["target"]))
     if clean["type"] == "app":
@@ -481,6 +535,8 @@ def _check_streamer(t: hotkeys_api.Target) -> None:
 
 def _check_condition(r: Registry, c: dict, where) -> dict:
     clean = automations.check_condition(c, where)
+    if clean["type"] == "scene":
+        _check_scene(r, clean["target"])
     if clean["type"] == "state":
         _check_on_off(_checked_target(r, clean["target"]))
     if clean["type"] == "app":
@@ -499,6 +555,9 @@ def _check_action(r: Registry, a: dict) -> dict:
         except LookupError:
             raise ValueError(f"there's no Automation '{uid}'") from None
         return {"do": "run", "target": uid}
+    if clean["do"] == "set_scene":
+        _check_scene(r, clean["target"])
+        return {"do": "set_scene", "target": clean["target"]}
     if clean["do"] in automations.CONTROL:
         t = _checked_target(r, a["target"])
         return hotkeys_api.check_action(r, t, _without_target(a)) | {"target": t.uid}
@@ -520,29 +579,42 @@ def _numbered(what: str, parts: list[dict], check) -> list[dict]:
 def check(r: Registry, triggers: list, conditions: list, actions: list, whole: bool = True,
           uid: str | None = None) -> tuple[list, list, list]:
     """The parts cleaned up, or ValueError naming the first one that's wrong. `whole`: it's to be
-    saved, so it needs an Action. `uid`: the Automation they're for, which mustn't end up running itself."""
+    saved, so it needs an Action. `uid`: the Automation they're for (none: a new one), which mustn't end
+    up starting itself."""
     where = location(r)
     triggers = _numbered("Trigger", triggers, lambda t: _check_trigger(r, t, where))
     conditions = _numbered("Condition", conditions, lambda c: _check_condition(r, c, where))
     actions = _numbered("Action", actions, lambda a: _check_action(r, a))
-    if uid:
-        _check_loop(r, uid, actions)
+    _check_loop(r, uid or NEW, triggers, actions)
     if whole:
         automations.check_counts(triggers, conditions, actions)
     return triggers, conditions, actions
 
 
-def _check_loop(r: Registry, uid: str, actions: list[dict]) -> None:
-    """ValueError when the Actions would run this Automation again, itself or through others."""
-    path = automations.loop(uid, actions, {a.uid: a.actions for a in r.automations() if a.uid != uid})
+def _check_loop(r: Registry, uid: str, triggers: list[dict], actions: list[dict]) -> None:
+    """ValueError when the Actions would start this Automation again, itself or through others: by
+    running them, or by setting a Scene that is their Trigger."""
+    others = {a.uid: a for a in r.automations() if a.uid != uid}
+    set_off = automations.set_off_by({u: a.triggers for u, a in others.items()} | {uid: triggers})
+    path = automations.loop(uid, actions, {u: a.actions for u, a in others.items()}, set_off)
     if path is None:
         return
-    i = next(i for i, x in enumerate(actions, 1) if x["do"] == "run" and x["target"] == path[1])
-    if len(path) == 2:
-        raise ValueError(f"Action {i}: an Automation can't run itself")
+    i, first = next((i, x) for i, x in enumerate(actions, 1) if path[1] in automations.starts(x, set_off))
     names = _names(r)
+    if len(path) == 2:
+        if first["do"] == "run":
+            raise ValueError(f"Action {i}: an Automation can't run itself")
+        raise ValueError(f"Action {i}: setting {names.get(first['target'], first['target'])} starts this "
+                         "Automation again, since that's one of its Triggers")
     chain = " → ".join(names.get(x, x) for x in path[1:-1])
-    raise ValueError(f"Action {i}: {chain} runs this one again, so they'd run each other in a loop")
+    runs_only = all(
+        nxt in [a["target"] for a in (actions if x == uid else others[x].actions) if a["do"] == "run"]
+        for x, nxt in zip(path, path[1:])
+    )
+    if runs_only:
+        raise ValueError(f"Action {i}: {chain} runs this one again, so they'd run each other in a loop")
+    raise ValueError(f"Action {i}: {chain} starts this one again, by running it or setting a Scene it "
+                     "starts on, so they'd start each other in a loop")
 
 
 def _name(name: str) -> str:

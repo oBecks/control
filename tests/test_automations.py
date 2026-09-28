@@ -475,7 +475,7 @@ def test_deleting_an_automation_removes_the_actions_that_ran_it(home):
     c.delete(f"/api/automations/{b['uid']}")
     after = c.get(f"/api/automations/{both['uid']}").json()
     assert (after["actions"], after["enabled"]) == ([], False)
-    assert "Automation that was removed" in after["attention"]
+    assert "Automation or Scene that was removed" in after["attention"]
 
 
 def test_a_chain_of_run_actions_stops(home, runner, monkeypatch):
@@ -519,3 +519,148 @@ def test_a_run_button_points_at_an_automation_and_a_tile_doesnt(home):
     for item in ({"kind": "run", "target": "yeelight:1", "x": 0, "y": 0},
                  {"kind": "tile", "target": a["uid"], "x": 0, "y": 0}):
         assert c.post("/api/dashboards", json={"name": "A", "items": [item]}).status_code == 404
+
+
+# --- Scenes: set one, check one is active, start on one being set (ADR 0013) --------------------
+
+
+def scene(c, name="Movie", *parts):
+    parts = parts or (("yeelight:1", {"on": True, "brightness": 20}),)
+    resp = c.post("/api/scenes", json={"name": name, "parts": [{"target": t, "state": s} for t, s in parts]})
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+def test_an_automation_sets_a_scene_and_that_starts_another(home, runner):
+    c, light = home["client"], home["lights"]["yeelight:1"]
+    sc = scene(c)
+    setter = create(c, name="Dusk", actions=[{"do": "set_scene", "target": sc["uid"]}])
+    started = create(c, name="After", triggers=[{"type": "scene", "target": sc["uid"]}],
+                     actions=[{"do": "notify", "text": "Movie time"}])
+    assert setter["summary"] == "When: at 19:00, every day. Then: Set Movie."
+    assert started["summary"] == "When: Movie is set. Then: Notify: Movie time."
+    done = run(c, runner, setter["uid"])
+    assert (done["outcome"], done["steps"][0]) == ("succeeded", {"label": "Set Movie", "result": "done"})
+    assert light.state.on and light.state.brightness == 20
+    runner.join(started["uid"])
+    after = c.get(f"/api/automations/{started['uid']}/runs").json()[0]
+    assert (after["cause"], after["outcome"]) == ("Movie is set", "succeeded")
+
+
+def test_setting_a_scene_by_hand_starts_automations_and_checks_their_conditions(home, runner):
+    c, plug = home["client"], home["plug"]
+    sc = scene(c)
+    go = create(c, name="Go", triggers=[{"type": "scene", "target": sc["uid"]}])
+    no = create(c, name="No", triggers=[{"type": "scene", "target": sc["uid"]}],
+                conditions=[{"type": "state", "target": "tuya:abc", "on": True}])
+    off = create(c, name="Off", enabled=False, triggers=[{"type": "scene", "target": sc["uid"]}])
+    plug.on = False
+    c.post(f"/api/scenes/{sc['uid']}/set")
+    for a in (go, no):
+        runner.join(a["uid"])
+    assert c.get(f"/api/automations/{go['uid']}/runs").json()[0]["outcome"] == "succeeded"
+    assert c.get(f"/api/automations/{no['uid']}/runs").json()[0]["outcome"] == "skipped"
+    assert c.get(f"/api/automations/{off['uid']}/runs").json() == []
+
+
+def test_a_scene_nothing_took_starts_nothing(home, runner):
+    c, plug = home["client"], home["plug"]
+    sc = scene(c, "Plug", ("tuya:abc", {"on": True}))
+    a = create(c, triggers=[{"type": "scene", "target": sc["uid"]}])
+    plug.fail = True
+    c.post(f"/api/scenes/{sc['uid']}/set")
+    runner.join(a["uid"])
+    assert c.get(f"/api/automations/{a['uid']}/runs").json() == []
+
+
+def test_a_scene_condition(home, runner):
+    c, light = home["client"], home["lights"]["yeelight:1"]
+    sc = scene(c, "Bright", ("yeelight:1", {"on": True}))
+    active = create(c, name="Active", conditions=[{"type": "scene", "target": sc["uid"]}])
+    inactive = create(c, name="Inactive", conditions=[{"type": "scene", "target": sc["uid"], "active": False}])
+    assert active["conditions"][0] == {"type": "scene", "target": sc["uid"], "active": True, "label": "Bright is active"}
+    assert inactive["conditions"][0]["label"] == "Bright is not active"
+    light.state.on = False
+    for a, outcome in ((active, "skipped"), (inactive, "succeeded")):
+        runner.run(Registry(), a["uid"], "test")
+        runner.join(a["uid"])
+        assert c.get(f"/api/automations/{a['uid']}/runs").json()[0]["outcome"] == outcome
+
+
+@pytest.mark.parametrize("part, message", [
+    ({"trigger": {"type": "scene", "target": "yeelight:1"}}, "pick a Scene"),
+    ({"condition": {"type": "scene", "target": "scene:nope"}}, "no Scene"),
+    ({"action": {"do": "set_scene", "target": "scene:nope"}}, "no Scene"),
+    ({"action": {"do": "set", "target": "scene:x", "state": {"on": True}}}, "no Device or Group"),
+])
+def test_what_a_scene_part_cant_be(home, part, message):
+    body = {"name": "X", "actions": [{"do": "notify", "text": "x"}]}
+    if "trigger" in part:
+        body["triggers"] = [part["trigger"]]
+    if "condition" in part:
+        body["conditions"] = [part["condition"]]
+    if "action" in part:
+        body["actions"] = [part["action"]]
+    resp = home["client"].post("/api/automations", json=body)
+    assert resp.status_code == 422 and message in resp.json()["detail"], resp.text
+
+
+def test_automations_cant_start_each_other_through_a_scene(home):
+    c = home["client"]
+    sc = scene(c)
+    itself = c.post("/api/automations", json={"name": "Self", "triggers": [{"type": "scene", "target": sc["uid"]}],
+                                              "actions": [{"do": "set_scene", "target": sc["uid"]}]})
+    assert itself.json()["detail"] == ("Action 1: setting Movie starts this Automation again, since that's one of "
+                                       "its Triggers")
+    setter = create(c, name="Setter", triggers=[], actions=[{"do": "set_scene", "target": sc["uid"]}])
+    # Starting on the Scene and running the one that sets it: refused, though it's new.
+    loop = c.post("/api/automations", json={"name": "Loop", "triggers": [{"type": "scene", "target": sc["uid"]}],
+                                            "actions": [{"do": "run", "target": setter["uid"]}]})
+    assert loop.json()["detail"] == ("Action 1: Setter starts this one again, by running it or setting a Scene it "
+                                     "starts on, so they'd start each other in a loop")
+    # Starting on it without running the setter is fine.
+    create(c, name="Fine", triggers=[{"type": "scene", "target": sc["uid"]}])
+
+
+def test_deleting_a_scene_removes_the_parts_naming_it(home):
+    c = home["client"]
+    sc = scene(c)
+    a = create(c, triggers=[{"type": "scene", "target": sc["uid"]}, {"type": "time", "at": "07:00"}],
+               conditions=[{"type": "scene", "target": sc["uid"]}])
+    b = create(c, name="Both", actions=[{"do": "set_scene", "target": sc["uid"]}, {"do": "notify", "text": "x"}])
+    only = create(c, name="Only", triggers=[], actions=[{"do": "set_scene", "target": sc["uid"]}])
+    c.delete(f"/api/scenes/{sc['uid']}")
+    after = c.get(f"/api/automations/{a['uid']}").json()
+    assert ([t["type"] for t in after["triggers"]], after["conditions"], after["enabled"]) == (["time"], [], True)
+    assert [x["do"] for x in c.get(f"/api/automations/{b['uid']}").json()["actions"]] == ["notify"]
+    gone = c.get(f"/api/automations/{only['uid']}").json()
+    assert (gone["enabled"], gone["actions"]) == (False, [])
+
+
+def test_the_hop_limit_counts_a_scene_being_set(home, runner, monkeypatch):
+    from control.api import listening as listening_api
+
+    monkeypatch.setattr(listening_api, "MAX_HOPS", 0)
+    c = home["client"]
+    sc = scene(c)
+    setter = create(c, name="Setter", triggers=[], actions=[{"do": "set_scene", "target": sc["uid"]}])
+    started = create(c, name="After", triggers=[{"type": "scene", "target": sc["uid"]}])
+    assert run(c, runner, setter["uid"])["outcome"] == "succeeded"
+    stopped = c.get(f"/api/automations/{started['uid']}/runs").json()[0]
+    assert (stopped["outcome"], stopped["cause"]) == ("skipped", "Movie is set")
+    # Set by a person, it's the first hop.
+    c.post(f"/api/scenes/{sc['uid']}/set")
+    runner.join(started["uid"])
+    assert c.get(f"/api/automations/{started['uid']}/runs").json()[0]["outcome"] == "succeeded"
+
+
+def test_a_device_that_doesnt_answer_leaves_its_scene_not_active(home, runner):
+    c, plug = home["client"], home["plug"]
+    sc = scene(c, "Plug", ("tuya:abc", {"on": True}))
+    inactive = create(c, name="Inactive", conditions=[{"type": "scene", "target": sc["uid"], "active": False}])
+    active = create(c, name="Active", conditions=[{"type": "scene", "target": sc["uid"]}])
+    plug.on, plug.fail = True, True
+    for a, outcome in ((inactive, "succeeded"), (active, "skipped")):
+        runner.run(Registry(), a["uid"], "test")
+        runner.join(a["uid"])
+        assert c.get(f"/api/automations/{a['uid']}/runs").json()[0]["outcome"] == outcome

@@ -232,8 +232,10 @@ def set_scene(uid: str, r: Registry = Depends(registry)):
     return apply(r, uid)
 
 
-def apply(r: Registry, uid: str) -> SetOut:
-    """Set a Scene: every part at once, from here, a Hotkey or an Automation."""
+def apply(r: Registry, uid: str, hops: int = 0) -> SetOut:
+    """Set a Scene: every part at once, from here, a Hotkey or an Automation. Unless nothing took it,
+    it then starts the Automations whose Trigger it is (`hops`: how far down a chain of Automations
+    it was set; 0: by a person)."""
     sc = r.get_scene(uid)
     if not sc.parts:
         raise ValueError(f"nothing is left in '{sc.name}': add devices to it first")
@@ -258,7 +260,18 @@ def apply(r: Registry, uid: str) -> SetOut:
         readings[uid_] = result
         for member, f in (result.get("failed") or {}).items():  # a Group's members
             failed.append(Failure(target=member, reason=f["reason"], unreachable=f["unreachable"]))
+    if readings:
+        from .automations import runner  # it imports this module
+
+        runner.scene_set(r, uid, hops)
     return SetOut(name=sc.name, failed=failed, readings=readings)
+
+
+def is_active(r: Registry, uid: str) -> bool:
+    """Whether every part of a Scene matches its Device now (a Scene Condition)."""
+    sc = r.get_scene(uid)
+    readings = _read(r, list(dict.fromkeys(p["target"] for p in sc.parts)))
+    return bool(sc.parts) and all(_matches(p["state"], readings[p["target"]]) for p in sc.parts)
 
 
 def _send(r: Registry, part: dict) -> dict:

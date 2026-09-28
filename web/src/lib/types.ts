@@ -241,7 +241,9 @@ export type Trigger =
 	/** Opens the app, and keeps it open for `minutes` first (0: at once). */
 	| { type: 'app'; target: string; app: string; minutes: number }
 	/** Goes Offline (a minute without an answer), or (false) comes back online. */
-	| { type: 'offline'; target: string; offline: boolean };
+	| { type: 'offline'; target: string; offline: boolean }
+	/** A Scene is set, by anyone (ADR 0013). */
+	| { type: 'scene'; target: string };
 
 /** The "Only if": checked once when a Trigger fires. */
 export type Condition =
@@ -250,7 +252,9 @@ export type Condition =
 	/** May cross midnight. */
 	| { type: 'time'; after: string; before: string }
 	| { type: 'days'; days: Weekday[] }
-	| { type: 'sun'; is: 'dark' | 'light' };
+	| { type: 'sun'; is: 'dark' | 'light' }
+	/** A Scene is active (false: isn't). */
+	| { type: 'scene'; target: string; active: boolean };
 
 /** The "Then", in order: a Hotkey's action on a Device or Group, running another Automation
  * (skipping its Only if, without waiting for it), a wait, or a notification. */

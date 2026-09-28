@@ -585,3 +585,21 @@ def test_device_triggers_from_the_assistant(home, runner):
     assert "isn't a Streamer" in error(srv, "create_automation", name="y",
                                        triggers=[{"type": "app", "device": "yeelight", "app": "Netflix"}],
                                        actions=[{"action": "notify", "text": "x"}])
+
+
+def test_an_automation_with_scenes(home, runner):
+    srv, *_ = home
+    ok(srv, "create_scene", name="Movie night", devices=[{"device": "yeelight", "on": True}])
+    made = ok(srv, "create_automation", name="Movie", triggers=[{"type": "scene", "scene": "movie"}],
+              conditions=[{"type": "scene", "scene": "Movie night", "active": True}],
+              actions=[{"action": "notify", "text": "Enjoy"}])
+    assert made["summary"] == "When: Movie night is set. Only if Movie night is active. Then: Notify: Enjoy."
+    setter = ok(srv, "create_automation", name="Dusk", actions=[{"action": "set_scene", "device": "movie"}])
+    assert setter["summary"] == "When: only when run by hand. Then: Set Movie night."
+    got = ok(srv, "get_automation", automation="Movie")
+    kept = {k: [{f: v for f, v in x.items() if f != "label"} for x in got[k]] for k in ("triggers", "conditions")}
+    assert kept["triggers"][0]["type"] == "scene" and kept["conditions"][0]["active"] is True
+    assert ok(srv, "edit_automation", automation="Movie", **kept)["summary"] == made["summary"]
+    assert "starts this Automation again" in error(srv, "edit_automation", automation="Movie",
+                                                   actions=[{"action": "set_scene", "device": "movie"}])
+    assert "Say which Scene" in error(srv, "create_automation", name="x", actions=[{"action": "set_scene"}])
