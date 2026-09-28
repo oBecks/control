@@ -20,6 +20,8 @@ KINDS: dict[str, dict] = {
     # A Single Button: one remote button, or one Streamer App Shortcut.
     "button": {"rows": (1, 6), "cols": 1, "default": (1, 2), "targeted": True},
     "clock": {"rows": (1, 6), "cols": 1, "default": (2, 2), "targeted": False},
+    # Who's home: each Person, home or away (ADR 0014).
+    "people": {"rows": (1, 12), "cols": 1, "default": (2, 2), "targeted": False},
     # A Run Button: starts an Automation's Run, skipping its Conditions (ADR 0012).
     "run": {"rows": (1, 6), "cols": 1, "default": (2, 2), "targeted": True},
     # A Scene Button: sets a Scene, lit while it's active (ADR 0013).

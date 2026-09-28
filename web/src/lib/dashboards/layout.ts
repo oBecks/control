@@ -16,6 +16,7 @@ const KINDS: Record<DashboardItemKind, Limits> = {
 	pad: { minW: 2, minH: 4, maxH: 24 },
 	button: { minW: 1, minH: 1, maxH: 6 },
 	clock: { minW: 1, minH: 1, maxH: 6 },
+	people: { minW: 1, minH: 1, maxH: 12 },
 	run: { minW: 1, minH: 1, maxH: 6 },
 	scene: { minW: 1, minH: 1, maxH: 6 }
 };
@@ -195,6 +196,11 @@ export function buttonItem(target: string, press: { button: string } | { app: st
 
 export function clockItem(w = 2): NewDashboardItem {
 	return { id: newId(), kind: 'clock', w, h: 2 };
+}
+
+/** Who's home. */
+export function peopleItem(w = 2): NewDashboardItem {
+	return { id: newId(), kind: 'people', w, h: 2 };
 }
 
 /** A Run Button: starts an Automation's Run. */

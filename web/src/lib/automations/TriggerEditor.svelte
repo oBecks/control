@@ -2,9 +2,10 @@
 	// One "When" of an Automation: a time, sunrise or sunset on some days, or a Device changing: a
 	// Device or Group turning on or off (and staying so a while), a TV box opening an app, a Device
 	// going offline or coming back. The Engine listens to the Devices these name (ADR 0011). Or a Scene
-	// being set, by anyone.
+	// being set, by anyone. Or someone arriving or leaving (ADR 0014).
 	import { Trash2 } from '@lucide/svelte';
 	import { home } from '$lib/home.svelte';
+	import { people } from '$lib/people/people.svelte';
 	import type { HomeLocation, Trigger, Weekday } from '$lib/types';
 	import Button from '$lib/ui/Button.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
@@ -12,6 +13,7 @@
 	import LocationPicker from './LocationPicker.svelte';
 	import './editor.css';
 	import OnOffTargetSelect from './OnOffTargetSelect.svelte';
+	import PresenceFields from './PresenceFields.svelte';
 	import { EVERY_DAY } from './parts';
 	import { appsOf, connectedDevices, onOffTargets, streamerDevices } from './targets';
 
@@ -36,11 +38,12 @@
 	let minutes = $state(initial?.type === 'sun' ? Math.abs(initial.offset) : 0);
 	let side = $state<'before' | 'after'>(initial?.type === 'sun' && initial.offset < 0 ? 'before' : 'after');
 	let days = $state<Weekday[]>(timed ? initial.days : [...EVERY_DAY]);
-	let target = $state(initial && !timed ? initial.target : '');
+	let target = $state(initial && 'target' in initial ? initial.target : '');
 	let on = $state(initial?.type === 'state' ? initial.on : true);
 	let stays = $state(initial?.type === 'state' || initial?.type === 'app' ? (initial.minutes ?? 0) : 0);
 	let app = $state(initial?.type === 'app' ? initial.app : '');
 	let offline = $state(initial?.type === 'offline' ? initial.offline : true);
+	let arrives = $state(initial?.type === 'person' ? initial.home : initial?.type === 'home' ? initial.occupied : true);
 	let problem = $state<string | null>(null);
 	let saving = $state(false);
 
@@ -55,7 +58,9 @@
 		{ value: 'state', label: 'A device or group turns on or off' },
 		...(streamers.length || initial?.type === 'app' ? [{ value: 'app', label: 'A TV box opens an app' }] : []),
 		{ value: 'offline', label: 'A device goes offline or comes back' },
-		...(home.scenes.length || initial?.type === 'scene' ? [{ value: 'scene', label: 'A scene is set' }] : [])
+		...(home.scenes.length || initial?.type === 'scene' ? [{ value: 'scene', label: 'A scene is set' }] : []),
+		{ value: 'person', label: 'Someone arrives or leaves' },
+		{ value: 'home', label: 'The first person arrives, or the last leaves' }
 	]);
 
 	function pickKind(next: Trigger['type']) {
@@ -69,7 +74,9 @@
 						? connected
 						: next === 'scene'
 							? home.scenes
-							: [];
+							: next === 'person'
+								? people.tracked
+								: [];
 		if (!choices.some((c) => c.uid === target)) target = next === 'app' ? (streamers[0]?.uid ?? '') : '';
 	}
 
@@ -92,6 +99,10 @@
 				return target ? { type, target, offline } : null;
 			case 'scene':
 				return target ? { type, target } : null;
+			case 'person':
+				return target ? { type, target, home: arrives } : null;
+			case 'home':
+				return people.tracked.length ? { type, occupied: arrives } : null;
 		}
 	});
 
@@ -185,6 +196,8 @@
 			<span>min</span>
 		</div>
 		<p class="hint">0 starts it at once. Its screensaver coming on doesn't count as leaving the app.</p>
+	{:else if type === 'person' || type === 'home'}
+		<PresenceFields kind={type} part="trigger" bind:target bind:home={arrives} />
 	{:else if type === 'scene'}
 		<label class="field">
 			<span>Scene</span>

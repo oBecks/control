@@ -26,6 +26,7 @@ REQUEST_TTL = 10 * 60
 MAX_PENDING = 10
 
 _LOOPBACK = {"127.0.0.1", "::1"}
+_browser_ips: dict[str, str] = {}  # address -> the name of the Approved Browser last seen there (for People)
 _LOCAL_NAMES = {"localhost", "127.0.0.1", "::1"}
 
 router = APIRouter(prefix="/api/access")
@@ -75,9 +76,16 @@ async def gate(request: Request, call_next):
         finally:
             r.close()
         request.state.browser = browser
+        if browser is not None and request.client:
+            _browser_ips[request.client.host] = browser.name
         if browser is None and not _is_public(request):
             return _deny(401, "This browser isn't approved yet", "approval_required")
     return await call_next(request)
+
+
+def browser_at(ip: str) -> str | None:
+    """The Approved Browser last seen at an address since Control started, by name."""
+    return _browser_ips.get(ip)
 
 
 def _trusted(request: Request) -> bool:

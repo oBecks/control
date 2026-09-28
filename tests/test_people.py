@@ -1,0 +1,249 @@
+from contextlib import closing
+
+import pytest
+
+from control.api import access, people
+from control.engine import neighbors
+from control.engine.neighbors import Neighbor
+from control.engine.presence import AWAY_AFTER, Change, Tracker
+from control.engine.registry import Registry
+
+from .test_access import ANDROID_CHROME, approve, phone, turn_on
+from .test_api import client  # noqa: F401 (a fixture)
+from .test_automations import create, runner  # noqa: F401 (fixtures)
+from .test_groups import home  # noqa: F401 (a fixture)
+
+MAC = "4a:84:cf:32:5e:d9"
+MAC2 = "6e:11:22:33:44:55"
+
+
+# --- Presence, counted ----------------------------------------------------------------
+
+
+def tracked(**people):
+    t = Tracker()
+    t.set_phones(people, 0)
+    return t
+
+
+def test_seen_is_home_at_once_but_the_first_reading_fires_nothing():
+    t = tracked(**{"person:a": [MAC]})
+    assert t.home("person:a") is None and t.anyone() is None
+    assert t.update({MAC}, 30) == []
+    assert t.home("person:a") is True and t.anyone() is True
+
+
+def test_away_only_after_ten_minutes_unseen():
+    t = tracked(**{"person:a": [MAC]})
+    t.update({MAC}, 30)
+    assert t.update(set(), 30 + AWAY_AFTER - 1) == []  # a sleeping phone, a short Wi-Fi drop
+    assert t.update(set(), 30 + AWAY_AFTER) == [Change("person:a", False), Change(None, False)]
+    assert t.update({MAC}, 30 + AWAY_AFTER + 30) == [Change("person:a", True), Change(None, True)]
+
+
+def test_never_seen_is_away_after_ten_minutes_without_firing():
+    t = tracked(**{"person:a": [MAC]})
+    assert t.update(set(), AWAY_AFTER - 1) == [] and t.home("person:a") is None
+    assert t.update(set(), AWAY_AFTER) == [] and t.home("person:a") is False  # was unknown: no "leaves"
+    assert t.anyone() is False
+
+
+def test_any_phone_of_theirs_keeps_a_person_home():
+    t = tracked(**{"person:a": [MAC, MAC2]})
+    t.update({MAC, MAC2}, 0)
+    t.update({MAC2}, AWAY_AFTER)  # the phone left on the table, the other one in a pocket
+    assert t.home("person:a") is True
+
+
+def test_first_arrives_and_last_leaves():
+    t = tracked(**{"person:a": [MAC], "person:b": [MAC2]})
+    t.update({MAC}, 0)
+    t.update(set(), AWAY_AFTER)  # b never seen, a gone
+    assert t.anyone() is False
+    assert t.update({MAC2}, AWAY_AFTER + 30) == [Change("person:b", True), Change(None, True)]
+    assert t.update({MAC, MAC2}, AWAY_AFTER + 60) == [Change("person:a", True)]  # not the first
+    t.update({MAC2}, 3 * AWAY_AFTER)
+    assert t.update(set(), 4 * AWAY_AFTER) == [Change("person:b", False), Change(None, False)]
+
+
+def test_a_phone_marked_later_starts_unknown():
+    t = tracked(**{"person:a": [MAC]})
+    t.update(set(), AWAY_AFTER)
+    t.set_phones({"person:a": [MAC], "person:b": [MAC2]}, AWAY_AFTER)
+    assert t.home("person:b") is None and t.anyone() is None
+    assert t.update({MAC2}, AWAY_AFTER + 30) == []  # unknown to home: nothing
+    assert t.missing(AWAY_AFTER + 30, 60) == {MAC}
+
+
+# --- The network ------------------------------------------------------------------------
+
+
+def test_macs_and_addresses():
+    assert neighbors.normal_mac("4A-84-CF-32-5E-D9") == MAC
+    with pytest.raises(ValueError):
+        neighbors.normal_mac("4a:84:cf")
+    assert neighbors.is_private(MAC) and not neighbors.is_private("7c:49:eb:0f:94:e0")
+    hosts = neighbors.subnet_hosts(["192.168.1.130"])
+    assert len(hosts) == 253 and "192.168.1.130" not in hosts and hosts[0] == "192.168.1.1"
+
+
+@pytest.fixture
+def network(monkeypatch):
+    """A fake home network: `answering` (ip -> mac) answers; nudges are recorded; no waiting."""
+    net = {"answering": {"10.0.0.50": MAC}, "nudged": []}
+    monkeypatch.setattr(neighbors, "nudge", lambda ips: net["nudged"].append(set(ips)))
+    monkeypatch.setattr(neighbors, "table", lambda: [Neighbor(ip, mac, True) for ip, mac in net["answering"].items()])
+    monkeypatch.setattr(neighbors, "SETTLE", 0)
+    monkeypatch.setattr(people.time, "sleep", lambda s: None)
+    monkeypatch.setattr(people.lan, "lan_ips", lambda: ["10.0.0.1"])
+    monkeypatch.setattr(people.socket, "gethostbyaddr", lambda ip: ("iPhone.home", [], [ip]))
+    monkeypatch.setattr(people, "presence", people.Presence())
+    monkeypatch.setattr(people, "_last_sweep", (0.0, []))
+    return net
+
+
+def add_person(c, name="Dana"):
+    resp = c.post("/api/people", json={"name": name})
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+def test_a_person_and_a_phone_from_the_nearby_list(client, network):  # noqa: F811
+    dana = add_person(client)
+    assert dana["home"] is None and dana["phones"] == []
+    network["answering"] |= {"10.0.0.2": "7c:49:eb:0f:94:e0", "10.0.0.60": "44:85:00:25:a6:e8"}
+    nearby = client.get("/api/people/nearby").json()
+    # The Yeelight at 10.0.0.2 is a Device, not a phone; private MACs come first.
+    assert [(n["ip"], n["private"], n["name"]) for n in nearby] == [
+        ("10.0.0.50", True, "iPhone"), ("10.0.0.60", False, "iPhone")]
+    assert len(network["nudged"][0]) == 253  # the whole subnet
+
+    resp = client.post(f"/api/people/{dana['uid']}/phones", json={"mac": MAC.upper(), "ip": "10.0.0.50",
+                                                                   "name": "iPhone"})
+    assert resp.status_code == 201, resp.text
+    assert [(p["mac"], p["name"], p["private"]) for p in resp.json()["phones"]] == [(MAC, "iPhone", True)]
+    assert [n["ip"] for n in client.get("/api/people/nearby").json()] == ["10.0.0.60"]  # marked: left out
+    assert len(network["nudged"]) == 1  # the second browser got the same sweep's answers
+
+    assert client.delete(f"/api/people/{dana['uid']}/phones/{MAC}").status_code == 204
+    assert client.get("/api/people").json()[0]["phones"] == []
+
+
+def test_a_person_needs_a_name_of_their_own(client, network):  # noqa: F811
+    add_person(client)
+    assert client.post("/api/people", json={"name": "dana"}).status_code == 422
+    assert client.post("/api/people", json={"name": " "}).status_code == 422
+
+
+def test_this_is_my_phone_only_from_the_phone(client, network):  # noqa: F811
+    dana = add_person(client)
+    resp = client.post(f"/api/people/{dana['uid']}/phones", json={"this_phone": True})
+    assert resp.status_code == 422 and "open Control on the phone" in resp.json()["detail"]
+
+    turn_on(client)
+    access._asks.clear()
+    p = phone("10.0.0.50", ANDROID_CHROME)
+    approve(client, p)
+    resp = p.post(f"/api/people/{dana['uid']}/phones", json={"this_phone": True})
+    assert resp.status_code == 201, resp.text
+    assert [(ph["mac"], ph["name"], ph["current"]) for ph in resp.json()["phones"]] == [(MAC, "Android", True)]
+    assert client.get("/api/people").json()[0]["phones"][0]["current"] is False  # the PC isn't that phone
+
+    stranger = phone("10.0.0.77", ANDROID_CHROME)  # on mobile data, say: Windows never saw it
+    approve(client, stranger)
+    resp = stranger.post(f"/api/people/{dana['uid']}/phones", json={"this_phone": True})
+    assert resp.status_code == 422 and "can't see this phone" in resp.json()["detail"]
+
+
+def test_presence_finds_a_phone_that_moved(client, network, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(people, "SWEEP_AFTER", 0)  # missing long enough to look everywhere
+    dana = add_person(client)
+    client.post(f"/api/people/{dana['uid']}/phones", json={"mac": MAC, "ip": "10.0.0.9"})
+    network["answering"] = {"10.0.0.51": MAC}  # a new address from the router
+    people.presence.check({MAC: "10.0.0.9"})
+    assert people.presence.home(dana["uid"]) is True  # seen: home (from unknown, so nothing fired)
+    assert network["nudged"][-1] == {"10.0.0.9"} | set(neighbors.subnet_hosts(["10.0.0.1"]))
+    with closing(Registry()) as r:
+        assert r.phone(MAC).ip == "10.0.0.51"
+    assert client.get("/api/people").json()[0]["phones"][0]["seen"] is not None
+
+
+# --- Automations --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def dana(home, network):  # noqa: F811
+    c = home["client"]
+    person = add_person(c)
+    c.post(f"/api/people/{person['uid']}/phones", json={"mac": MAC, "ip": "10.0.0.50"})
+    return person["uid"]
+
+
+def notify(text="Hi"):
+    return [{"do": "notify", "text": text}]
+
+
+def test_presence_triggers_and_conditions_read_as_sentences(home, dana):  # noqa: F811
+    a = create(home["client"], name="Welcome",
+               triggers=[{"type": "person", "target": dana, "home": True}, {"type": "home", "occupied": False}],
+               conditions=[{"type": "person", "target": dana, "home": False}, {"type": "home", "occupied": True}],
+               match="any", actions=notify())
+    assert [t["label"] for t in a["triggers"]] == ["Dana arrives home", "The last person leaves home"]
+    assert [c["label"] for c in a["conditions"]] == ["Dana is away", "Someone is home"]
+    assert a["summary"] == ("When: Dana arrives home or the last person leaves home. "
+                            "Only if Dana is away or someone is home. Then: Notify: Hi.")
+
+
+def test_presence_needs_people_with_phones(home, network):  # noqa: F811
+    c = home["client"]
+    body = {"name": "Welcome", "triggers": [{"type": "home", "occupied": True}], "actions": notify()}
+    resp = c.post("/api/automations", json=body)
+    assert resp.status_code == 422 and "Settings → People" in resp.json()["detail"]
+    nobody = add_person(c, "Noa")
+    body["triggers"] = [{"type": "person", "target": nobody["uid"], "home": True}]
+    resp = c.post("/api/automations", json=body)
+    assert resp.status_code == 422 and "mark Noa's phone first" in resp.json()["detail"]
+    body["triggers"] = [{"type": "person", "target": "person:nope", "home": True}]
+    assert c.post("/api/automations", json=body).status_code == 422
+    body["triggers"] = [{"type": "person", "target": nobody["uid"]}]
+    assert "home (true) or away" in c.post("/api/automations", json=body).json()["detail"]
+
+
+def test_arriving_starts_the_automations_it_triggers(home, dana, runner):  # noqa: F811
+    c = home["client"]
+    arrives = create(c, name="Welcome", triggers=[{"type": "person", "target": dana, "home": True}], actions=notify())
+    first = create(c, name="First", triggers=[{"type": "home", "occupied": True}], actions=notify())
+    leaves = create(c, name="Bye", triggers=[{"type": "person", "target": dana, "home": False}], actions=notify())
+    with closing(Registry()) as r:
+        people.started(r, [Change(dana, True), Change(None, True)])
+    for uid in (arrives["uid"], first["uid"]):
+        runner.join(uid)
+        assert c.get(f"/api/automations/{uid}/runs").json()[0]["outcome"] == "succeeded"
+    cause = c.get(f"/api/automations/{arrives['uid']}/runs").json()[0]["cause"]
+    assert cause == "Dana arrives home"
+    assert c.get(f"/api/automations/{leaves['uid']}/runs").json() == []
+
+
+def test_a_presence_condition_not_known_yet_isnt_met(home, dana, runner, network):  # noqa: F811
+    c = home["client"]
+    a = create(c, name="Lights", triggers=[], conditions=[{"type": "person", "target": dana, "home": True}],
+               actions=notify())
+    with closing(Registry()) as r:
+        runner.run(r, a["uid"], "test")
+    runner.join(a["uid"])
+    run = c.get(f"/api/automations/{a['uid']}/runs").json()[0]
+    assert run["outcome"] == "skipped" and "couldn't tell yet" in run["note"]
+
+    people.presence.check({MAC: "10.0.0.50"})  # Dana's phone answers
+    with closing(Registry()) as r:
+        runner.run(r, a["uid"], "test")
+    runner.join(a["uid"])
+    assert c.get(f"/api/automations/{a['uid']}/runs").json()[0]["outcome"] == "succeeded"
+
+
+def test_deleting_a_person_removes_the_parts_naming_them(home, dana):  # noqa: F811
+    c = home["client"]
+    a = create(c, name="Welcome", triggers=[{"type": "person", "target": dana, "home": True}], actions=notify())
+    assert c.delete(f"/api/people/{dana}").status_code == 204
+    after = c.get(f"/api/automations/{a['uid']}").json()
+    assert after["triggers"] == [] and after["enabled"] is False and "Person" in after["attention"]

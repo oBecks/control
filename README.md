@@ -87,6 +87,7 @@ Claude Code inside the Claude app uses the same connection. For the `claude` CLI
 | `set_automation_enabled` | Switches an Automation on or off |
 | `run_automation` | Runs an Automation now |
 | `delete_automation` | Deletes an Automation |
+| `list_people` | Says who's home, from their phones on the Wi-Fi |
 
 It only works in Claude on the same PC. Claude on the web or your phone can't reach your home network.
 

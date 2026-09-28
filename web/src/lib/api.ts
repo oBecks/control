@@ -25,7 +25,9 @@ import type {
 	Condition,
 	HomeLocation,
 	Labelled,
+	Nearby,
 	Notice,
+	Person,
 	Run,
 	Scene,
 	ScenePart,
@@ -169,6 +171,18 @@ export const api = {
 	setScene: (uid: string) => call<SceneSetResult>('POST', `/scenes/${enc(uid)}/set`),
 	captureScene: (targets: string[]) =>
 		call<{ parts: ScenePart[]; failed: Record<string, string> }>('POST', '/scenes/capture', { targets }),
+
+	// People (ADR 0014)
+	people: () => call<Person[]>('GET', '/people'),
+	addPerson: (name: string) => call<Person>('POST', '/people', { name }),
+	renamePerson: (uid: string, name: string) => call<Person>('PATCH', `/people/${enc(uid)}`, { name }),
+	deletePerson: (uid: string) => call<void>('DELETE', `/people/${enc(uid)}`),
+	/** `this_phone`: the phone this browser runs on; or a `mac` from `nearby`. */
+	addPhone: (uid: string, phone: { this_phone?: boolean; mac?: string; ip?: string; name?: string }) =>
+		call<Person>('POST', `/people/${enc(uid)}/phones`, phone),
+	removePhone: (uid: string, mac: string) => call<void>('DELETE', `/people/${enc(uid)}/phones/${enc(mac)}`),
+	/** Sweeps the home network: takes several seconds. */
+	nearby: () => call<Nearby[]>('GET', '/people/nearby'),
 
 	// Groups
 	groups: () => call<Group[]>('GET', '/groups'),

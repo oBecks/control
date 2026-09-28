@@ -1,7 +1,7 @@
 <script lang="ts">
 	// A Dashboard item other than a Tile or Heading, with its Device's or Group's live state:
 	// a Big Control, a Remote Pad, a Single Button or a Clock. Or a Run Button, with its Automation's,
-	// or a Scene Button, lit while its Scene is active.
+	// or a Scene Button, lit while its Scene is active. Or Who's home.
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { automations } from '$lib/automations/automations.svelte';
@@ -13,6 +13,7 @@
 	import Card from './items/Card.svelte';
 	import ClimateCard from './items/ClimateCard.svelte';
 	import Clock from './items/Clock.svelte';
+	import WhoIsHome from './items/WhoIsHome.svelte';
 	import ColourWheel from './items/ColourWheel.svelte';
 	import RemotePad from './items/RemotePad.svelte';
 	import SingleButton from './items/SingleButton.svelte';
@@ -44,6 +45,8 @@
 
 {#if item.kind === 'clock'}
 	<Clock withDate={item.w >= 3} />
+{:else if item.kind === 'people'}
+	<WhoIsHome {inert} />
 {:else if item.kind === 'run'}
 	{@const target = item.target}
 	{@const automation = automations.get(target)}

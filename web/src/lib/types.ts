@@ -196,6 +196,8 @@ export type NewDashboardItem =
 	/** A Single Button: presses one remote button, or opens one Streamer app (by package). */
 	| { id: string; kind: 'button'; w: number; h: number; target: string; button?: string; app?: string }
 	| { id: string; kind: 'clock'; w: number; h: number }
+	/** Who's home: each Person, home or away (ADR 0014). */
+	| { id: string; kind: 'people'; w: number; h: number }
 	/** A Run Button: starts an Automation's Run (target is its uid). */
 	| { id: string; kind: 'run'; w: number; h: number; target: string }
 	/** A Scene Button: sets a Scene (target is its uid), lit while it's active. */
@@ -243,7 +245,11 @@ export type Trigger =
 	/** Goes Offline (a minute without an answer), or (false) comes back online. */
 	| { type: 'offline'; target: string; offline: boolean }
 	/** A Scene is set, by anyone (ADR 0013). */
-	| { type: 'scene'; target: string };
+	| { type: 'scene'; target: string }
+	/** A Person arrives home, or (false) leaves (ADR 0014). */
+	| { type: 'person'; target: string; home: boolean }
+	/** The first person arrives home, or (false) the last one leaves. */
+	| { type: 'home'; occupied: boolean };
 
 /** The "Only if": checked once when a Trigger fires. */
 export type Condition =
@@ -254,7 +260,11 @@ export type Condition =
 	| { type: 'days'; days: Weekday[] }
 	| { type: 'sun'; is: 'dark' | 'light' }
 	/** A Scene is active (false: isn't). */
-	| { type: 'scene'; target: string; active: boolean };
+	| { type: 'scene'; target: string; active: boolean }
+	/** A Person is home, or (false) away. */
+	| { type: 'person'; target: string; home: boolean }
+	/** Someone is home, or (false) nobody is. */
+	| { type: 'home'; occupied: boolean };
 
 /** The "Then", in order: a Hotkey's action on a Device or Group, running another Automation
  * (skipping its Only if, without waiting for it), a wait, or a notification. */
@@ -318,4 +328,38 @@ export interface Notice {
 	text: string;
 	automation: string | null;
 	seen: boolean;
+}
+
+/** A phone marked as a Person's, known by its Wi-Fi (MAC) address. */
+export interface Phone {
+	mac: string;
+	name: string;
+	ip: string;
+	/** A private (made-up) Wi-Fi address, as phones use. */
+	private: boolean;
+	/** When it last answered (seconds since 1970), since Control started. */
+	seen: number | null;
+	/** The phone this browser runs on. */
+	current: boolean;
+}
+
+/** Someone who lives in the home (ADR 0014). */
+export interface Person {
+	uid: string;
+	name: string;
+	/** Home, away, or null while Control doesn't know yet. */
+	home: boolean | null;
+	phones: Phone[];
+	made_by: 'user' | 'assistant';
+}
+
+/** Something answering on the home network now, to pick a phone from. */
+export interface Nearby {
+	ip: string;
+	mac: string;
+	private: boolean;
+	/** What the router calls it, if it says. */
+	name: string | null;
+	/** The Approved Browser last seen at this address. */
+	browser: string | null;
 }

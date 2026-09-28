@@ -107,8 +107,12 @@ One time an Automation went: what triggered it, what each Action did, and how it
 _Avoid_: Execution, job, history entry
 
 **Person**:
-Someone who lives in the home, known to Control by the phone(s) the user marked as theirs. A Person is home while one of their phones is on the home network, which lets Automations react to someone arriving or the last person leaving. Not an account and not an Approved Browser.
+Someone who lives in the home, known to Control by the phone(s) the user marked as theirs (by the phone's Wi-Fi address). A Person is home while one of their phones answers on the home network, and away once none has for 10 minutes; until then it's unknown. This lets Automations react to someone arriving, the first person arriving or the last person leaving (ADR 0014). Not an account and not an Approved Browser, though an Approved Browser can mark its own phone.
 _Avoid_: User, member, resident
+
+**Presence**:
+Whether each Person is home, away or not known yet, and so whether anyone is home. Worked out on the PC from the marked phones answering on the home network; nothing leaves the house.
+_Avoid_: Location, occupancy, geofence
 
 **Hotkey**:
 Keys pressed on the PC running Control that do one thing to one Device or Group: toggle it, set anything its Device Controls can set, step its brightness or temperature up or down, press one of its buttons, open a Streamer's app, run an Automation (skipping its Only if), or set a Scene. Forgetting the Device or Group, or deleting the Automation or Scene, deletes its Hotkeys. It can be a combination (Ctrl+Alt+L), a sequence (Ctrl+Alt+L, then 1), a double or long press, or a key held to keep dimming. Works in any app and any keyboard layout, including media keys and Bluetooth buttons that act as keys. The keys go only to Control, never also to the app in front.
@@ -139,6 +143,10 @@ _Avoid_: Shortcut, widget
 **Scene Button**:
 A Dashboard item that sets a Scene. It looks like a Single Button with the Scene's name, and lights up while the Scene is active.
 _Avoid_: Scene tile, preset button
+
+**Who's home**:
+A Dashboard item showing each Person with a phone, lit while they're home.
+_Avoid_: Presence widget, people card
 
 **Run Button**:
 A Dashboard item that starts an Automation's Run, skipping its Only if like any Run by hand. It looks like a Single Button with the Automation's name, and lights up while the Run goes on.

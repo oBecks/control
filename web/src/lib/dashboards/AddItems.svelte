@@ -1,7 +1,7 @@
 <script lang="ts">
-	// "Add item": a Heading or Clock at once, or ticked Tiles, Big Controls, Remote Pads, Single Buttons,
+	// "Add item": a Heading, Clock or Who’s home at once, or ticked Tiles, Big Controls, Remote Pads, Single Buttons,
 	// Run Buttons or Scene Buttons. The Dashboard places them.
-	import { ArrowLeft, Check, Clock, Heading, Search, X } from '@lucide/svelte';
+	import { ArrowLeft, Check, Clock, Heading, Search, Users, X } from '@lucide/svelte';
 	import AirVent from '@lucide/svelte/icons/air-vent';
 	import Gamepad2 from '@lucide/svelte/icons/gamepad-2';
 	import Palette from '@lucide/svelte/icons/palette';
@@ -18,7 +18,17 @@
 	import Button from '$lib/ui/Button.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
 	import { buttonIcon } from './items/buttons';
-	import { buttonItem, clockItem, controlItem, headingItem, padItem, runItem, sceneItem, tileItem } from './layout';
+	import {
+		buttonItem,
+		clockItem,
+		controlItem,
+		headingItem,
+		padItem,
+		peopleItem,
+		runItem,
+		sceneItem,
+		tileItem
+	} from './layout';
 
 	interface Props {
 		/** What's on the Dashboard already (see itemKey): it can be added again, but says so. */
@@ -253,6 +263,10 @@
 		<button type="button" onclick={() => addNow(clockItem())}>
 			<Clock size={18} strokeWidth={2.2} />
 			<span><b>Clock</b><small>The time; make it wider for the date</small></span>
+		</button>
+		<button type="button" onclick={() => addNow(peopleItem())}>
+			<Users size={18} strokeWidth={2.2} />
+			<span><b>Who’s home</b><small>Each person, home or away, from their phones</small></span>
 		</button>
 	</div>
 

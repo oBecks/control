@@ -1,8 +1,10 @@
 <script lang="ts">
 	// One "Only if" of an Automation: a Device's or Group's state, a Streamer's app, a Scene being
-	// active, a time window, some days, or dark or light. Checked once, when a Trigger fires.
+	// active, someone being home or away, a time window, some days, or dark or light. Checked once,
+	// when a Trigger fires.
 	import { Trash2 } from '@lucide/svelte';
 	import { home } from '$lib/home.svelte';
+	import { people } from '$lib/people/people.svelte';
 	import type { Condition, HomeLocation, Weekday } from '$lib/types';
 	import Button from '$lib/ui/Button.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
@@ -10,6 +12,7 @@
 	import LocationPicker from './LocationPicker.svelte';
 	import './editor.css';
 	import OnOffTargetSelect from './OnOffTargetSelect.svelte';
+	import PresenceFields from './PresenceFields.svelte';
 	import { EVERY_DAY } from './parts';
 	import { appsOf, onOffTargets, streamerDevices } from './targets';
 
@@ -28,9 +31,8 @@
 
 	const initial = (() => condition)();
 	let type = $state<Condition['type']>(initial?.type ?? 'state');
-	let target = $state(
-		initial?.type === 'state' || initial?.type === 'app' || initial?.type === 'scene' ? initial.target : ''
-	);
+	let target = $state(initial && 'target' in initial ? initial.target : '');
+	let isHome = $state(initial?.type === 'person' ? initial.home : initial?.type === 'home' ? initial.occupied : true);
 	let on = $state(initial?.type === 'state' ? initial.on : true);
 	let active = $state(initial?.type === 'scene' ? initial.active : true);
 	let app = $state(initial?.type === 'app' ? initial.app : '');
@@ -51,6 +53,8 @@
 		...(home.scenes.length || initial?.type === 'scene'
 			? [{ value: 'scene', label: 'A scene is active, or not' }]
 			: []),
+		{ value: 'person', label: 'Someone is home, or away' },
+		{ value: 'home', label: 'Anyone is home, or nobody' },
 		{ value: 'time', label: 'It’s between two times' },
 		{ value: 'days', label: 'It’s one of some days' },
 		{ value: 'sun', label: 'It’s dark, or light' }
@@ -61,6 +65,7 @@
 		if (next === 'app' && !streamers.some((s) => s.uid === target)) target = streamers[0]?.uid ?? '';
 		if (next === 'state' && !withState.some((t) => t.uid === target)) target = '';
 		if (next === 'scene' && !home.scenes.some((sc) => sc.uid === target)) target = '';
+		if (next === 'person' && !people.tracked.some((p) => p.uid === target)) target = '';
 	}
 
 	// A TV box's apps arrive with its state.
@@ -76,6 +81,10 @@
 				return target && app ? { type, target, app } : null;
 			case 'scene':
 				return target ? { type, target, active } : null;
+			case 'person':
+				return target ? { type, target, home: isHome } : null;
+			case 'home':
+				return people.tracked.length ? { type, occupied: isHome } : null;
 			case 'time':
 				return { type, after, before };
 			case 'days':
@@ -157,6 +166,8 @@
 			Active while every device in it is as the scene says, however it got that way. A device that doesn’t answer counts
 			as not.
 		</p>
+	{:else if type === 'person' || type === 'home'}
+		<PresenceFields kind={type} part="condition" bind:target bind:home={isHome} />
 	{:else if type === 'time'}
 		<div class="amounts">
 			<span>From</span>

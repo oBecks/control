@@ -35,6 +35,7 @@ from ..engine.errors import DeviceUnreachable
 from ..engine.registry import Automation, Registry, Run
 from . import hotkeys as hotkeys_api
 from . import listening as listening_api
+from . import people as people_api
 from . import scenes as scenes_api
 from .deps import registry
 from .listening import listening
@@ -106,6 +107,7 @@ class Runner:
         self._thread = threading.Thread(target=self._loop, name="automations", daemon=True)
         self._thread.start()
         listening.start()  # Device Triggers (ADR 0011)
+        people_api.presence.start()  # Presence Triggers (ADR 0014)
 
     def stop(self) -> None:
         """Control is quitting: Runs still going end as interrupted (and say so)."""
@@ -114,6 +116,7 @@ class Runner:
             self._cond.notify_all()
             active = list(self._active.values())
         listening.stop()
+        people_api.presence.stop()
         for a in active:
             a.cancel.set()
         for a in active:
@@ -419,7 +422,12 @@ def _unmet(r: Registry, a: Automation) -> str | None:
     unmet = []
     for c in a.conditions:
         label = automations.condition_label(c, names, _app_names(r, c.get("target")))
-        if c["type"] == "scene":
+        if c["type"] in automations.PRESENCE:
+            holds = people_api.holds(c)
+            if holds is None:
+                unmet.append(f"{label}: couldn't tell yet (Control is still looking for the phones)")
+                continue
+        elif c["type"] == "scene":
             try:
                 holds = scenes_api.is_active(r, c["target"]) == c["active"]
             except Exception as exc:
@@ -453,6 +461,7 @@ def _names(r: Registry) -> dict[str, str]:
     names |= {g.uid: g.name for g in r.groups()}
     names |= {a.uid: a.name for a in r.automations()}
     names |= {sc.uid: sc.name for sc in r.scenes()}
+    names |= {p.uid: p.name for p in r.people()}
     return names
 
 
@@ -487,7 +496,7 @@ def _without_target(action: dict) -> dict:
 
 
 def _checked_target(r: Registry, uid: str) -> hotkeys_api.Target:
-    if uid.startswith(("automation:", "scene:")):  # only a run Action, or a Scene part, names one
+    if uid.startswith(("automation:", "scene:", "person:")):  # only a run Action, or a Scene part, names one
         raise ValueError(f"there's no Device or Group '{uid}'")
     try:
         return hotkeys_api.target(r, uid)
@@ -510,8 +519,24 @@ def _check_scene(r: Registry, uid: str) -> None:
         raise ValueError(f"there's no Scene '{uid}'") from None
 
 
+def _check_presence(r: Registry, part: dict) -> None:
+    """A Presence Trigger or Condition needs a Person with a phone: nobody else is ever home."""
+    people = r.people()
+    if part["type"] == "person":
+        person = next((p for p in people if p.uid == part["target"]), None)
+        if person is None:
+            raise ValueError(f"there's no Person '{part['target']}'")
+        if not person.phones:
+            raise ValueError(f"mark {person.name}'s phone first (Settings → People), so Control can tell when "
+                             "they're home")
+    elif not any(p.phones for p in people):
+        raise ValueError("add the people who live here and their phones first (Settings → People)")
+
+
 def _check_trigger(r: Registry, t: dict, where) -> dict:
     clean = automations.check_trigger(t, where)
+    if clean["type"] in automations.PRESENCE:
+        _check_presence(r, clean)
     if clean["type"] == "scene":
         _check_scene(r, clean["target"])
     if clean["type"] == "state":
@@ -535,6 +560,8 @@ def _check_streamer(t: hotkeys_api.Target) -> None:
 
 def _check_condition(r: Registry, c: dict, where) -> dict:
     clean = automations.check_condition(c, where)
+    if clean["type"] in automations.PRESENCE:
+        _check_presence(r, clean)
     if clean["type"] == "scene":
         _check_scene(r, clean["target"])
     if clean["type"] == "state":
@@ -687,7 +714,7 @@ def _out(r: Registry, a: Automation, last: Run | None = None, now: float | None 
 def _mid_sentence(label: str) -> str:
     """A part's label inside the summary: "At 07:00" becomes "at 07:00", but a Device's name keeps its case."""
     first, _, rest = label.partition(" ")
-    return f"{first.lower()} {rest}" if first in ("At", "Between", "It's") else label
+    return f"{first.lower()} {rest}" if first in ("At", "Between", "It's", "The", "Someone", "Nobody") else label
 
 
 def _summary(match: str, triggers: list[dict], conditions: list[dict], actions: list[dict]) -> str:
