@@ -652,3 +652,15 @@ def test_the_hop_limit_counts_a_scene_being_set(home, runner, monkeypatch):
     c.post(f"/api/scenes/{sc['uid']}/set")
     runner.join(started["uid"])
     assert c.get(f"/api/automations/{started['uid']}/runs").json()[0]["outcome"] == "succeeded"
+
+
+def test_a_device_that_doesnt_answer_leaves_its_scene_not_active(home, runner):
+    c, plug = home["client"], home["plug"]
+    sc = scene(c, "Plug", ("tuya:abc", {"on": True}))
+    inactive = create(c, name="Inactive", conditions=[{"type": "scene", "target": sc["uid"], "active": False}])
+    active = create(c, name="Active", conditions=[{"type": "scene", "target": sc["uid"]}])
+    plug.on, plug.fail = True, True
+    for a, outcome in ((inactive, "succeeded"), (active, "skipped")):
+        runner.run(Registry(), a["uid"], "test")
+        runner.join(a["uid"])
+        assert c.get(f"/api/automations/{a['uid']}/runs").json()[0]["outcome"] == outcome
