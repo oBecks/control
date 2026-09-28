@@ -50,6 +50,15 @@ class Tracker:
     def phones(self) -> set[str]:
         return set(self._owner)
 
+    def blind(self, now: float) -> None:
+        """Control can't see the network (the router is off, the PC lost its Wi-Fi): nobody can be
+        told home or away. Everyone becomes unknown, which fires nothing, and is learned again once
+        it can see: an outage doesn't make everyone leave, and coming back doesn't make them arrive."""
+        self._seen.clear()
+        self._since = {mac: now for mac in self._owner}
+        self._home = {uid: None for uid in self._people}
+        self._anyone = None
+
     def missing(self, now: float, after: float) -> set[str]:
         """Phones that haven't answered for `after` seconds, to look for on other addresses."""
         return {mac for mac in self._owner if now - self._seen.get(mac, self._since[mac]) >= after}

@@ -10,6 +10,7 @@ Nothing here needs admin rights.
 import ctypes
 import ipaddress
 import socket
+import struct
 import sys
 from dataclasses import dataclass
 
@@ -58,6 +59,42 @@ def subnet_hosts(own_ips) -> list[str]:
         net = ipaddress.ip_network(f"{own}/24", strict=False)
         hosts += [str(h) for h in net.hosts() if str(h) != own]
     return list(dict.fromkeys(hosts))[:MAX_SWEEP]
+
+
+class _Route(ctypes.Structure):  # MIB_IPFORWARDROW
+    _fields_ = [(name, ctypes.c_ulong) for name in (
+        "dest", "mask", "policy", "next_hop", "if_index", "type", "proto", "age", "next_hop_as",
+        "metric1", "metric2", "metric3", "metric4", "metric5")]
+
+
+def _addr(ip: str) -> int:
+    return struct.unpack("<I", socket.inet_aton(ip))[0]
+
+
+def gateway(own: str) -> str | None:
+    """The home router: the default route of the adapter this PC has `own` (its home address) on.
+    Not simply the route to the internet, which may go through a VPN. None when there's none (no
+    router, or not Windows)."""
+    if sys.platform != "win32":
+        return None
+    iphlpapi = ctypes.windll.iphlpapi
+    net = ipaddress.ip_network(f"{own}/24", strict=False)
+    neighbour = next(str(h) for h in net.hosts() if str(h) != own)
+    adapter = ctypes.c_ulong()
+    if iphlpapi.GetBestInterface(_addr(neighbour), ctypes.byref(adapter)) != 0:
+        return None
+    size = ctypes.c_ulong(0)
+    iphlpapi.GetIpForwardTable(None, ctypes.byref(size), False)  # asks how big the table is
+    buffer = ctypes.create_string_buffer(size.value)
+    if not size.value or iphlpapi.GetIpForwardTable(buffer, ctypes.byref(size), False) != 0:
+        return None
+    count = ctypes.c_ulong.from_buffer(buffer).value
+    routes = [r for r in (_Route * count).from_buffer(buffer, 4)  # the rows start after the count
+              if r.dest == 0 and r.mask == 0 and r.if_index == adapter.value and r.next_hop]
+    if not routes:
+        return None
+    best = min(routes, key=lambda r: r.metric1)
+    return socket.inet_ntoa(struct.pack("<I", best.next_hop))
 
 
 class _Row(ctypes.Structure):  # MIB_IPNET_ROW2

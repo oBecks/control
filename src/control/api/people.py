@@ -2,10 +2,18 @@
 
 The presence thread runs only while some phone is marked. Every CHECK_EVERY seconds it nudges each
 marked phone where it answered last, waits for Windows to ask for their MACs, and reads the
-neighbour table (`engine/neighbors.py`). A phone that hasn't answered for SWEEP_AFTER is looked for
-on every address of the home subnet, once per SWEEP_AFTER, in case it came back on a new IP. What
-changes (someone arrives or leaves, the first arrives or the last leaves) starts the Automations
-whose Trigger it is.
+neighbour table (`engine/neighbors.py`). What changes (someone arrives or leaves, the first arrives
+or the last leaves) starts the Automations whose Trigger it is.
+
+A phone may come back on a new IP (the router restarted, its lease ran out), so Control also looks
+on every address of the home subnet (a sweep): at once when it starts, when this PC's address
+changes and when the network comes back; and for a phone missing SWEEP_AFTER, then every
+SWEEP_BACKOFF while it stays missing, which keeps the network quiet while someone is away all day.
+
+While Control can't see the network (this PC has no address on it, or the home router doesn't
+answer: it's nudged with the phones, since an idle PC's entry for it goes stale too), nobody is home
+or away: everyone becomes unknown until it sees again, so a power cut
+doesn't make everyone leave.
 
 Anyone who may use the Engine may set People up, phones included, like Groups. "This is my phone"
 only works from the phone itself, since Control reads its MAC from the address the request came
@@ -32,7 +40,8 @@ from .listening import awake
 router = APIRouter(prefix="/api/people")
 
 CHECK_EVERY = 30  # seconds between looks for the marked phones
-SWEEP_AFTER = 5 * 60  # a phone missing this long is looked for across the subnet, this often
+SWEEP_AFTER = 5 * 60  # a phone missing this long is looked for across the subnet
+SWEEP_BACKOFF = 30 * 60  # and again this often while it stays missing
 NAMES_WAIT = 2  # seconds the nearby list waits for the router to name devices
 SWEEP_SHARED = 15  # seconds a nearby sweep's answers serve anyone else who asks meanwhile
 
@@ -51,7 +60,9 @@ class Presence:
         self._closing = False
         self._revision = 0
         self._ips: dict[str, str] = {}  # phone -> where it answered last
-        self._swept = 0.0  # awake seconds of the last sweep
+        self._swept_for: dict[str, float] = {}  # missing phone -> the last sweep that looked for it
+        self._own: list[str] | None = None  # this PC's addresses at the last look; None: not looked yet
+        self._blind = False  # the last look couldn't see the network
 
     def start(self) -> None:
         with self._lock:
@@ -100,16 +111,23 @@ class Presence:
     def check(self, ips: dict[str, str]) -> None:
         """One look: nudge, wait, read, and act on what changed."""
         now = awake()
-        targets = {ip for ip in ips.values() if ip}
-        missing = self.tracker.missing(now, SWEEP_AFTER)
-        sweep = bool(missing) and now - self._swept >= SWEEP_AFTER
-        if sweep:
-            self._swept = now
-            targets |= set(neighbors.subnet_hosts(lan.lan_ips()))
+        own = lan.lan_ips()
+        if not own:
+            self._go_blind(now)
+            return
+        router = neighbors.gateway(own[0])  # None: no router found, so it can't tell an outage
+        targets = {ip for ip in ips.values() if ip} | ({router} if router else set())
+        if self._sweep_due(now, own):
+            targets |= set(neighbors.subnet_hosts(own))
+        self._own, self._blind = own, False
         neighbors.nudge(targets)
         if self._sleep(neighbors.SETTLE):
             return
-        answered = {n.mac: n.ip for n in neighbors.table() if n.reachable and n.mac in ips}
+        table = neighbors.table()
+        if router and not any(n.reachable and n.ip == router for n in table):
+            self._go_blind(awake())  # the router didn't answer: the network is down, not everyone gone
+            return
+        answered = {n.mac: n.ip for n in table if n.reachable and n.mac in ips}
         with closing(Registry()) as r:
             for mac, ip in answered.items():
                 if ips[mac] != ip:
@@ -121,6 +139,27 @@ class Presence:
                 changes = self.tracker.update(set(answered), awake())
             if changes:
                 started(r, changes)
+
+    def _sweep_due(self, now: float, own: list[str]) -> bool:
+        """Whether this look covers the whole subnet (see the module's docstring). Each missing phone
+        has its own back-off: one missing all day doesn't delay the first look for another."""
+        with self._lock:
+            missing = self.tracker.missing(now, SWEEP_AFTER)
+        self._swept_for = {mac: at for mac, at in self._swept_for.items() if mac in missing}
+        fresh = self._own is None or self._blind or own != self._own  # just started, back, or moved
+        due = [mac for mac in missing if now - self._swept_for.get(mac, -SWEEP_BACKOFF) >= SWEEP_BACKOFF]
+        if not fresh and not due:
+            return False
+        self._swept_for |= {mac: now for mac in missing}
+        return True
+
+    def _go_blind(self, now: float) -> None:
+        if not self._blind:
+            print("Presence: can't see the home network; nobody counts as home or away until it's back",
+                  file=sys.stderr)
+        self._blind = True
+        with self._lock:
+            self.tracker.blind(now)
 
     def _sleep(self, seconds: float) -> bool:
         """Wait, unless Control is quitting (True)."""
