@@ -17,12 +17,13 @@ router = APIRouter(prefix="/api/dashboards")
 
 class ItemIO(BaseModel):
     id: str | None = Field(None, description="kept across changes; left out, the Engine makes one")
-    kind: str = Field(description="tile, heading, big_control, pad (a Remote Pad), button (a Single Button), clock or run (a Run Button)")
+    kind: str = Field(description="tile, heading, big_control, pad (a Remote Pad), button (a Single Button), clock, "
+                                  "run (a Run Button) or scene (a Scene Button)")
     x: int = Field(description="its column, from 0")
     y: int = Field(description="its row, from 0; a row is half a Tile tall")
     w: int | None = Field(None, description="its width in columns; left out, the kind's default")
     h: int | None = Field(None, description="its height in rows (a Tile at least 2); left out, the kind's default")
-    target: str | None = Field(None, description="a Tile's, Big Control's, Remote Pad's or button's Device or Group uid; a Run Button's Automation uid")
+    target: str | None = Field(None, description="a Tile's, Big Control's, Remote Pad's or button's Device or Group uid; a Run Button's Automation uid; a Scene Button's Scene uid")
     control: str | None = Field(None, description="a Big Control's: brightness, colour or climate")
     button: str | None = Field(None, description="a button's remote button, e.g. power or input:hdmi1")
     app: str | None = Field(None, description="a button's Streamer app, by package")
@@ -52,7 +53,7 @@ def _name(name: str) -> str:
 
 def _items(r: Registry, items: list[ItemIO], columns: int) -> list[dict]:
     return dashboards.check_items([i.model_dump(exclude_none=True) for i in items], r.targets(), columns,
-                                  r.automation_uids())
+                                  r.automation_uids(), r.scene_uids())
 
 
 @router.get("", response_model=list[DashboardOut])
@@ -103,7 +104,8 @@ def patch_dashboard(uid: str, patch: DashboardPatch, r: Registry = Depends(regis
     if patch.items is not None:
         items = _items(r, patch.items, width)
     elif columns is not None:
-        items = dashboards.check_items(current.items, r.targets(), width, r.automation_uids())  # still fits?
+        items = dashboards.check_items(current.items, r.targets(), width, r.automation_uids(),  # still fits?
+                                       r.scene_uids())
     else:
         items = None
     r.update_dashboard(uid, name=name, columns=columns, items=items)

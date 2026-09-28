@@ -244,6 +244,7 @@
 		if (item.kind === 'heading') return `Heading ${item.text}`.trim();
 		if (item.kind === 'clock') return 'Clock';
 		if (item.kind === 'run') return `Run ${automations.get(item.target)?.name ?? 'automation'}`;
+		if (item.kind === 'scene') return `Set ${home.scenes.find((s) => s.uid === item.target)?.name ?? 'scene'}`;
 		const name = home.nameOf(item.target) ?? KIND_NAMES[item.kind];
 		if (item.kind === 'big_control') return `${name} ${CONTROL_NAMES[item.control]}`;
 		if (item.kind === 'pad') return `${name} remote`;

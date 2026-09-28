@@ -143,14 +143,16 @@ export type HotkeyAction =
 	| { do: 'press'; button: string }
 	| { do: 'open_app'; app: string }
 	/** An Automation's Run, skipping its Only if (ADR 0012). */
-	| { do: 'run' };
+	| { do: 'run' }
+	/** A Scene, every part at once (ADR 0013). */
+	| { do: 'set_scene' };
 
 /** Keys on the PC running Control that do one thing to one Device or Group (ADR 0007). */
 export interface Hotkey {
 	uid: string;
 	/** e.g. "Ctrl+Alt+L", "F13", "Volume Up" */
 	keys: string;
-	/** A Device's, Group's or Automation's uid. */
+	/** A Device's, Group's, Automation's or Scene's uid. */
 	target: string;
 	target_name: string;
 	action: HotkeyAction;
@@ -196,6 +198,8 @@ export type NewDashboardItem =
 	| { id: string; kind: 'clock'; w: number; h: number }
 	/** A Run Button: starts an Automation's Run (target is its uid). */
 	| { id: string; kind: 'run'; w: number; h: number; target: string }
+	/** A Scene Button: sets a Scene (target is its uid), lit while it's active. */
+	| { id: string; kind: 'scene'; w: number; h: number; target: string }
 	| {
 			id: string;
 			kind: 'heading';

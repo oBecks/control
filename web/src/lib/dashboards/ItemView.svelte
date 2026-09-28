@@ -1,10 +1,12 @@
 <script lang="ts">
 	// A Dashboard item other than a Tile or Heading, with its Device's or Group's live state:
-	// a Big Control, a Remote Pad, a Single Button or a Clock. Or a Run Button, with its Automation's.
+	// a Big Control, a Remote Pad, a Single Button or a Clock. Or a Run Button, with its Automation's,
+	// or a Scene Button, lit while its Scene is active.
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { automations } from '$lib/automations/automations.svelte';
 	import { home } from '$lib/home.svelte';
+	import { sceneIcon } from '$lib/scenes/icons';
 	import type { DashboardItem, StateChange } from '$lib/types';
 	import BrightnessBar from './items/BrightnessBar.svelte';
 	import { buttonIcon } from './items/buttons';
@@ -27,7 +29,7 @@
 
 	let { item, inert = false, onopen }: Props = $props();
 
-	const uid = $derived('target' in item && item.kind !== 'run' ? item.target : '');
+	const uid = $derived('target' in item && item.kind !== 'run' && item.kind !== 'scene' ? item.target : '');
 	const reading = $derived(uid ? home.stateOf(uid) : undefined);
 	const name = $derived(uid ? (home.nameOf(uid) ?? '') : '');
 	const offline = $derived.by(() => {
@@ -53,6 +55,19 @@
 		{inert}
 		onpress={() => automations.run(target)}
 		onopen={() => goto(resolve('/(app)/automations/[uid]', { uid: target }))}
+	/>
+{:else if item.kind === 'scene'}
+	{@const target = item.target}
+	{@const scene = home.scenes.find((s) => s.uid === target)}
+	<SingleButton
+		label={scene?.name ?? (home.loaded ? 'Gone' : '…')}
+		device={home.settingScene === target ? 'Setting…' : 'Scene'}
+		icon={scene ? sceneIcon(scene.icon) : undefined}
+		lit={!!scene && home.isSceneActive(scene)}
+		missing={home.loaded && !scene}
+		{inert}
+		onpress={() => home.setScene(target)}
+		onopen={() => goto(resolve('/(app)/scenes/[uid]', { uid: target }))}
 	/>
 {:else if !reading}
 	{@render unavailable(name ? '…' : 'Gone')}

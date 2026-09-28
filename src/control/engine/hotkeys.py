@@ -1,5 +1,5 @@
 """Hotkeys (see CONTEXT.md, ADR 0007): keys on the PC that do one thing to one Device or Group, or
-run one Automation.
+run one Automation, or set one Scene.
 
 Keys are written as text, e.g. "Ctrl+Alt+L", "F13" or "Volume Up": modifiers first, then one key.
 A Trigger adds how they're pressed: "Ctrl+Alt+L (double)", "Ctrl+Alt+L (long)", or a sequence,
@@ -16,6 +16,7 @@ An action is one of:
     {"do": "press", "button": "volume_up"}     a remote's or a Streamer's button
     {"do": "open_app", "app": "com.netflix.ninja"}   a Streamer's app, by package
     {"do": "run"}                              an Automation's Run, skipping its Conditions (ADR 0012)
+    {"do": "set_scene"}                        a Scene, every part at once (ADR 0013)
 Holding the keys repeats steps and presses; the others fire once.
 """
 
@@ -267,6 +268,10 @@ def check_action(action: dict, control: str | None, settable: set[str], buttons:
         raise ValueError("only an Automation runs, and it only runs")
     if do == "run":
         return {"do": "run"}
+    if (do == "set_scene") != (control == "scene"):
+        raise ValueError("only a Scene is set, and it's only set")
+    if do == "set_scene":
+        return {"do": "set_scene"}
     if do == "toggle":
         if "on" not in settable and "power" not in buttons:
             raise ValueError("it has no power to toggle")
@@ -306,7 +311,7 @@ def check_action(action: dict, control: str | None, settable: set[str], buttons:
         if not isinstance(app, str) or not app:
             raise ValueError("say which app")
         return {"do": "open_app", "app": app}
-    raise ValueError("the action is toggle, set, step, press, open_app or run")
+    raise ValueError("the action is toggle, set, step, press, open_app, run or set_scene")
 
 
 def describe(action: dict, buttons: dict[str, str], app_names: dict[str, str]) -> str:
@@ -316,6 +321,8 @@ def describe(action: dict, buttons: dict[str, str], app_names: dict[str, str]) -
         return "Toggle"
     if do == "run":
         return "Run"
+    if do == "set_scene":
+        return "Set"
     if do == "step":
         by, field = action["by"], action["field"]
         direction = "up" if by > 0 else "down"
@@ -351,6 +358,15 @@ def describe(action: dict, buttons: dict[str, str], app_names: dict[str, str]) -
 
 def step(current: float, by: float, low: float, high: float) -> float:
     return min(high, max(low, current + by))
+
+
+def scene_text(failed: list[str]) -> str:
+    """What the overlay says after setting a Scene: `failed` names the Devices that didn't take it."""
+    if not failed:
+        return "Set"
+    if len(failed) == 1:
+        return f"Set, but not {failed[0]}"
+    return f"Set, but {len(failed)} devices didn't take it"
 
 
 def result_text(reading: dict, action: dict, press_label: str | None = None, app_name: str | None = None) -> tuple[str, float | None]:

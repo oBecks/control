@@ -140,10 +140,13 @@ _SETTABLE = {
 
 
 def target(r: Registry, uid: str) -> Target:
-    """What a Device, Group or Automation can do, read from the Registry: nothing is asked of the Device."""
+    """What a Device, Group, Automation or Scene can do, read from the Registry: nothing is asked of the Device."""
     api = _api()
     if uid.startswith("automation:"):
         return Target(uid=uid, name=r.get_automation(uid).name, control="automation", is_group=False,
+                      settable=set(), buttons={}, apps=[])
+    if uid.startswith("scene:"):
+        return Target(uid=uid, name=r.get_scene(uid).name, control="scene", is_group=False,
                       settable=set(), buttons={}, apps=[])
     if uid.startswith("group:"):
         g = api._group_out(r, r.get_group(uid))
@@ -196,7 +199,7 @@ def _app_names(t: Target) -> dict[str, str]:
 class HotkeyOut(BaseModel):
     uid: str
     keys: str = Field(description='e.g. "Ctrl+Alt+L"')
-    target: str = Field(description="the Device's, Group's or Automation's uid")
+    target: str = Field(description="the Device's, Group's, Automation's or Scene's uid")
     target_name: str
     action: dict
     action_label: str = Field(description='e.g. "Toggle", "Brightness up 10%"')
@@ -338,7 +341,7 @@ def recording(body: RecordingIn, request: Request):
 
 class HotkeyIn(BaseModel):
     keys: str = Field(description='e.g. "Ctrl+Alt+L", "F13", "Volume Up"')
-    target: str = Field(description="a Device's, Group's or Automation's uid")
+    target: str = Field(description="a Device's, Group's, Automation's or Scene's uid")
     action: dict = Field(description='e.g. {"do": "toggle"}; see engine/hotkeys.py')
     by_assistant: bool = Field(False, description="made by the Assistant, so the app can say so")
 
@@ -404,6 +407,11 @@ def run_hotkey(uid: str, r: Registry = Depends(registry)):
 
         runner.run(r, t.uid, f"Hotkey {hk.keys}", by_hand=True)
         return {"name": t.name, "text": "Running", "level": None}
+    if action["do"] == "set_scene":
+        from . import scenes as scenes_api  # it imports this module
+
+        failed = [scenes_api.name_of(r, f.target) for f in scenes_api.apply(r, t.uid).failed]
+        return {"name": t.name, "text": hotkeys.scene_text(failed), "level": None}
     reading = run(r, t, action)
     text, level = hotkeys.result_text(
         reading, action,
