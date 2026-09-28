@@ -115,8 +115,9 @@ def test_big_controls_remote_pads_buttons_and_clocks():
         {"kind": "button", "target": "b", "button": "input:hdmi1", "x": 2, "y": 4},
         {"kind": "button", "target": "b", "app": "com.netflix.ninja", "x": 3, "y": 4, "w": 1, "h": 1},
         {"kind": "clock", "x": 6, "y": 4, "target": "a"},
+        {"kind": "people", "x": 6, "y": 6, "h": 3},
     ])
-    assert [i["kind"] for i in items] == ["big_control", "big_control", "pad", "button", "button", "clock"]
+    assert [i["kind"] for i in items] == ["big_control", "big_control", "pad", "button", "button", "clock", "people"]
     assert items[0]["control"] == "brightness" and items[1]["control"] == "colour"
     assert (items[1]["w"], items[1]["h"]) == (2, 4)
     assert (items[2]["w"], items[2]["h"]) == (2, 8)

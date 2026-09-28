@@ -2,6 +2,7 @@
 	import { theme, type ThemePreference } from '$lib/theme.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
 	import PhoneAccessSettings from '$lib/access/PhoneAccessSettings.svelte';
+	import PeopleSettings from '$lib/people/PeopleSettings.svelte';
 	import DesktopSettings from '$lib/desktop/DesktopSettings.svelte';
 	import AssistantSettings from '$lib/assistant/AssistantSettings.svelte';
 	import LocationPicker from '$lib/automations/LocationPicker.svelte';
@@ -48,6 +49,7 @@
 		{/if}
 	</section>
 	<PhoneAccessSettings />
+	<PeopleSettings />
 	<AssistantSettings />
 	<DesktopSettings />
 	<p class="later">Hubs & Bridges, rooms and more come later.</p>

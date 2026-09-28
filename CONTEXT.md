@@ -144,6 +144,10 @@ _Avoid_: Shortcut, widget
 A Dashboard item that sets a Scene. It looks like a Single Button with the Scene's name, and lights up while the Scene is active.
 _Avoid_: Scene tile, preset button
 
+**Who's home**:
+A Dashboard item showing each Person with a phone, lit while they're home.
+_Avoid_: Presence widget, people card
+
 **Run Button**:
 A Dashboard item that starts an Automation's Run, skipping its Only if like any Run by hand. It looks like a Single Button with the Automation's name, and lights up while the Run goes on.
 _Avoid_: Automation button, trigger button
