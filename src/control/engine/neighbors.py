@@ -67,15 +67,34 @@ class _Route(ctypes.Structure):  # MIB_IPFORWARDROW
         "metric1", "metric2", "metric3", "metric4", "metric5")]
 
 
-def gateway() -> str | None:
-    """The router this PC reaches the internet through, or None (no network, or not Windows)."""
+def _addr(ip: str) -> int:
+    return struct.unpack("<I", socket.inet_aton(ip))[0]
+
+
+def gateway(own: str) -> str | None:
+    """The home router: the default route of the adapter this PC has `own` (its home address) on.
+    Not simply the route to the internet, which may go through a VPN. None when there's none (no
+    router, or not Windows)."""
     if sys.platform != "win32":
         return None
-    route = _Route()
-    outside = struct.unpack("<I", socket.inet_aton("1.1.1.1"))[0]  # any address beyond the home network
-    if ctypes.windll.iphlpapi.GetBestRoute(outside, 0, ctypes.byref(route)) != 0 or not route.next_hop:
+    iphlpapi = ctypes.windll.iphlpapi
+    net = ipaddress.ip_network(f"{own}/24", strict=False)
+    neighbour = next(str(h) for h in net.hosts() if str(h) != own)
+    adapter = ctypes.c_ulong()
+    if iphlpapi.GetBestInterface(_addr(neighbour), ctypes.byref(adapter)) != 0:
         return None
-    return socket.inet_ntoa(struct.pack("<I", route.next_hop))
+    size = ctypes.c_ulong(0)
+    iphlpapi.GetIpForwardTable(None, ctypes.byref(size), False)  # asks how big the table is
+    buffer = ctypes.create_string_buffer(size.value)
+    if not size.value or iphlpapi.GetIpForwardTable(buffer, ctypes.byref(size), False) != 0:
+        return None
+    count = ctypes.c_ulong.from_buffer(buffer).value
+    routes = [r for r in (_Route * count).from_buffer(buffer, 4)  # the rows start after the count
+              if r.dest == 0 and r.mask == 0 and r.if_index == adapter.value and r.next_hop]
+    if not routes:
+        return None
+    best = min(routes, key=lambda r: r.metric1)
+    return socket.inet_ntoa(struct.pack("<I", best.next_hop))
 
 
 class _Row(ctypes.Structure):  # MIB_IPNET_ROW2

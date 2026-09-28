@@ -100,7 +100,7 @@ def network(monkeypatch):
 
     monkeypatch.setattr(neighbors, "nudge", lambda ips: net["nudged"].append(set(ips)))
     monkeypatch.setattr(neighbors, "table", table)
-    monkeypatch.setattr(neighbors, "gateway", lambda: "10.0.0.254")
+    monkeypatch.setattr(neighbors, "gateway", lambda own: "10.0.0.254")
     monkeypatch.setattr(neighbors, "SETTLE", 0)
     monkeypatch.setattr(people.time, "sleep", lambda s: None)
     monkeypatch.setattr(people.lan, "lan_ips", lambda: ["10.0.0.1"])
@@ -271,7 +271,7 @@ def clock(monkeypatch):
 
 def swept(network):
     """Whether the last look covered the whole subnet."""
-    return len(network["nudged"][-1]) > 2
+    return len(network["nudged"][-1]) > 100  # a look nudges the phones and the router; a sweep, 253
 
 
 def test_sweeps_at_start_then_only_for_a_missing_phone_backing_off(client, network, clock):  # noqa: F811
@@ -344,3 +344,33 @@ def test_no_address_on_the_home_network_is_an_outage_too(client, network, clock,
     clock["t"] += 30
     people.presence.check({MAC: "10.0.0.50"})
     assert people.presence.home(dana["uid"]) is None
+
+
+def test_each_missing_phone_gets_its_own_first_sweep(client, network, clock):  # noqa: F811
+    dana, noa = add_person(client), add_person(client, "Noa")
+    client.post(f"/api/people/{dana['uid']}/phones", json={"mac": MAC, "ip": "10.0.0.50"})
+    client.post(f"/api/people/{noa['uid']}/phones", json={"mac": MAC2, "ip": "10.0.0.51"})
+    network["answering"]["10.0.0.51"] = MAC2
+    phones = {MAC: "10.0.0.50", MAC2: "10.0.0.51"}
+    p = people.presence
+    p.check(phones)
+    del network["answering"]["10.0.0.50"]  # Dana leaves for the day
+    for _ in range(30):  # 15 minutes: her first sweep at 5, then quiet
+        clock["t"] += 30
+        p.check(phones)
+    del network["answering"]["10.0.0.51"]  # now Noa leaves too
+    looks = []
+    for _ in range(12):  # 6 minutes
+        clock["t"] += 30
+        p.check(phones)
+        looks.append(swept(network))
+    # Noa's first sweep comes 5 minutes after she went missing, not when Dana's back-off ends.
+    assert looks.index(True) * 30 + 30 == people.SWEEP_AFTER
+
+
+def test_without_a_router_found_it_just_doesnt_check_for_outages(client, network, clock, monkeypatch):  # noqa: F811
+    dana = add_person(client)
+    client.post(f"/api/people/{dana['uid']}/phones", json={"mac": MAC, "ip": "10.0.0.50"})
+    monkeypatch.setattr(neighbors, "gateway", lambda own: None)  # e.g. a network without a default route
+    people.presence.check({MAC: "10.0.0.50"})
+    assert people.presence.home(dana["uid"]) is True
