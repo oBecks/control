@@ -65,10 +65,10 @@ Ctrl+Alt with a letter) rather than keys the user types or uses elsewhere.
 
 Automations: When (Triggers: a time on some days; sunrise/sunset with an offset; a Device or Group
 turns on or off, or a Streamer opens an app, each optionally only once it stays so for some
-minutes; a Device goes Offline or comes back online) → Only if (Conditions: a Device or Group is
-on/off, a Streamer has an app open, a time window, some days, dark or light; all of them or any
-one) → Then (Actions in order: control a Device or Group the way a Hotkey does, run another
-Automation, wait, notify). Control runs them itself while it's running on this PC. You can list,
+minutes; a Device goes Offline or comes back online; a Scene is set, by anyone) → Only if
+(Conditions: a Device or Group is on/off, a Streamer has an app open, a Scene is active or not, a
+time window, some days, dark or light; all of them or any one) → Then (Actions in order: control a
+Device or Group the way a Hotkey does, set a Scene, run another Automation, wait, notify). Control runs them itself while it's running on this PC. You can list,
 read (with recent Runs), create, edit, delete, run, and switch them on and off when the user asks;
 they're active right away and the app marks them as made by the Assistant. After creating one, tell
 the user its `summary` so they can check it. A timed Trigger missed while the PC was off or asleep
@@ -339,7 +339,7 @@ def scene_summary(sc: dict, active: dict | None = None) -> dict:
 class TriggerIn(BaseModel):
     """What starts an Automation."""
 
-    type: Literal["time", "sun", "state", "app", "offline"]
+    type: Literal["time", "sun", "state", "app", "offline", "scene"]
     at: str | None = Field(None, description='time: "HH:MM", 24-hour, the PC\'s local time')
     event: Literal["sunrise", "sunset"] | None = Field(None, description="sun")
     offset_minutes: int = Field(0, description="sun: minutes before (negative) or after, at most 180")
@@ -352,12 +352,13 @@ class TriggerIn(BaseModel):
     app: str | None = Field(None, description="app: when this Streamer opens this app, e.g. Netflix")
     offline: bool | None = Field(None, description="offline: true when it goes Offline (a minute without an "
                                                    "answer), false when it comes back online")
+    scene: str | None = Field(None, description="scene: when this Scene is set (by name or uid), by anyone")
 
 
 class ConditionIn(BaseModel):
     """Something that must be true when a Trigger fires."""
 
-    type: Literal["state", "app", "time", "days", "sun"]
+    type: Literal["state", "app", "time", "days", "sun", "scene"]
     device: str | None = Field(None, description="state, app: a Device's or Group's name or uid")
     on: bool | None = Field(None, description="state: true while it's on (a Group: any member), false while off")
     app: str | None = Field(None, description="app: the app a Streamer has open, e.g. Netflix")
@@ -365,15 +366,18 @@ class ConditionIn(BaseModel):
     before: str | None = Field(None, description='time: until "HH:MM" (may be past midnight)')
     days: list[str] | None = Field(None, description='days: e.g. ["fri", "sat"]')
     dark: bool | None = Field(None, description="sun: true between sunset and sunrise, false in daylight")
+    scene: str | None = Field(None, description="scene: a Scene's name or uid")
+    active: bool = Field(True, description="scene: true while every Device in it is as it says, false while not")
 
 
 class ActionIn(BaseModel):
     """One step of an Automation, done in order."""
 
     action: Literal["toggle", "on", "off", "brightness_up", "brightness_down", "temperature_up",
-                    "temperature_down", "set", "press", "open_app", "run_automation", "wait", "notify"]
+                    "temperature_down", "set", "press", "open_app", "run_automation", "set_scene", "wait",
+                    "notify"]
     device: str | None = Field(None, description="a Device's or Group's name or uid, for all but wait and notify; "
-                                                 "run_automation: the Automation's")
+                                                 "run_automation: the Automation's; set_scene: the Scene's")
     step: float | None = Field(None, description="brightness_* (%, default 10) or temperature_* (degrees, default 1)")
     button: str | None = Field(None, description='press: e.g. "Volume +"')
     app: str | None = Field(None, description='open_app: e.g. "Netflix"')
@@ -427,6 +431,8 @@ def trigger_in(t: dict) -> dict:
                 "label": label}
     if kind == "offline":
         return {"type": kind, "device": t["target"], "offline": t["offline"], "label": label}
+    if kind == "scene":
+        return {"type": kind, "scene": t["target"], "label": label}
     if t["type"] == "time":
         return _without_none({"type": "time", "at": t["at"], "days": _days_in(t["days"]), "label": t["label"]})
     return _without_none({"type": "sun", "event": t["event"], "offset_minutes": t["offset"],
@@ -443,6 +449,8 @@ def condition_in(c: dict) -> dict:
         return {"type": kind, "after": c["after"], "before": c["before"], "label": label}
     if kind == "days":
         return {"type": kind, "days": [DAY_NAMES[d] for d in c["days"]], "label": label}
+    if kind == "scene":
+        return {"type": kind, "scene": c["target"], "active": c["active"], "label": label}
     return {"type": kind, "dark": c["is"] == "dark", "label": label}
 
 
@@ -461,6 +469,8 @@ def action_in(a: dict) -> dict:
         return {"action": "toggle"} | out
     if do == "run":
         return {"action": "run_automation"} | out
+    if do == "set_scene":
+        return {"action": "set_scene"} | out
     if do == "press":
         return {"action": "press", "button": a["button"]} | out
     if do == "open_app":
@@ -837,8 +847,9 @@ def create_server(engine: Engine) -> MCPServer:
                         actions: list[ActionIn] | None) -> dict:
         body = {}
         if triggers is not None:
-            body["triggers"] = [device_trigger(t) if t.type in DEVICE_TRIGGERS else automation_trigger(t)
-                                for t in triggers]
+            body["triggers"] = [device_trigger(t) if t.type in DEVICE_TRIGGERS
+                                else scene_part(t, "Trigger") if t.type == "scene"
+                                else automation_trigger(t) for t in triggers]
         if conditions is not None:
             body["conditions"] = [automation_condition(c) for c in conditions]
         if actions is not None:
@@ -864,7 +875,15 @@ def create_server(engine: Engine) -> MCPServer:
         apps = engine.call("GET", f"/devices/{d['uid']}/state")["features"]["apps"]
         return {"type": "app", "target": d["uid"], "app": app_package(apps, t.app), "minutes": t.stays_minutes}
 
+    def scene_part(part: TriggerIn | ConditionIn, what: str) -> dict:
+        if not part.scene:
+            raise ToolError(f"A scene {what} says which Scene (`scene`).")
+        out = {"type": "scene", "target": lookup_scene(part.scene)["uid"]}
+        return out | ({"active": part.active} if isinstance(part, ConditionIn) else {})
+
     def automation_condition(c: ConditionIn) -> dict:
+        if c.type == "scene":
+            return scene_part(c, "Condition")
         if c.type in ("state", "app"):
             if not c.device:
                 raise ToolError("A state or app Condition says which Device or Group (`device`).")
@@ -898,6 +917,10 @@ def create_server(engine: Engine) -> MCPServer:
             if not a.device:
                 raise ToolError("Say which Automation to run (`device`).")
             return {"do": "run", "target": lookup_automation(a.device)["uid"]}
+        if a.action == "set_scene":
+            if not a.device:
+                raise ToolError("Say which Scene to set (`device`).")
+            return {"do": "set_scene", "target": lookup_scene(a.device)["uid"]}
         if not a.device:
             raise ToolError(f"Say which Device or Group to {a.action} (`device`).")
         d = controllable(lookup(a.device))
@@ -936,13 +959,16 @@ def create_server(engine: Engine) -> MCPServer:
         only by hand): a time ("07:00") on some days; sunrise/sunset with an offset in minutes; a
         Device or Group turning on or off (`state`: `device`, `on`, optionally `stays_minutes` it must
         stay so first); a Streamer opening an app (`app`: `device`, `app`, optionally `stays_minutes`);
-        or a Device going Offline or coming back online (`offline`: `device`, `offline`).
+        or a Device going Offline or coming back online (`offline`: `device`, `offline`); or a Scene
+        being set by anyone, the user or another Automation (`scene`: `scene`).
         Conditions (checked once when a Trigger fires; `match`: all of them, or any one): a Device or
-        Group on/off, a Streamer's open app, a time window (may cross midnight), days, dark/light.
+        Group on/off, a Streamer's open app, a Scene active or not (`scene`: `scene`, `active`), a time
+        window (may cross midnight), days, dark/light.
         Actions, in order: what a Hotkey can do to a Device or Group (on, off, toggle, set, step,
-        press a button, open an app), run another Automation (`run_automation`: it skips that one's
-        Conditions, and this one goes on without waiting for it; they can't run each other in a loop),
-        wait some minutes, or notify (a Windows notification on this PC and a notice in the app). Tell
+        press a button, open an app), set a Scene (`set_scene`, `device` naming the Scene), run another
+        Automation (`run_automation`: it skips that one's Conditions, and this one goes on without
+        waiting for it). They can't start each other in a loop, by running each other or by setting a
+        Scene another one starts on. Or wait some minutes, or notify (a Windows notification on this PC and a notice in the app). Tell
         the user the returned `summary`."""
         body = {"name": name, "match": match, "enabled": enabled, "by_assistant": True}
         body |= automation_body(triggers or [], conditions or [], actions)

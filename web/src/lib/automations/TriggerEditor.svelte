@@ -1,8 +1,10 @@
 <script lang="ts">
 	// One "When" of an Automation: a time, sunrise or sunset on some days, or a Device changing: a
 	// Device or Group turning on or off (and staying so a while), a TV box opening an app, a Device
-	// going offline or coming back. The Engine listens to the Devices these name (ADR 0011).
+	// going offline or coming back. The Engine listens to the Devices these name (ADR 0011). Or a Scene
+	// being set, by anyone.
 	import { Trash2 } from '@lucide/svelte';
+	import { home } from '$lib/home.svelte';
 	import type { HomeLocation, Trigger, Weekday } from '$lib/types';
 	import Button from '$lib/ui/Button.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
@@ -52,12 +54,22 @@
 		{ value: 'sun', label: 'At sunrise or sunset' },
 		{ value: 'state', label: 'A device or group turns on or off' },
 		...(streamers.length || initial?.type === 'app' ? [{ value: 'app', label: 'A TV box opens an app' }] : []),
-		{ value: 'offline', label: 'A device goes offline or comes back' }
+		{ value: 'offline', label: 'A device goes offline or comes back' },
+		...(home.scenes.length || initial?.type === 'scene' ? [{ value: 'scene', label: 'A scene is set' }] : [])
 	]);
 
 	function pickKind(next: Trigger['type']) {
 		type = next;
-		const choices = next === 'state' ? withState : next === 'app' ? streamers : next === 'offline' ? connected : [];
+		const choices =
+			next === 'state'
+				? withState
+				: next === 'app'
+					? streamers
+					: next === 'offline'
+						? connected
+						: next === 'scene'
+							? home.scenes
+							: [];
 		if (!choices.some((c) => c.uid === target)) target = next === 'app' ? (streamers[0]?.uid ?? '') : '';
 	}
 
@@ -78,6 +90,8 @@
 				return target && app ? { type, target, app, minutes: stays || 0 } : null;
 			case 'offline':
 				return target ? { type, target, offline } : null;
+			case 'scene':
+				return target ? { type, target } : null;
 		}
 	});
 
@@ -171,6 +185,18 @@
 			<span>min</span>
 		</div>
 		<p class="hint">0 starts it at once. Its screensaver coming on doesn't count as leaving the app.</p>
+	{:else if type === 'scene'}
+		<label class="field">
+			<span>Scene</span>
+			<select bind:value={target} required>
+				<option value="" disabled>Pick a scene</option>
+				{#each home.scenes as sc (sc.uid)}<option value={sc.uid}>{sc.name}</option>{/each}
+			</select>
+		</label>
+		<p class="hint">
+			Whoever sets it: from Home, a Hotkey, a dashboard, the Assistant or another automation. Not when its devices just
+			happen to end up that way.
+		</p>
 	{:else}
 		<label class="field">
 			<span>Device</span>

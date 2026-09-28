@@ -13,7 +13,9 @@ A Trigger is one of:
     {"type": "app", "target": uid, "app": "com.netflix.ninja", "minutes": 5}   a Streamer opens that
                                                   app, and keeps it open 5 min first; 0: at once
     {"type": "offline", "target": uid, "offline": true}   a Device goes Offline (false: comes back online)
-The last three are Device Triggers: the Engine listens to the Devices they name (ADR 0011,
+    {"type": "scene", "target": "scene:…"}       a Scene is set, by anyone: the app, a Hotkey, the
+                                                  Assistant or an Automation (ADR 0013)
+State, app and offline are Device Triggers: the Engine listens to the Devices they name (ADR 0011,
 `api/listening.py`).
 
 A Condition is one of:
@@ -22,15 +24,19 @@ A Condition is one of:
     {"type": "time", "after": "22:00", "before": "06:00"}  may cross midnight
     {"type": "days", "days": [5, 6]}
     {"type": "sun", "is": "dark" | "light"}               dark: between sunset and sunrise
+    {"type": "scene", "target": "scene:…", "active": true}   a Scene is active (false: isn't)
 Conditions are checked once, when a Trigger fires: all of them, or any one (`match`).
 
 An Action is one of:
     {"do": "toggle" | "set" | "step" | "press" | "open_app", "target": uid, ...}   a Hotkey's action
     {"do": "run", "target": "automation:…"}   another Automation's Run (chaining): it skips that one's
                                               Only if, and this Run goes on without waiting for it
+    {"do": "set_scene", "target": "scene:…"}  a Scene, every part at once; it sets off the Automations
+                                              whose Trigger is that Scene
     {"do": "wait", "seconds": 600}
     {"do": "notify", "text": "The AC is off"}
-An Automation never runs itself, even through others (`loop`); the loop guard stops the rest.
+An Automation never starts itself, even through others (`loop`), by running them or by setting a
+Scene that is their Trigger; the loop guard stops the rest.
 """
 
 import datetime as dt
@@ -41,9 +47,9 @@ from . import hotkeys, sun
 
 DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 EVERY_DAY = list(range(7))
-TRIGGERS = ("time", "sun", "state", "app", "offline")
+TRIGGERS = ("time", "sun", "state", "app", "offline", "scene")
 DEVICE_TRIGGERS = ("state", "app", "offline")
-CONDITIONS = ("state", "app", "time", "days", "sun")
+CONDITIONS = ("state", "app", "time", "days", "sun", "scene")
 CONTROL = ("toggle", "set", "step", "press", "open_app")
 MAX_WAIT = 24 * 3600
 MAX_STAYS = 24 * 60  # minutes a state Trigger can ask it to stay so
@@ -108,6 +114,8 @@ def check_trigger(t: dict, location: sun.Location | None) -> dict:
         if not isinstance(t.get("offline"), bool):
             raise ValueError("an Offline Trigger says goes Offline (true) or comes back online (false)")
         return {"type": "offline", "target": _target(t), "offline": t["offline"]}
+    if kind == "scene":
+        return {"type": "scene", "target": _target(t)}
     raise ValueError(f"a Trigger is one of: {', '.join(TRIGGERS)}")
 
 
@@ -144,6 +152,11 @@ def check_condition(c: dict, location: sun.Location | None) -> dict:
         if location is None:
             raise ValueError("set your location first, so Control knows when the sun rises and sets")
         return {"type": "sun", "is": c["is"]}
+    if kind == "scene":
+        active = True if c.get("active") is None else c["active"]
+        if not isinstance(active, bool):
+            raise ValueError("a Scene Condition says active (true) or not (false)")
+        return {"type": "scene", "target": _target(c), "active": active}
     raise ValueError(f"a Condition is one of: {', '.join(CONDITIONS)}")
 
 
@@ -160,10 +173,10 @@ def check_step(a: dict) -> dict:
         if not isinstance(text, str) or not text.strip():
             raise ValueError("say what the notification says")
         return {"do": "notify", "text": text.strip()[:MAX_TEXT]}
-    if do in CONTROL or do == "run":
+    if do in CONTROL or do in ("run", "set_scene"):
         _target(a)
         return a
-    raise ValueError(f"an Action is one of: {', '.join(CONTROL + ('run', 'wait', 'notify'))}")
+    raise ValueError(f"an Action is one of: {', '.join(CONTROL + ('run', 'set_scene', 'wait', 'notify'))}")
 
 
 def _target(part: dict) -> str:
@@ -187,19 +200,36 @@ def targets_of(automation) -> set[str]:
     return {p["target"] for p in parts if "target" in p}
 
 
-def runs(actions: list[dict]) -> list[str]:
-    """The Automations these Actions run, in order."""
-    return [a["target"] for a in actions if a["do"] == "run"]
+def set_off_by(automations: dict[str, list[dict]]) -> dict[str, list[str]]:
+    """Scene uid -> the Automations whose Trigger is that Scene being set (`automations`: uid -> Triggers)."""
+    out: dict[str, list[str]] = {}
+    for uid, triggers in automations.items():
+        for t in triggers:
+            if t["type"] == "scene" and uid not in out.setdefault(t["target"], []):
+                out[t["target"]].append(uid)
+    return out
 
 
-def loop(uid: str, actions: list[dict], others: dict[str, list[dict]]) -> list[str] | None:
-    """The uids from `uid` back to itself if its `actions` would run it again, through the other
-    Automations' Actions (`others`: uid -> actions); None when they don't."""
+def starts(action: dict, set_off: dict[str, list[str]]) -> list[str]:
+    """The Automations one Action starts: the one it runs, or those whose Trigger is the Scene it sets."""
+    if action["do"] == "run":
+        return [action["target"]]
+    if action["do"] == "set_scene":
+        return set_off.get(action["target"], [])
+    return []
+
+
+def loop(uid: str, actions: list[dict], others: dict[str, list[dict]],
+         set_off: dict[str, list[str]] | None = None) -> list[str] | None:
+    """The uids from `uid` back to itself if its `actions` would start it again, through the other
+    Automations' Actions (`others`: uid -> actions), by running them or by setting a Scene that
+    `set_off` says starts them (see `set_off_by`); None when they don't."""
+    set_off = set_off or {}
     path: list[str] = [uid]
     seen: set[str] = set()
 
     def via(actions: list[dict]) -> bool:
-        for nxt in runs(actions):
+        for nxt in (n for a in actions for n in starts(a, set_off)):
             if nxt == uid:
                 path.append(uid)
                 return True
@@ -262,6 +292,8 @@ def trigger_label(t: dict, names: dict[str, str], app_names: dict[str, str] | No
         return f"{name} opens {(app_names or {}).get(t['app'], t['app'])}{stays}"
     if t["type"] == "offline":
         return f"{name} goes Offline" if t["offline"] else f"{name} comes back online"
+    if t["type"] == "scene":
+        return f"{name} is set"
     return t["type"]
 
 
@@ -277,6 +309,8 @@ def condition_label(c: dict, names: dict[str, str], app_names: dict[str, str]) -
         return "It's " + (days_label(c["days"]).removeprefix("on ") if len(c["days"]) < 7 else "any day")
     if kind == "sun":
         return "It's dark (after sunset, before sunrise)" if c["is"] == "dark" else "It's light (after sunrise, before sunset)"
+    if kind == "scene":
+        return f"{names.get(c['target'], c['target'])} is {'active' if c['active'] else 'not active'}"
     return kind
 
 
@@ -293,7 +327,8 @@ def wait_label(seconds: int) -> str:
 
 
 def action_label(a: dict, name: str, buttons: dict[str, str], app_names: dict[str, str]) -> str:
-    """"Turn on Bulb 1", "Set AC to 24°, cool", "Run Evening", "Wait 10 min", "Notify: The AC is off"."""
+    """"Turn on Bulb 1", "Set AC to 24°, cool", "Run Evening", "Set Movie night", "Wait 10 min",
+    "Notify: The AC is off"."""
     do = a["do"]
     if do == "wait":
         return wait_label(a["seconds"])
@@ -301,6 +336,8 @@ def action_label(a: dict, name: str, buttons: dict[str, str], app_names: dict[st
         return f"Notify: {a['text']}"
     if do == "run":
         return f"Run {name}"
+    if do == "set_scene":
+        return f"Set {name}"
     text = hotkeys.describe(a, buttons, app_names)
     if do == "toggle":
         return f"Toggle {name}"

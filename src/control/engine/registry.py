@@ -773,12 +773,12 @@ class Registry:
             self._trim_automations()  # the Actions that ran it
 
     def _trim_automations(self) -> None:
-        """Forgetting a Device or deleting a Group or Automation removes only the parts naming it (ADR
+        """Forgetting a Device or deleting a Group, Automation or Scene removes only the parts naming it (ADR
         0012). One that loses its last Trigger (it would quietly become manual-only) or its last Action
         is switched off."""
         from . import automations
 
-        targets = self.targets() | self.automation_uids()
+        targets = self.targets() | self.automation_uids() | self.scene_uids()
         for a in self.automations():
             gone = automations.targets_of(a) - targets
             if not gone:
@@ -792,7 +792,7 @@ class Registry:
             if lost:
                 self._db.execute(
                     "UPDATE automations SET enabled = 0, attention = ? WHERE uid = ?",
-                    (f"Switched off: its last {lost} was for a Device, Group or Automation that was removed", a.uid),
+                    (f"Switched off: its last {lost} was for a Device, Group, Automation or Scene that was removed", a.uid),
                 )
 
     # Runs
@@ -920,6 +920,7 @@ class Registry:
                 raise LookupError(f"no Scene '{uid}'")
             self._drop_hotkeys(uid)
             self._drop_dashboard_items()
+            self._trim_automations()
 
     def _trim_scenes(self) -> None:
         """Forgetting a Device or deleting a Group drops only its part (ADR 0013). A Scene left with

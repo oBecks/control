@@ -1,9 +1,10 @@
 <script lang="ts">
-	// One "Then" of an Automation: control a Device or Group (what a Hotkey can do), run another
-	// Automation, wait, or notify.
+	// One "Then" of an Automation: control a Device or Group (what a Hotkey can do), set a Scene, run
+	// another Automation, wait, or notify.
 	import { Trash2 } from '@lucide/svelte';
 	import ActionFields from '$lib/hotkeys/ActionFields.svelte';
 	import { actionOf, choiceOf, DEFAULT_PARAMS, type Choice, type Params } from '$lib/hotkeys/keys';
+	import { home } from '$lib/home.svelte';
 	import type { AutomationAction } from '$lib/types';
 	import Button from '$lib/ui/Button.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
@@ -24,18 +25,19 @@
 
 	let { action, self, onsave, onremove, onclose }: Props = $props();
 
-	type Kind = 'control' | 'run' | 'wait' | 'notify';
+	type Kind = 'control' | 'set_scene' | 'run' | 'wait' | 'notify';
+	type Own = Extract<AutomationAction, { do: Exclude<Kind, 'control'> }>;
+	const isOwn = (a: AutomationAction): a is Own => ['set_scene', 'run', 'wait', 'notify'].includes(a.do);
 	const initial = (() => action)();
-	const control =
-		initial && initial.do !== 'wait' && initial.do !== 'notify' && initial.do !== 'run' ? initial : undefined;
+	const control = initial && !isOwn(initial) ? initial : undefined;
 	const start = control ? choiceOf(control) : { choice: 'on' as Choice, params: {} };
 
-	let kind = $state<Kind>(
-		initial?.do === 'wait' || initial?.do === 'notify' || initial?.do === 'run' ? initial.do : 'control'
-	);
+	let kind = $state<Kind>(initial && isOwn(initial) ? initial.do : 'control');
 	let target = $state(control?.target ?? '');
 	/** The Automation a Run starts. */
 	let runs = $state(initial?.do === 'run' ? initial.target : '');
+	/** The Scene it sets. */
+	let sets = $state(initial?.do === 'set_scene' ? initial.target : '');
 	let choice = $state<Choice>(start.choice);
 	let params = $state<Params>({ ...DEFAULT_PARAMS, ...start.params });
 	let fieldsReady = $state(false);
@@ -51,7 +53,8 @@
 		}
 		if (kind === 'notify') return text.trim() ? { do: 'notify', text: text.trim() } : null;
 		if (kind === 'run') return runs ? { do: 'run', target: runs } : null;
-		// ActionFields offers no Automations here, so a control Action never runs one.
+		if (kind === 'set_scene') return sets ? { do: 'set_scene', target: sets } : null;
+		// ActionFields offers no Automations or Scenes here, so a control Action never runs or sets one.
 		return fieldsReady ? { ...actionOf(choice, params), target } : null;
 	});
 
@@ -77,6 +80,7 @@
 		label="Then"
 		options={[
 			{ value: 'control', label: 'Control' },
+			{ value: 'set_scene', label: 'Scene' },
 			{ value: 'run', label: 'Run' },
 			{ value: 'wait', label: 'Wait' },
 			{ value: 'notify', label: 'Notify' }
@@ -86,6 +90,22 @@
 
 	{#if kind === 'control'}
 		<ActionFields bind:target bind:choice bind:params onready={(r) => (fieldsReady = r)} />
+	{:else if kind === 'set_scene'}
+		{#if home.scenes.length}
+			<label class="field">
+				<span>Scene</span>
+				<select bind:value={sets} required>
+					<option value="" disabled>Pick a scene</option>
+					{#each home.scenes as sc (sc.uid)}<option value={sc.uid}>{sc.name}</option>{/each}
+				</select>
+			</label>
+			<p class="hint">
+				Sets every device in it at once. Automations that start when it's set start too, but not in a loop with this
+				one.
+			</p>
+		{:else}
+			<p class="hint">{home.loaded ? 'There are no scenes yet. Make one on the Scenes page.' : 'Loading scenes…'}</p>
+		{/if}
 	{:else if kind === 'run'}
 		{#if others.length}
 			<label class="field">

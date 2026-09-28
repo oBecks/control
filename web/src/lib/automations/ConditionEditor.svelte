@@ -1,7 +1,8 @@
 <script lang="ts">
-	// One "Only if" of an Automation: a Device's or Group's state, a Streamer's app, a time window,
-	// some days, or dark or light. Checked once, when a Trigger fires.
+	// One "Only if" of an Automation: a Device's or Group's state, a Streamer's app, a Scene being
+	// active, a time window, some days, or dark or light. Checked once, when a Trigger fires.
 	import { Trash2 } from '@lucide/svelte';
+	import { home } from '$lib/home.svelte';
 	import type { Condition, HomeLocation, Weekday } from '$lib/types';
 	import Button from '$lib/ui/Button.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
@@ -27,8 +28,11 @@
 
 	const initial = (() => condition)();
 	let type = $state<Condition['type']>(initial?.type ?? 'state');
-	let target = $state(initial?.type === 'state' || initial?.type === 'app' ? initial.target : '');
+	let target = $state(
+		initial?.type === 'state' || initial?.type === 'app' || initial?.type === 'scene' ? initial.target : ''
+	);
 	let on = $state(initial?.type === 'state' ? initial.on : true);
+	let active = $state(initial?.type === 'scene' ? initial.active : true);
 	let app = $state(initial?.type === 'app' ? initial.app : '');
 	let after = $state(initial?.type === 'time' ? initial.after : '22:00');
 	let before = $state(initial?.type === 'time' ? initial.before : '06:00');
@@ -44,6 +48,9 @@
 	const KINDS = $derived([
 		{ value: 'state', label: 'A device or group is on or off' },
 		...(streamers.length || initial?.type === 'app' ? [{ value: 'app', label: 'A TV box has an app open' }] : []),
+		...(home.scenes.length || initial?.type === 'scene'
+			? [{ value: 'scene', label: 'A scene is active, or not' }]
+			: []),
 		{ value: 'time', label: 'It’s between two times' },
 		{ value: 'days', label: 'It’s one of some days' },
 		{ value: 'sun', label: 'It’s dark, or light' }
@@ -53,6 +60,7 @@
 		type = next;
 		if (next === 'app' && !streamers.some((s) => s.uid === target)) target = streamers[0]?.uid ?? '';
 		if (next === 'state' && !withState.some((t) => t.uid === target)) target = '';
+		if (next === 'scene' && !home.scenes.some((sc) => sc.uid === target)) target = '';
 	}
 
 	// A TV box's apps arrive with its state.
@@ -66,6 +74,8 @@
 				return target ? { type, target, on } : null;
 			case 'app':
 				return target && app ? { type, target, app } : null;
+			case 'scene':
+				return target ? { type, target, active } : null;
 			case 'time':
 				return { type, after, before };
 			case 'days':
@@ -126,6 +136,27 @@
 				{#each apps as a (a.app)}<option value={a.app}>{a.name}</option>{/each}
 			</select>
 		</label>
+	{:else if type === 'scene'}
+		<label class="field">
+			<span>Scene</span>
+			<select bind:value={target} required>
+				<option value="" disabled>Pick a scene</option>
+				{#each home.scenes as sc (sc.uid)}<option value={sc.uid}>{sc.name}</option>{/each}
+			</select>
+		</label>
+		<Segmented
+			label="Is"
+			options={[
+				{ value: 'active', label: 'Is active' },
+				{ value: 'inactive', label: 'Isn’t active' }
+			]}
+			value={active ? 'active' : 'inactive'}
+			onchange={(v) => (active = v === 'active')}
+		/>
+		<p class="hint">
+			Active while every device in it is as the scene says, however it got that way. A device that doesn’t answer counts
+			as not.
+		</p>
 	{:else if type === 'time'}
 		<div class="amounts">
 			<span>From</span>
