@@ -1,6 +1,6 @@
 ﻿# Roadmap & status
 
-Last updated 2026-09-28 (Scenes in Hotkeys, Dashboards and Automations).
+Last updated 2026-09-28 (Scenes released, v0.9.0).
 
 ## Supported devices
 
@@ -59,7 +59,7 @@ Terms are in [CONTEXT.md](../CONTEXT.md) (Group, Hotkey, Dashboard, Automation, 
      - Assistant: `list_automations`, `get_automation` (with recent Runs), `create_automation` (returns a plain-language summary), `edit_automation`, `delete_automation`, `run_automation`, `set_automation_enabled`; made_by, active right away.
      - Same stage: a Hotkey action "Run Automation" and a Dashboard Run button item.
    - **Phase 2**: presence (People: phones marked as a Person's, arrives/leaves, first home/last out), PC events (wakes, you log in, Control starts), web links (a secret URL per Automation, LAN only), and "undo after / while" (back to how it was after N minutes, or keep on while a condition holds).
-6. ~~**Scenes**~~ (built, see the PRs below): a chip row on top of Home, plus a Scene button on Dashboards, a "set Scene" step in Automations, and Assistant tools. Until then, Automations set several Devices directly.
+6. ~~**Scenes**~~ (built, released in v0.9.0, see the PRs below): a chip row on top of Home, plus a Scene button on Dashboards, a "set Scene" step in Automations, and Assistant tools. Until then, Automations set several Devices directly.
    - **Decided 2026-09-27** ([ADR 0013](adr/0013-scenes-are-states-not-steps.md); Scene and Scene Button in CONTEXT.md): a Scene is a named end state, not steps, which is what sets it apart from a manual-only Automation.
      - Holds Devices and Groups with only the parts the user ticks (power, brightness, colour, AC mode and temperature, a Streamer's open app). No button presses, no Remote Devices with only a Power Toggle.
      - Active (chip lit) while every chosen part matches; Assumed State counts; a Group matches when all its members do; an Offline Device means not active; several can be active at once.
