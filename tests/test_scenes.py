@@ -6,6 +6,9 @@ from control.engine.registry import Registry
 
 from .test_api import client  # noqa: F401 (client is a fixture)
 from .test_groups import home, light, ac  # noqa: F401 (home is a fixture)
+from .test_hotkeys import add as add_hotkey
+from .test_hotkeys import hk  # noqa: F401 (a fixture)
+from .test_hotkeys import run as run_hotkey
 
 
 # --- What a part may say ---------------------------------------------------------------
@@ -216,3 +219,52 @@ def test_edit_order_delete_and_forgetting(home):
     assert c.post(f"/api/scenes/{b['uid']}/set").status_code == 422
     assert c.delete(f"/api/scenes/{b['uid']}").status_code == 204
     assert c.get(f"/api/scenes/{b['uid']}").status_code == 404
+
+
+# --- Set from a Hotkey or a Dashboard Scene Button -------------------------------------
+
+
+def test_a_hotkey_sets_a_scene(hk):  # noqa: F811
+    c, lights, plug = hk["client"], hk["lights"], hk["plug"]
+    sc = make(c, "Evening", ("yeelight:1", {"on": True, "brightness": 20}), ("tuya:abc", {"on": True}))
+    h = add_hotkey(c, "F13", sc["uid"], {"do": "set_scene"})
+    assert (h["target_name"], h["action_label"], h["repeats"]) == ("Evening", "Set", False)
+    assert run_hotkey(c, h) == {"name": "Evening", "text": "Set", "level": None}
+    assert lights["yeelight:1"].state.brightness == 20 and plug.on
+    plug.fail = True
+    assert run_hotkey(c, h)["text"] == "Set, but not Outlet"
+
+
+def test_only_a_scene_is_set_and_its_only_set(hk):  # noqa: F811
+    c = hk["client"]
+    sc = make(c, "Evening", ("yeelight:1", {"on": True}))
+    assert "only a Scene is set" in add_hotkey(c, "F13", sc["uid"], {"do": "toggle"}, 422)["detail"]
+    assert "only a Scene is set" in add_hotkey(c, "F13", "yeelight:1", {"do": "set_scene"}, 422)["detail"]
+    assert add_hotkey(c, "F13", "scene:nope", {"do": "set_scene"}, 404)
+
+
+def test_deleting_a_scene_deletes_its_hotkeys_and_scene_buttons(hk):  # noqa: F811
+    c = hk["client"]
+    a = make(c, "Evening", ("yeelight:1", {"on": True}))
+    b = make(c, "Morning", ("yeelight:2", {"on": True}))
+    add_hotkey(c, "F13", a["uid"], {"do": "set_scene"})
+    add_hotkey(c, "F14", b["uid"], {"do": "set_scene"})
+    items = [{"kind": "scene", "target": a["uid"], "x": 0, "y": 0},
+             {"kind": "scene", "target": b["uid"], "x": 2, "y": 0, "w": 1, "h": 2}]
+    d = c.post("/api/dashboards", json={"name": "A", "items": items}).json()
+    assert [(i["w"], i["h"]) for i in d["items"]] == [(2, 2), (1, 2)]
+
+    c.delete(f"/api/scenes/{a['uid']}")
+    assert [h["keys"] for h in c.get("/api/hotkeys").json()["hotkeys"]] == ["F14"]
+    assert [i["target"] for i in c.get(f"/api/dashboards/{d['uid']}").json()["items"]] == [b["uid"]]
+    # Forgetting a Device a Scene holds keeps its Scene Buttons: they point at the Scene.
+    c.delete("/api/devices/yeelight:2")
+    assert len(c.get(f"/api/dashboards/{d['uid']}").json()["items"]) == 1
+
+
+def test_a_scene_button_points_at_a_scene_and_a_tile_doesnt(home):
+    c = home["client"]
+    sc = make(c, "Evening", ("yeelight:1", {"on": True}))
+    for item in ({"kind": "scene", "target": "yeelight:1", "x": 0, "y": 0},
+                 {"kind": "tile", "target": sc["uid"], "x": 0, "y": 0}):
+        assert c.post("/api/dashboards", json={"name": "A", "items": [item]}).status_code == 404

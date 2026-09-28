@@ -78,7 +78,7 @@ Claude Code inside the Claude app uses the same connection. For the `claude` CLI
 | `edit_scene` | Renames a Scene or changes its devices |
 | `delete_scene` | Deletes a Scene |
 | `list_hotkeys` | Lists your Hotkeys |
-| `create_hotkey` | Makes a Hotkey, like Ctrl+Alt+L to toggle a light or run an Automation |
+| `create_hotkey` | Makes a Hotkey, like Ctrl+Alt+L to toggle a light, run an Automation or set a Scene |
 | `delete_hotkey` | Deletes a Hotkey |
 | `list_automations` | Lists your Automations |
 | `get_automation` | Reads one Automation and how its recent Runs went |

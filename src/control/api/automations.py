@@ -444,7 +444,7 @@ def _without_target(action: dict) -> dict:
 
 
 def _checked_target(r: Registry, uid: str) -> hotkeys_api.Target:
-    if uid.startswith("automation:"):  # only a run Action names one
+    if uid.startswith(("automation:", "scene:")):  # only a run or Scene part names one
         raise ValueError(f"there's no Device or Group '{uid}'")
     try:
         return hotkeys_api.target(r, uid)

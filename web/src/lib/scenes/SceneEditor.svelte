@@ -5,6 +5,9 @@
 	import ChevronLeft from '@lucide/svelte/icons/chevron-left';
 	import Plus from '@lucide/svelte/icons/plus';
 	import { api } from '$lib/api';
+	import HotkeyEditor from '$lib/hotkeys/HotkeyEditor.svelte';
+	import { hotkeys } from '$lib/hotkeys/hotkeys.svelte';
+	import TargetHotkeys from '$lib/hotkeys/TargetHotkeys.svelte';
 	import { home } from '$lib/home.svelte';
 	import { SECTIONS } from '$lib/present';
 	import type { ScenePart } from '$lib/types';
@@ -46,6 +49,14 @@
 	const changed = $derived(!!draft && JSON.stringify(plain(draft)) !== original);
 
 	let saving = $state(false);
+	/** The Hotkey editor, open on one of its Hotkeys (uid) or a new one (null). */
+	let hotkeyEditor = $state<{ uid: string | null } | null>(null);
+	const editingHotkey = $derived(hotkeyEditor?.uid ? hotkeys.list.find((h) => h.uid === hotkeyEditor?.uid) : undefined);
+	const hotkeyCount = $derived(saved ? hotkeys.forTarget(saved.uid).length : 0);
+
+	$effect(() => {
+		hotkeys.load();
+	});
 	let ask = $state<{ title: string; detail: string; confirmLabel: string; onconfirm: () => void } | null>(null);
 
 	async function save() {
@@ -68,12 +79,17 @@
 		if (!saved) return;
 		ask = {
 			title: `Delete ${saved.name}?`,
-			detail: 'Its devices stay as they are; only the scene goes.',
+			detail:
+				'Its devices stay as they are; only the scene goes' +
+				(hotkeyCount ? `, with its ${hotkeyCount === 1 ? 'Hotkey' : 'Hotkeys'}` : '') +
+				'.',
 			confirmLabel: 'Delete scene',
 			onconfirm: async () => {
 				ask = null;
 				original = draft ? JSON.stringify(plain(draft)) : original; // nothing to lose any more
-				if (await home.deleteScene(uid)) await goto(resolve('/scenes'));
+				if (!(await home.deleteScene(uid))) return;
+				hotkeys.load(); // its Hotkeys went with it
+				await goto(resolve('/scenes'));
 			}
 		};
 	}
@@ -149,6 +165,14 @@
 		onconfirm={ask.onconfirm}
 		oncancel={() => (ask = null)}
 	/>
+{/if}
+
+{#if hotkeyEditor && saved}
+	<Sheet label="Hotkey" onclose={() => (hotkeyEditor = null)}>
+		{#key hotkeyEditor.uid}
+			<HotkeyEditor hotkey={editingHotkey} target={saved.uid} onclose={() => (hotkeyEditor = null)} />
+		{/key}
+	</Sheet>
 {/if}
 
 {#if adding && draft}
@@ -258,6 +282,12 @@
 					{home.isSceneActive(saved) ? 'Set it again' : 'Set it now'}
 				</Button>
 			</section>
+
+			<TargetHotkeys
+				uid={saved.uid}
+				onadd={() => (hotkeyEditor = { uid: null })}
+				onopen={(h) => (hotkeyEditor = { uid: h })}
+			/>
 
 			<div class="danger">
 				<Button variant="ghost" onclick={confirmDelete}>Delete scene</Button>

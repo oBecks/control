@@ -58,8 +58,8 @@ Scenes when the user asks; the app marks them as made by the Assistant.
 
 Hotkeys: keys on this PC (e.g. Ctrl+Alt+L, F13, or a media key such as Play/Pause) that do one thing
 to one Device or Group: toggle it, turn it on or off, step brightness or temperature, set it, press
-one of its buttons, or open a Streamer's app; or that run one Automation. You can list, create and
-delete them when the user asks; the app marks them as made by the Assistant. They work only while the Control app runs on this
+one of its buttons, or open a Streamer's app; or that run one Automation or set one Scene. You can
+list, create and delete them when the user asks; the app marks them as made by the Assistant. They work only while the Control app runs on this
 PC, and the keys then reach only Control, never the app in front: suggest spare keys (F13-F24, or
 Ctrl+Alt with a letter) rather than keys the user types or uses elsewhere.
 
@@ -768,7 +768,8 @@ def create_server(engine: Engine) -> MCPServer:
 
     @server.tool(title="List Hotkeys", annotations=READ)
     def list_hotkeys() -> dict:
-        """List the Hotkeys: keys on this PC that do one thing to a Device or Group, or run an Automation."""
+        """List the Hotkeys: keys on this PC that do one thing to a Device or Group, run an Automation or
+        set a Scene."""
         body = engine.call("GET", "/hotkeys")
         out: dict = {"hotkeys": [hotkey_summary(h) for h in body["hotkeys"]]}
         if not body["listening"]:
@@ -789,6 +790,7 @@ def create_server(engine: Engine) -> MCPServer:
         - press: one of a remote's or Streamer's buttons (`button`, e.g. "Volume +"); holding repeats
         - open_app: a Streamer's app (`app`, e.g. "Netflix")
         - run_automation: `device` names an Automation instead, which runs skipping its Conditions
+        - set_scene: `device` names a Scene instead, set like set_scene does
         Keys that type text need Ctrl, Alt or Win. The keys then reach only Control.
         The same keys can also have a double press ("Ctrl+Alt+L (double)") and a long press
         ("Ctrl+Alt+L (long)", held half a second); their single press then waits a moment for a
@@ -796,6 +798,8 @@ def create_server(engine: Engine) -> MCPServer:
         type text, and the first keys then start only sequences."""
         if action == "run_automation":
             d, action_body = lookup_automation(device), {"do": "run"}
+        elif action == "set_scene":
+            d, action_body = lookup_scene(device), {"do": "set_scene"}
         else:
             d = controllable(lookup(device))
             action_body = hotkey_action(d, action, step, button, app,
@@ -1019,7 +1023,7 @@ def create_server(engine: Engine) -> MCPServer:
 
 
 HotkeyAction = Literal["toggle", "on", "off", "brightness_up", "brightness_down", "temperature_up",
-                       "temperature_down", "set", "press", "open_app", "run_automation"]
+                       "temperature_down", "set", "press", "open_app", "run_automation", "set_scene"]
 HOTKEYS_OFF = "The Control app isn't running on this PC, so Hotkeys don't work until it starts."
 HOTKEY_PROBLEMS = {
     "off": HOTKEYS_OFF,

@@ -628,7 +628,7 @@ class Registry:
                 raise LookupError(f"no Hotkey '{uid}'")
 
     def _drop_hotkeys(self, target: str) -> None:
-        """Forgetting a Device, Group or Automation deletes its Hotkeys, and those of a Group that went with it."""
+        """Forgetting a Device, Group, Automation or Scene deletes its Hotkeys, and those of a Group that went with it."""
         self._db.execute("DELETE FROM hotkeys WHERE target = ?", (target,))
         self._db.execute("DELETE FROM hotkeys WHERE target LIKE 'group:%' AND target NOT IN (SELECT uid FROM groups)")
 
@@ -698,9 +698,13 @@ class Registry:
         """What a Dashboard's Run button can point at."""
         return {r["uid"] for r in self._db.execute("SELECT uid FROM automations").fetchall()}
 
+    def scene_uids(self) -> set[str]:
+        """What a Dashboard's Scene Button can point at."""
+        return {r["uid"] for r in self._db.execute("SELECT uid FROM scenes").fetchall()}
+
     def _drop_dashboard_items(self) -> None:
-        """Forgetting a Device or deleting a Group or Automation takes it off every Dashboard."""
-        targets = self.targets() | self.automation_uids()
+        """Forgetting a Device or deleting a Group, Automation or Scene takes it off every Dashboard."""
+        targets = self.targets() | self.automation_uids() | self.scene_uids()
         for r in self._db.execute("SELECT uid, items FROM dashboards").fetchall():
             items = json.loads(r["items"])
             kept = [i for i in items if "target" not in i or i["target"] in targets]
@@ -914,6 +918,8 @@ class Registry:
         with self._db:
             if self._db.execute("DELETE FROM scenes WHERE uid = ?", (uid,)).rowcount == 0:
                 raise LookupError(f"no Scene '{uid}'")
+            self._drop_hotkeys(uid)
+            self._drop_dashboard_items()
 
     def _trim_scenes(self) -> None:
         """Forgetting a Device or deleting a Group drops only its part (ADR 0013). A Scene left with

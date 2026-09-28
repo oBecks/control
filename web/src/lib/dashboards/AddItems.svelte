@@ -1,22 +1,24 @@
 <script lang="ts">
-	// "Add item": a Heading or Clock at once, or ticked Tiles, Big Controls, Remote Pads, Single Buttons
-	// or Run Buttons. The Dashboard places them.
+	// "Add item": a Heading or Clock at once, or ticked Tiles, Big Controls, Remote Pads, Single Buttons,
+	// Run Buttons or Scene Buttons. The Dashboard places them.
 	import { ArrowLeft, Check, Clock, Heading, Search, X } from '@lucide/svelte';
 	import AirVent from '@lucide/svelte/icons/air-vent';
 	import Gamepad2 from '@lucide/svelte/icons/gamepad-2';
 	import Palette from '@lucide/svelte/icons/palette';
 	import Play from '@lucide/svelte/icons/play';
+	import Sparkles from '@lucide/svelte/icons/sparkles';
 	import Workflow from '@lucide/svelte/icons/workflow';
 	import SunDim from '@lucide/svelte/icons/sun-dim';
 	import type { Component } from 'svelte';
 	import { automations } from '$lib/automations/automations.svelte';
 	import { home } from '$lib/home.svelte';
 	import { groupIcon, iconFor, SECTIONS } from '$lib/present';
+	import { sceneIcon } from '$lib/scenes/icons';
 	import type { BigControl, NewDashboardItem } from '$lib/types';
 	import Button from '$lib/ui/Button.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
 	import { buttonIcon } from './items/buttons';
-	import { buttonItem, clockItem, controlItem, headingItem, padItem, runItem, tileItem } from './layout';
+	import { buttonItem, clockItem, controlItem, headingItem, padItem, runItem, sceneItem, tileItem } from './layout';
 
 	interface Props {
 		/** What's on the Dashboard already (see itemKey): it can be added again, but says so. */
@@ -71,17 +73,18 @@
 		tiles: 'No devices yet: add some first.',
 		controls: 'No lights or ACs yet.',
 		remotes: 'No TVs, fans or streamers with buttons yet.',
-		buttons: 'No TVs, fans or streamers with buttons, and no automations, yet.'
+		buttons: 'No TVs, fans or streamers with buttons, and no automations or scenes, yet.'
 	};
-	/** Buttons: the Automations' Run Buttons, in place of a Device's buttons. */
+	/** Buttons: the Automations' Run Buttons, or the Scenes' Scene Buttons, in place of a Device's buttons. */
 	const AUTOMATIONS = 'automations';
+	const SCENES = 'scenes';
 
 	let kind = $state<Kind>('tiles');
 	let query = $state('');
 	let picked = $state<string[]>([]);
 	/** Each kind's size for new items; each one's width and height can be changed afterwards. */
 	let sizes = $state<Record<Kind, string>>({ tiles: 'wide', controls: '', remotes: 'compact', buttons: 'small' });
-	/** Buttons: the Device whose buttons are listed, or AUTOMATIONS. */
+	/** Buttons: the Device whose buttons are listed, or AUTOMATIONS or SCENES. */
 	let buttonsOf = $state<string | null>(null);
 
 	const matches = (name: string) => name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
@@ -97,6 +100,8 @@
 			icon: iconFor(d, home.states[d.uid])
 		}))
 	);
+	/** Scenes with something in them (an empty one waits on the Scenes page). */
+	const scenes = $derived(home.scenes.filter((sc) => sc.parts.length));
 	/** TVs, fans and Streamers with at least one button. */
 	const remotes = $derived(
 		deviceRows.filter((d) => {
@@ -165,6 +170,19 @@
 						name: a.name,
 						icon: Play,
 						make: () => runItem(a.uid, w)
+					}))
+				}
+			];
+		}
+		if (buttonsOf === SCENES) {
+			return [
+				{
+					title: 'Set a scene',
+					rows: scenes.map((sc) => ({
+						key: `scene:${sc.uid}`,
+						name: sc.name,
+						icon: sceneIcon(sc.icon),
+						make: () => sceneItem(sc.uid, w)
 					}))
 				}
 			];
@@ -242,10 +260,10 @@
 
 	{#if kind === 'buttons' && !buttonsOf}
 		<p class="lead">
-			Pick a remote or streamer, then the buttons to put on the dashboard on their own. Or automations, for buttons that
-			run them.
+			Pick a remote or streamer, then the buttons to put on the dashboard on their own. Or automations or scenes, for
+			buttons that run or set them.
 		</p>
-		{#if remotes.length || automations.list.length}
+		{#if remotes.length || automations.list.length || scenes.length}
 			<ul>
 				{#each remotes as d (d.uid)}
 					<li>
@@ -260,6 +278,14 @@
 						<button type="button" class="pick" onclick={() => (buttonsOf = AUTOMATIONS)}>
 							<span class="badge" aria-hidden="true"><Workflow size={16} strokeWidth={2.2} /></span>
 							<span class="text"><span class="name">Automations</span></span>
+						</button>
+					</li>
+				{/if}
+				{#if scenes.length}
+					<li>
+						<button type="button" class="pick" onclick={() => (buttonsOf = SCENES)}>
+							<span class="badge" aria-hidden="true"><Sparkles size={16} strokeWidth={2.2} /></span>
+							<span class="text"><span class="name">Scenes</span></span>
 						</button>
 					</li>
 				{/if}
@@ -278,7 +304,7 @@
 				}}
 			>
 				<ArrowLeft size={16} strokeWidth={2.4} />
-				{buttonsOf === AUTOMATIONS ? 'Automations' : home.nameOf(buttonsOf ?? '')}
+				{buttonsOf === AUTOMATIONS ? 'Automations' : buttonsOf === SCENES ? 'Scenes' : home.nameOf(buttonsOf ?? '')}
 			</button>
 		{/if}
 

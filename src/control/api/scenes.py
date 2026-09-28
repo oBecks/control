@@ -229,6 +229,11 @@ class SetOut(BaseModel):
 @router.post("/{uid}/set", response_model=SetOut)
 def set_scene(uid: str, r: Registry = Depends(registry)):
     """Send every part at once. Parts that fail are listed; the others are set anyway."""
+    return apply(r, uid)
+
+
+def apply(r: Registry, uid: str) -> SetOut:
+    """Set a Scene: every part at once, from here, a Hotkey or an Automation."""
     sc = r.get_scene(uid)
     if not sc.parts:
         raise ValueError(f"nothing is left in '{sc.name}': add devices to it first")
@@ -246,7 +251,7 @@ def set_scene(uid: str, r: Registry = Depends(registry)):
     for part, result in results:
         uid_ = part["target"]
         if isinstance(result, Exception):
-            name = _name_of(r, uid_)
+            name = name_of(r, uid_)
             failed.append(Failure(target=uid_, reason=f"{name}: {result}",
                                   unreachable=isinstance(result, DeviceUnreachable)))
             continue
@@ -267,7 +272,7 @@ def _send(r: Registry, part: dict) -> dict:
     return api._read_state(r, api._device_out(r, t.uid), desired)
 
 
-def _name_of(r: Registry, uid: str) -> str:
+def name_of(r: Registry, uid: str) -> str:
     try:
         return hotkeys_api.target(r, uid).name
     except LookupError:
