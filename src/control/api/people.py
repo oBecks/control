@@ -34,6 +34,7 @@ router = APIRouter(prefix="/api/people")
 CHECK_EVERY = 30  # seconds between looks for the marked phones
 SWEEP_AFTER = 5 * 60  # a phone missing this long is looked for across the subnet, this often
 NAMES_WAIT = 2  # seconds the nearby list waits for the router to name devices
+SWEEP_SHARED = 15  # seconds a nearby sweep's answers serve anyone else who asks meanwhile
 
 
 def _automations_api():
@@ -297,17 +298,34 @@ def nearby(r: Registry = Depends(registry)):
     """What answers on the home network now, to pick a phone from: a sweep of the subnet (takes a few
     seconds). Devices Control knows, and phones already marked, are left out. Private MACs first."""
     own = lan.lan_ips()
-    neighbors.nudge(neighbors.subnet_hosts(own))
-    time.sleep(neighbors.SETTLE)
+    table = _swept(own)
     known_ips = {d.ip for d in r.all()} | set(own)
     known_macs = {d.mac.lower().replace("-", ":") for d in r.all() if d.mac}
     known_macs |= {ph.mac for p in r.people() for ph in p.phones}
-    found = {n.mac: n for n in neighbors.table()
+    found = {n.mac: n for n in table
              if n.reachable and n.ip not in known_ips and n.mac not in known_macs}
     names = _host_names([n.ip for n in found.values()])
     out = [NearbyOut(ip=n.ip, mac=n.mac, private=neighbors.is_private(n.mac), name=names.get(n.ip),
                      browser=access.browser_at(n.ip)) for n in found.values()]
     return sorted(out, key=lambda n: (n.browser is None, not n.private, tuple(int(x) for x in n.ip.split("."))))
+
+
+_sweep_lock = threading.Lock()
+_last_sweep: tuple[float, list[neighbors.Neighbor]] = (0.0, [])
+
+
+def _swept(own: list[str]) -> list[neighbors.Neighbor]:
+    """Sweep the subnet, once at a time: a second browser asking meanwhile waits for the sweep going
+    on and gets its answers, rather than holding another worker and sending every packet again."""
+    global _last_sweep
+    with _sweep_lock:
+        at, table = _last_sweep
+        if time.monotonic() - at < SWEEP_SHARED:
+            return table
+        neighbors.nudge(neighbors.subnet_hosts(own))
+        time.sleep(neighbors.SETTLE)
+        _last_sweep = (time.monotonic(), neighbors.table())
+        return _last_sweep[1]
 
 
 def _host_names(ips: list[str]) -> dict[str, str]:

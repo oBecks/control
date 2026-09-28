@@ -8,6 +8,7 @@ const POLL_MS = 15_000;
 class People {
 	list = $state<Person[]>([]);
 	loaded = $state(false);
+	#asked = 0; // the latest refresh: an older answer arriving after it is stale
 	#watchers = 0;
 	#timer: ReturnType<typeof setInterval> | undefined;
 
@@ -17,8 +18,11 @@ class People {
 	}
 
 	async refresh() {
+		const asked = ++this.#asked;
 		try {
-			this.list = await api.people();
+			const list = await api.people();
+			if (asked !== this.#asked) return;
+			this.list = list;
 			this.loaded = true;
 		} catch {
 			// The layout already tells the user when the Engine is unreachable.

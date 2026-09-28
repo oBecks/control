@@ -98,6 +98,7 @@ def network(monkeypatch):
     monkeypatch.setattr(people.lan, "lan_ips", lambda: ["10.0.0.1"])
     monkeypatch.setattr(people.socket, "gethostbyaddr", lambda ip: ("iPhone.home", [], [ip]))
     monkeypatch.setattr(people, "presence", people.Presence())
+    monkeypatch.setattr(people, "_last_sweep", (0.0, []))
     return net
 
 
@@ -122,6 +123,7 @@ def test_a_person_and_a_phone_from_the_nearby_list(client, network):  # noqa: F8
     assert resp.status_code == 201, resp.text
     assert [(p["mac"], p["name"], p["private"]) for p in resp.json()["phones"]] == [(MAC, "iPhone", True)]
     assert [n["ip"] for n in client.get("/api/people/nearby").json()] == ["10.0.0.60"]  # marked: left out
+    assert len(network["nudged"]) == 1  # the second browser got the same sweep's answers
 
     assert client.delete(f"/api/people/{dana['uid']}/phones/{MAC}").status_code == 204
     assert client.get("/api/people").json()[0]["phones"] == []

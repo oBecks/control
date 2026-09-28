@@ -44,9 +44,9 @@
 <style>
 	.who {
 		display: flex;
-		align-items: center;
+		align-items: safe center; /* overflowing: from the top, where it scrolls */
 		min-inline-size: 0;
-		overflow: hidden;
+		overflow: hidden auto; /* more people than fit: scroll to them */
 		padding: var(--s-2) var(--s-3);
 		border-radius: var(--r-lg);
 		background: var(--surface);
@@ -110,8 +110,8 @@
 	li.home .state {
 		color: var(--accent-ink);
 	}
-	/* One column wide, or a single row: only the lit initials. */
-	@container (max-width: 110px) or (max-height: 56px) {
+	/* Too narrow for names: only the lit initials. */
+	@container (max-width: 110px) {
 		.text {
 			display: none;
 		}
