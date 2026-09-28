@@ -65,9 +65,10 @@ Ctrl+Alt with a letter) rather than keys the user types or uses elsewhere.
 
 Automations: When (Triggers: a time on some days; sunrise/sunset with an offset; a Device or Group
 turns on or off, or a Streamer opens an app, each optionally only once it stays so for some
-minutes; a Device goes Offline or comes back online; a Scene is set, by anyone) → Only if
-(Conditions: a Device or Group is on/off, a Streamer has an app open, a Scene is active or not, a
-time window, some days, dark or light; all of them or any one) → Then (Actions in order: control a
+minutes; a Device goes Offline or comes back online; a Scene is set, by anyone; a Person arrives
+or leaves; the first person arrives or the last leaves) → Only if (Conditions: a Device or Group is
+on/off, a Streamer has an app open, a Scene is active or not, a Person is home or away, someone or
+nobody is home, a time window, some days, dark or light; all of them or any one) → Then (Actions in order: control a
 Device or Group the way a Hotkey does, set a Scene, run another Automation, wait, notify). Control runs them itself while it's running on this PC. You can list,
 read (with recent Runs), create, edit, delete, run, and switch them on and off when the user asks;
 they're active right away and the app marks them as made by the Assistant. After creating one, tell
@@ -79,6 +80,11 @@ only when Control sends it something, and one with only a Power Toggle can't be 
 counts as Offline after a minute without answering. An Automation isn't set off by its own changes,
 and one set off too often in a minute is switched off (it may be in a loop). Sunrise and sunset need the
 home's location, set in Control (Settings or the Automation builder).
+
+People: the people who live in the home, each known by their phone(s). A Person is home while one
+of their phones answers on the home Wi-Fi, and away once none has for 10 minutes; right after
+Control starts it may not know yet. list_people says who's home. People and their phones are set up
+in the Control app (Settings → People).
 
 Setting things up (scanning, adding Devices, Learning buttons, renaming Devices) happens in the
 Control app itself; point the user there."""
@@ -339,7 +345,7 @@ def scene_summary(sc: dict, active: dict | None = None) -> dict:
 class TriggerIn(BaseModel):
     """What starts an Automation."""
 
-    type: Literal["time", "sun", "state", "app", "offline", "scene"]
+    type: Literal["time", "sun", "state", "app", "offline", "scene", "person", "home"]
     at: str | None = Field(None, description='time: "HH:MM", 24-hour, the PC\'s local time')
     event: Literal["sunrise", "sunset"] | None = Field(None, description="sun")
     offset_minutes: int = Field(0, description="sun: minutes before (negative) or after, at most 180")
@@ -353,12 +359,15 @@ class TriggerIn(BaseModel):
     offline: bool | None = Field(None, description="offline: true when it goes Offline (a minute without an "
                                                    "answer), false when it comes back online")
     scene: str | None = Field(None, description="scene: when this Scene is set (by name or uid), by anyone")
+    person: str | None = Field(None, description="person: a Person's name or uid")
+    home: bool | None = Field(None, description="person: true when they arrive home, false when they leave; "
+                                                "home: true when the first person arrives, false when the last leaves")
 
 
 class ConditionIn(BaseModel):
     """Something that must be true when a Trigger fires."""
 
-    type: Literal["state", "app", "time", "days", "sun", "scene"]
+    type: Literal["state", "app", "time", "days", "sun", "scene", "person", "home"]
     device: str | None = Field(None, description="state, app: a Device's or Group's name or uid")
     on: bool | None = Field(None, description="state: true while it's on (a Group: any member), false while off")
     app: str | None = Field(None, description="app: the app a Streamer has open, e.g. Netflix")
@@ -368,6 +377,9 @@ class ConditionIn(BaseModel):
     dark: bool | None = Field(None, description="sun: true between sunset and sunrise, false in daylight")
     scene: str | None = Field(None, description="scene: a Scene's name or uid")
     active: bool = Field(True, description="scene: true while every Device in it is as it says, false while not")
+    person: str | None = Field(None, description="person: a Person's name or uid")
+    home: bool | None = Field(None, description="person: true while they're home, false while away; "
+                                                "home: true while someone is home, false while nobody is")
 
 
 class ActionIn(BaseModel):
@@ -433,6 +445,10 @@ def trigger_in(t: dict) -> dict:
         return {"type": kind, "device": t["target"], "offline": t["offline"], "label": label}
     if kind == "scene":
         return {"type": kind, "scene": t["target"], "label": label}
+    if kind == "person":
+        return {"type": kind, "person": t["target"], "home": t["home"], "label": label}
+    if kind == "home":
+        return {"type": kind, "home": t["occupied"], "label": label}
     if t["type"] == "time":
         return _without_none({"type": "time", "at": t["at"], "days": _days_in(t["days"]), "label": t["label"]})
     return _without_none({"type": "sun", "event": t["event"], "offset_minutes": t["offset"],
@@ -451,6 +467,10 @@ def condition_in(c: dict) -> dict:
         return {"type": kind, "days": [DAY_NAMES[d] for d in c["days"]], "label": label}
     if kind == "scene":
         return {"type": kind, "scene": c["target"], "active": c["active"], "label": label}
+    if kind == "person":
+        return {"type": kind, "person": c["target"], "home": c["home"], "label": label}
+    if kind == "home":
+        return {"type": kind, "home": c["occupied"], "label": label}
     return {"type": kind, "dark": c["is"] == "dark", "label": label}
 
 
@@ -849,6 +869,7 @@ def create_server(engine: Engine) -> MCPServer:
         if triggers is not None:
             body["triggers"] = [device_trigger(t) if t.type in DEVICE_TRIGGERS
                                 else scene_part(t, "Trigger") if t.type == "scene"
+                                else presence_part(t, "Trigger") if t.type in ("person", "home")
                                 else automation_trigger(t) for t in triggers]
         if conditions is not None:
             body["conditions"] = [automation_condition(c) for c in conditions]
@@ -881,9 +902,21 @@ def create_server(engine: Engine) -> MCPServer:
         out = {"type": "scene", "target": lookup_scene(part.scene)["uid"]}
         return out | ({"active": part.active} if isinstance(part, ConditionIn) else {})
 
+    def presence_part(part: TriggerIn | ConditionIn, what: str) -> dict:
+        if part.home is None:
+            raise ToolError(f"A {part.type} {what} says `home`: true or false.")
+        if part.type == "home":
+            return {"type": "home", "occupied": part.home}
+        if not part.person:
+            raise ToolError(f"A person {what} says who (`person`).")
+        found = [p | {"category": "person"} for p in engine.call("GET", "/people")]
+        return {"type": "person", "target": find(found, part.person, "Person")["uid"], "home": part.home}
+
     def automation_condition(c: ConditionIn) -> dict:
         if c.type == "scene":
             return scene_part(c, "Condition")
+        if c.type in ("person", "home"):
+            return presence_part(c, "Condition")
         if c.type in ("state", "app"):
             if not c.device:
                 raise ToolError("A state or app Condition says which Device or Group (`device`).")
@@ -928,6 +961,15 @@ def create_server(engine: Engine) -> MCPServer:
                              {"brightness": a.brightness, "kelvin": a.kelvin, "mode": a.mode,
                               "target_temp": a.temperature, "fan": a.fan, "color": a.color})
         return body | {"target": d["uid"]}
+
+    @server.tool(title="List People", annotations=READ)
+    def list_people() -> dict:
+        """The people who live here and whether each is home now (home, away, or not known yet: Control
+        just started, or hasn't seen their phone), from their phones on the home Wi-Fi."""
+        found = engine.call("GET", "/people")
+        where = {True: "home", False: "away", None: "not known yet"}
+        return {"people": [{"name": p["name"], "uid": p["uid"], "is": where[p["home"]],
+                            "phones": [ph["name"] for ph in p["phones"]]} for p in found]}
 
     @server.tool(title="List Automations", annotations=READ)
     def list_automations() -> dict:

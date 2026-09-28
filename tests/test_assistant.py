@@ -152,7 +152,8 @@ def test_read_tools_are_marked_read_only(home):
 
     tools = {t.name: t.annotations for t in anyio.run(go)}
     assert {n for n, a in tools.items() if a.read_only_hint} == {
-        "list_devices", "get_device", "list_scenes", "list_hotkeys", "list_automations", "get_automation"}
+        "list_devices", "get_device", "list_scenes", "list_hotkeys", "list_automations", "get_automation",
+        "list_people"}
     # Pressing a button again (e.g. a Power Toggle) undoes it; creating a Group twice makes two.
     assert {n for n, a in tools.items() if a.idempotent_hint} == {
         "set_power", "set_light", "set_climate", "edit_group", "delete_group", "set_scene", "edit_scene",
@@ -603,3 +604,24 @@ def test_an_automation_with_scenes(home, runner):
     assert "starts this Automation again" in error(srv, "edit_automation", automation="Movie",
                                                    actions=[{"action": "set_scene", "device": "movie"}])
     assert "Say which Scene" in error(srv, "create_automation", name="x", actions=[{"action": "set_scene"}])
+
+
+def test_people_and_presence_in_automations(home, runner, monkeypatch):
+    srv, *_ = home
+    from control.api import people
+
+    monkeypatch.setattr(people, "presence", people.Presence())
+    r = Registry()
+    dana = r.add_person("Dana")
+    r.add_phone(dana, "4a:84:cf:32:5e:d9", "iPhone")
+    r.close()
+    assert ok(srv, "list_people") == {"people": [{"name": "Dana", "uid": dana, "is": "not known yet",
+                                                  "phones": ["iPhone"]}]}
+    made = ok(srv, "create_automation", name="Welcome", triggers=[{"type": "person", "person": "dana", "home": True}],
+              conditions=[{"type": "home", "home": True}], actions=[{"action": "notify", "text": "Hi"}])
+    assert made["summary"] == "When: Dana arrives home. Only if someone is home. Then: Notify: Hi."
+    got = ok(srv, "get_automation", automation="Welcome")
+    kept = {k: [{f: v for f, v in x.items() if f != "label"} for x in got[k]] for k in ("triggers", "conditions")}
+    assert ok(srv, "edit_automation", automation="Welcome", **kept)["summary"] == made["summary"]
+    assert "says `home`" in error(srv, "create_automation", name="x", triggers=[{"type": "home"}],
+                                  actions=[{"action": "notify", "text": "Hi"}])

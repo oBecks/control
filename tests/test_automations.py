@@ -475,7 +475,7 @@ def test_deleting_an_automation_removes_the_actions_that_ran_it(home):
     c.delete(f"/api/automations/{b['uid']}")
     after = c.get(f"/api/automations/{both['uid']}").json()
     assert (after["actions"], after["enabled"]) == ([], False)
-    assert "Automation or Scene that was removed" in after["attention"]
+    assert "Automation, Scene or Person that was removed" in after["attention"]
 
 
 def test_a_chain_of_run_actions_stops(home, runner, monkeypatch):

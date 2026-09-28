@@ -15,8 +15,10 @@ A Trigger is one of:
     {"type": "offline", "target": uid, "offline": true}   a Device goes Offline (false: comes back online)
     {"type": "scene", "target": "scene:…"}       a Scene is set, by anyone: the app, a Hotkey, the
                                                   Assistant or an Automation (ADR 0013)
+    {"type": "person", "target": "person:…", "home": true}   a Person arrives home (false: leaves)
+    {"type": "home", "occupied": true}           the first person arrives home (false: the last leaves)
 State, app and offline are Device Triggers: the Engine listens to the Devices they name (ADR 0011,
-`api/listening.py`).
+`api/listening.py`). Person and home are Presence Triggers (ADR 0014, `api/people.py`).
 
 A Condition is one of:
     {"type": "state", "target": uid, "on": true}          a Device or Group is on (a Group: any member)
@@ -25,6 +27,8 @@ A Condition is one of:
     {"type": "days", "days": [5, 6]}
     {"type": "sun", "is": "dark" | "light"}               dark: between sunset and sunrise
     {"type": "scene", "target": "scene:…", "active": true}   a Scene is active (false: isn't)
+    {"type": "person", "target": "person:…", "home": true}   a Person is home (false: away)
+    {"type": "home", "occupied": true}                   someone is home (false: nobody is)
 Conditions are checked once, when a Trigger fires: all of them, or any one (`match`).
 
 An Action is one of:
@@ -47,9 +51,10 @@ from . import hotkeys, sun
 
 DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 EVERY_DAY = list(range(7))
-TRIGGERS = ("time", "sun", "state", "app", "offline", "scene")
+TRIGGERS = ("time", "sun", "state", "app", "offline", "scene", "person", "home")
 DEVICE_TRIGGERS = ("state", "app", "offline")
-CONDITIONS = ("state", "app", "time", "days", "sun", "scene")
+PRESENCE = ("person", "home")  # Presence Triggers and Conditions (ADR 0014)
+CONDITIONS = ("state", "app", "time", "days", "sun", "scene", "person", "home")
 CONTROL = ("toggle", "set", "step", "press", "open_app")
 MAX_WAIT = 24 * 3600
 MAX_STAYS = 24 * 60  # minutes a state Trigger can ask it to stay so
@@ -116,7 +121,22 @@ def check_trigger(t: dict, location: sun.Location | None) -> dict:
         return {"type": "offline", "target": _target(t), "offline": t["offline"]}
     if kind == "scene":
         return {"type": "scene", "target": _target(t)}
+    if kind in PRESENCE:
+        return _presence(t, "Trigger")
     raise ValueError(f"a Trigger is one of: {', '.join(TRIGGERS)}")
+
+
+def _presence(part: dict, what: str) -> dict:
+    if part["type"] == "person":
+        if not isinstance(part.get("home"), bool):
+            raise ValueError(f"a Person {what} says home (true) or away (false)")
+        target = part.get("target")
+        if not isinstance(target, str) or not target:
+            raise ValueError("say who")
+        return {"type": "person", "target": target, "home": part["home"]}
+    if not isinstance(part.get("occupied"), bool):
+        raise ValueError(f"a home {what} says someone is home (true) or nobody is (false)")
+    return {"type": "home", "occupied": part["occupied"]}
 
 
 def _stays(t: dict) -> int:
@@ -157,6 +177,8 @@ def check_condition(c: dict, location: sun.Location | None) -> dict:
         if not isinstance(active, bool):
             raise ValueError("a Scene Condition says active (true) or not (false)")
         return {"type": "scene", "target": _target(c), "active": active}
+    if kind in PRESENCE:
+        return _presence(c, "Condition")
     raise ValueError(f"a Condition is one of: {', '.join(CONDITIONS)}")
 
 
@@ -294,6 +316,10 @@ def trigger_label(t: dict, names: dict[str, str], app_names: dict[str, str] | No
         return f"{name} goes Offline" if t["offline"] else f"{name} comes back online"
     if t["type"] == "scene":
         return f"{name} is set"
+    if t["type"] == "person":
+        return f"{name} {'arrives home' if t['home'] else 'leaves home'}"
+    if t["type"] == "home":
+        return "The first person arrives home" if t["occupied"] else "The last person leaves home"
     return t["type"]
 
 
@@ -311,6 +337,10 @@ def condition_label(c: dict, names: dict[str, str], app_names: dict[str, str]) -
         return "It's dark (after sunset, before sunrise)" if c["is"] == "dark" else "It's light (after sunrise, before sunset)"
     if kind == "scene":
         return f"{names.get(c['target'], c['target'])} is {'active' if c['active'] else 'not active'}"
+    if kind == "person":
+        return f"{names.get(c['target'], c['target'])} is {'home' if c['home'] else 'away'}"
+    if kind == "home":
+        return "Someone is home" if c["occupied"] else "Nobody is home"
     return kind
 
 

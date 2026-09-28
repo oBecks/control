@@ -126,6 +126,22 @@ CREATE TABLE IF NOT EXISTS scenes (
     made_by    TEXT NOT NULL DEFAULT 'user',  -- 'user' or 'assistant'
     created    REAL NOT NULL
 );
+-- People (ADR 0014): who lives in the home, known by their phones.
+CREATE TABLE IF NOT EXISTS people (
+    uid       TEXT PRIMARY KEY,
+    name      TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    position  INTEGER NOT NULL,
+    made_by   TEXT NOT NULL DEFAULT 'user',   -- 'user' or 'assistant'
+    created   REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS phones (
+    mac      TEXT PRIMARY KEY,               -- "4a:84:cf:32:5e:d9", the phone's (private) Wi-Fi address
+    person   TEXT NOT NULL,
+    name     TEXT NOT NULL,                  -- e.g. "iPhone · Safari"
+    ip       TEXT NOT NULL DEFAULT '',       -- where it answered last: where to look first
+    browser  TEXT,                           -- the Approved Browser that marked it, if it did
+    added    REAL NOT NULL
+);
 -- Each Automation's last Runs (RUNS_KEPT).
 CREATE TABLE IF NOT EXISTS automation_runs (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -241,6 +257,23 @@ class Scene:
     icon: str
     parts: list[dict]  # engine/scenes.py
     attention: str | None  # why it needs looking at
+    made_by: str  # "user" or "assistant"
+
+
+@dataclass
+class Phone:
+    mac: str
+    person: str
+    name: str
+    ip: str
+    browser: str | None  # the Approved Browser that marked it
+
+
+@dataclass
+class Person:
+    uid: str
+    name: str
+    phones: list[Phone]
     made_by: str  # "user" or "assistant"
 
 
@@ -702,6 +735,9 @@ class Registry:
         """What a Dashboard's Scene Button can point at."""
         return {r["uid"] for r in self._db.execute("SELECT uid FROM scenes").fetchall()}
 
+    def person_uids(self) -> set[str]:
+        return {r["uid"] for r in self._db.execute("SELECT uid FROM people").fetchall()}
+
     def _drop_dashboard_items(self) -> None:
         """Forgetting a Device or deleting a Group, Automation or Scene takes it off every Dashboard."""
         targets = self.targets() | self.automation_uids() | self.scene_uids()
@@ -773,12 +809,12 @@ class Registry:
             self._trim_automations()  # the Actions that ran it
 
     def _trim_automations(self) -> None:
-        """Forgetting a Device or deleting a Group, Automation or Scene removes only the parts naming it (ADR
+        """Forgetting a Device or deleting a Group, Automation, Scene or Person removes only the parts naming it (ADR
         0012). One that loses its last Trigger (it would quietly become manual-only) or its last Action
         is switched off."""
         from . import automations
 
-        targets = self.targets() | self.automation_uids() | self.scene_uids()
+        targets = self.targets() | self.automation_uids() | self.scene_uids() | self.person_uids()
         for a in self.automations():
             gone = automations.targets_of(a) - targets
             if not gone:
@@ -792,7 +828,8 @@ class Registry:
             if lost:
                 self._db.execute(
                     "UPDATE automations SET enabled = 0, attention = ? WHERE uid = ?",
-                    (f"Switched off: its last {lost} was for a Device, Group, Automation or Scene that was removed", a.uid),
+                    (f"Switched off: its last {lost} was for a Device, Group, Automation, Scene or Person that was removed",
+                     a.uid),
                 )
 
     # Runs
@@ -939,6 +976,71 @@ class Registry:
                     ("Nothing is left in it: its Devices were forgotten or its Groups deleted", sc.uid),
                 )
 
+    # --- People (ADR 0014) --------------------------------------------------------
+
+    def add_person(self, name: str, made_by: str = "user") -> str:
+        uid = f"person:{uuid.uuid4().hex[:12]}"
+        try:
+            with self._db:
+                position = self._db.execute("SELECT COALESCE(MAX(position) + 1, 0) FROM people").fetchone()[0]
+                self._db.execute("INSERT INTO people (uid, name, position, made_by, created) VALUES (?, ?, ?, ?, ?)",
+                                 (uid, name, position, made_by, time.time()))
+        except sqlite3.IntegrityError:
+            raise ValueError(f"someone named '{name}' is already here") from None
+        return uid
+
+    def people(self) -> list[Person]:
+        phones: dict[str, list[Phone]] = {}
+        for p in self._db.execute("SELECT * FROM phones ORDER BY added").fetchall():
+            phones.setdefault(p["person"], []).append(self._to_phone(p))
+        rows = self._db.execute("SELECT * FROM people ORDER BY position, created").fetchall()
+        return [Person(uid=r["uid"], name=r["name"], phones=phones.get(r["uid"], []), made_by=r["made_by"]) for r in rows]
+
+    def get_person(self, uid: str) -> Person:
+        person = next((p for p in self.people() if p.uid == uid), None)
+        if person is None:
+            raise LookupError(f"no Person '{uid}'")
+        return person
+
+    def rename_person(self, uid: str, name: str) -> None:
+        self.get_person(uid)
+        try:
+            with self._db:
+                self._db.execute("UPDATE people SET name = ? WHERE uid = ?", (name, uid))
+        except sqlite3.IntegrityError:
+            raise ValueError(f"someone named '{name}' is already here") from None
+
+    def forget_person(self, uid: str) -> None:
+        with self._db:
+            if self._db.execute("DELETE FROM people WHERE uid = ?", (uid,)).rowcount == 0:
+                raise LookupError(f"no Person '{uid}'")
+            self._db.execute("DELETE FROM phones WHERE person = ?", (uid,))
+            self._trim_automations()
+
+    def add_phone(self, person: str, mac: str, name: str, ip: str = "", browser: str | None = None) -> None:
+        """Mark a phone as a Person's; a phone marked as someone else's moves to them."""
+        self.get_person(person)
+        with self._db:
+            self._db.execute(
+                """INSERT INTO phones (mac, person, name, ip, browser, added) VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(mac) DO UPDATE SET person=excluded.person, name=excluded.name, ip=excluded.ip,
+                                                  browser=excluded.browser""",
+                (mac, person, name, ip, browser, time.time()),
+            )
+
+    def phone(self, mac: str) -> Phone | None:
+        row = self._db.execute("SELECT * FROM phones WHERE mac = ?", (mac,)).fetchone()
+        return self._to_phone(row) if row else None
+
+    def phone_moved(self, mac: str, ip: str) -> None:
+        with self._db:
+            self._db.execute("UPDATE phones SET ip = ? WHERE mac = ?", (ip, mac))
+
+    def forget_phone(self, mac: str) -> None:
+        with self._db:
+            if self._db.execute("DELETE FROM phones WHERE mac = ?", (mac,)).rowcount == 0:
+                raise LookupError(f"no phone '{mac}'")
+
     # --- Settings ------------------------------------------------------------
 
     def setting(self, key: str, default=None):
@@ -1008,6 +1110,9 @@ class Registry:
     def _to_scene(self, r: sqlite3.Row) -> Scene:
         return Scene(uid=r["uid"], name=r["name"], icon=r["icon"], parts=json.loads(r["parts"]),
                      attention=r["attention"], made_by=r["made_by"])
+
+    def _to_phone(self, r: sqlite3.Row) -> Phone:
+        return Phone(mac=r["mac"], person=r["person"], name=r["name"], ip=r["ip"], browser=r["browser"])
 
     def _to_run(self, r: sqlite3.Row) -> Run:
         return Run(id=r["id"], automation=r["automation"], cause=r["cause"], started=r["started"], ended=r["ended"],
