@@ -80,14 +80,18 @@
 		ask = {
 			title: `Delete ${saved.name}?`,
 			detail:
-				'Its devices stay as they are; only the scene goes' +
-				(hotkeyCount ? `, with its ${hotkeyCount === 1 ? 'Hotkey' : 'Hotkeys'}` : '') +
+				'Its devices stay as they are; only the scene goes, with its buttons on dashboards' +
+				(hotkeyCount ? ` and its ${hotkeyCount === 1 ? 'Hotkey' : 'Hotkeys'}` : '') +
 				'.',
 			confirmLabel: 'Delete scene',
 			onconfirm: async () => {
 				ask = null;
+				const kept = original;
 				original = draft ? JSON.stringify(plain(draft)) : original; // nothing to lose any more
-				if (!(await home.deleteScene(uid))) return;
+				if (!(await home.deleteScene(uid))) {
+					original = kept; // still there, and so are the changes to it
+					return;
+				}
 				hotkeys.load(); // its Hotkeys went with it
 				await goto(resolve('/scenes'));
 			}
