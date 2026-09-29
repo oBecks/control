@@ -43,7 +43,9 @@ a = Analysis(
     datas=[(str(ui), "web"), (str(icon), "control/desktop")],
     # uvicorn picks its loop and protocol implementations at run time; zeroconf imports its compiled
     # parts by name.
-    hiddenimports=collect_submodules("uvicorn") + collect_submodules("zeroconf"),
+    hiddenimports=collect_submodules("uvicorn")
+    + collect_submodules("zeroconf")
+    + collect_submodules("control.engine.scanners"),  # imported by name when a Scan first runs them
     excludes=["tkinter", "pytest", *pillow_unused],
 )
 pyz = PYZ(a.pure)

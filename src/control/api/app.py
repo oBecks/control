@@ -8,6 +8,7 @@ It also serves the built web UI. Listens on 127.0.0.1, and on the LAN only while
 import base64
 import mimetypes
 import os
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager, closing
@@ -21,7 +22,6 @@ from pydantic import BaseModel, Field
 
 from .. import __version__
 from ..engine import code_set_finder, groups, remote_buttons, signal_library, streamer
-from ..engine.adapters import android_adb, androidtv_streamer
 from ..engine.connect import (
     connect_buttons,
     connect_climate,
@@ -35,8 +35,9 @@ from ..engine.connect import (
 from ..engine.climate import features_from_signals
 from ..engine.errors import DeviceUnreachable
 from ..engine.found_device import Category
-from ..engine.links import tuya_link
 from ..engine.registry import Group, KnownDevice, Registry, RemoteDevice
+
+_ATV = "control.engine.adapters.androidtv_streamer"
 from ..engine.scan import DEFAULT_TIMEOUT, scan_and_remember
 from . import access, assistant, automations, dashboards, desktop, hotkeys, people, scenes
 from .deps import registry
@@ -180,7 +181,8 @@ def patch_device(uid: str, patch: DevicePatch, r: Registry = Depends(registry)):
 def forget_device(uid: str, r: Registry = Depends(registry)):
     _device_out(r, uid)
     (r.forget_remote if uid.startswith("remote:") else r.forget)(uid)
-    androidtv_streamer.forget(uid)
+    if _ATV in sys.modules:  # nothing to close if no Streamer was ever opened
+        sys.modules[_ATV].forget(uid)
     hotkeys.listener.bump()  # its Hotkeys went with it
     automations.runner.changed()  # and the parts of Automations that named it
 
@@ -288,6 +290,8 @@ def _open_app(device: KnownDevice, box, target: str, adb: bool) -> None:
     elif state.app in streamer.SCREENSAVERS:
         box.wake()
     if "://" not in target and adb:
+        from ..engine.adapters import android_adb
+
         try:
             android_adb.launch(device.ip, target)
             return
@@ -671,6 +675,8 @@ class TuyaStartIn(BaseModel):
 
 @app.post("/api/links/tuya")
 def tuya_start(body: TuyaStartIn):
+    from ..engine.links import tuya_link
+
     try:
         token, qr_content = tuya_link.start(body.user_code)
     except tuya_link.LinkError as exc:
@@ -682,6 +688,8 @@ def tuya_start(body: TuyaStartIn):
 @app.get("/api/links/tuya/{token}")
 def tuya_poll(token: str, r: Registry = Depends(registry)):
     """Poll until status is "linked". The Client renders `qr_content` as a QR code meanwhile."""
+    from ..engine.links import tuya_link
+
     user_code = _pending_tuya.get(token)
     if user_code is None:
         raise LookupError("unknown or finished login; start again")
@@ -709,6 +717,8 @@ def _android_tv(r: Registry, uid: str) -> KnownDevice:
 @app.post("/api/links/androidtv/{uid}", status_code=204)
 def androidtv_link_start(uid: str, r: Registry = Depends(registry)):
     """Start a Link: the TV shows a code, which the user then sends to .../code."""
+    from ..engine.adapters import androidtv_streamer
+
     d = _android_tv(r, uid)
     androidtv_streamer.start_link(d.uid, d.ip)
 
@@ -722,6 +732,8 @@ def androidtv_link_finish(uid: str, body: CodeIn, r: Registry = Depends(registry
     """Finish the Link with the code the TV shows. Returns what setup offers next: whether it looks
     like a TV, and the catalogue of apps with the suggested ones ticked. The Streamer is usable
     right away with that guess and the suggested apps; setup can change both."""
+    from ..engine.adapters import androidtv_streamer
+
     d = _android_tv(r, uid)
     info = androidtv_streamer.finish_link(d.uid, d.ip, body.code)
     r.save_link(d.uid, d.brand_name, Category.MEDIA, {}, info | {"cast_model": d.model})
@@ -733,6 +745,8 @@ def androidtv_link_finish(uid: str, body: CodeIn, r: Registry = Depends(registry
 
 @app.delete("/api/links/androidtv/{uid}", status_code=204)
 def androidtv_link_cancel(uid: str):
+    from ..engine.adapters import androidtv_streamer
+
     androidtv_streamer.cancel_link(uid)
 
 
@@ -740,6 +754,8 @@ def androidtv_link_cancel(uid: str):
 def streamer_catalogue(uid: str, r: Registry = Depends(registry)):
     """Apps to pick from: those really installed when the box allows adb, otherwise Control's catalogue.
     `problem` says why the installed list couldn't be read."""
+    from ..engine.adapters import android_adb
+
     d = _android_tv(r, uid)
     if (r.streamer(uid) or {}).get("adb"):
         try:
@@ -753,6 +769,8 @@ def streamer_catalogue(uid: str, r: Registry = Depends(registry)):
 def streamer_allow_adb(uid: str, r: Registry = Depends(registry)):
     """The Link's optional second step: connect over adb, waiting up to a minute for Allow on the TV.
     Returns the installed apps to pick from."""
+    from ..engine.adapters import android_adb
+
     d = _android_tv(r, uid)
     if r.get_link(uid) is None:
         raise ValueError(f"Link '{d.name}' first")

@@ -4,6 +4,8 @@ import pytest
 
 from control.api import app as api
 from control.engine import connect, streamer
+from control.engine.adapters import android_adb
+from control.engine.adapters import androidtv_streamer as atv_streamer
 from control.engine.found_device import Category, FoundDevice, Readiness
 from control.engine.registry import Registry
 from control.engine.scanners import media_scanner as mdns
@@ -121,10 +123,10 @@ def box(client, monkeypatch):  # noqa: F811
     fake = FakeStreamer()
     monkeypatch.setattr(api, "connect_streamer", lambda r, uid: (r.get(uid), fake))
     calls = []
-    monkeypatch.setattr(api.androidtv_streamer, "start_link", lambda uid, ip: calls.append(("start", ip)))
-    monkeypatch.setattr(api.androidtv_streamer, "finish_link",
+    monkeypatch.setattr(atv_streamer, "start_link", lambda uid, ip: calls.append(("start", ip)))
+    monkeypatch.setattr(atv_streamer, "finish_link",
                         lambda uid, ip, code: {"manufacturer": "Kaonmedia", "model": "yes"})
-    monkeypatch.setattr(api.androidtv_streamer, "forget", lambda uid: calls.append(("forget", uid)))
+    monkeypatch.setattr(atv_streamer, "forget", lambda uid: calls.append(("forget", uid)))
     return client, fake, calls
 
 
@@ -253,13 +255,13 @@ def adb(box, monkeypatch):
     client, fake, _ = box
     linked(client)
     calls = []
-    monkeypatch.setattr(api.android_adb, "allow", lambda ip: ["il.co.yes.yesplus", "com.netflix.ninja"])
-    monkeypatch.setattr(api.android_adb, "installed", lambda ip: ["il.co.yes.yesplus"])
+    monkeypatch.setattr(android_adb, "allow", lambda ip: ["il.co.yes.yesplus", "com.netflix.ninja"])
+    monkeypatch.setattr(android_adb, "installed", lambda ip: ["il.co.yes.yesplus"])
     def launch(ip, package):
         calls.append(("adb", package))
         fake.state.app = package
 
-    monkeypatch.setattr(api.android_adb, "launch", launch)
+    monkeypatch.setattr(android_adb, "launch", launch)
     return client, fake, calls
 
 
@@ -289,9 +291,9 @@ def test_adb_not_allowed_is_explained(adb, monkeypatch):
     client, *_ = adb
 
     def refuse(ip):
-        raise api.android_adb.NotAllowed("the TV didn't allow Control")
+        raise android_adb.NotAllowed("the TV didn't allow Control")
 
-    monkeypatch.setattr(api.android_adb, "allow", refuse)
+    monkeypatch.setattr(android_adb, "allow", refuse)
     r = client.put(f"/api/streamers/{YES}/adb")
     assert r.status_code == 422 and "allow" in r.json()["detail"]
 
