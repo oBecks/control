@@ -38,6 +38,8 @@ Conditions are checked once, when a Trigger fires: all of them, or any one (`mat
 
 An Action is one of:
     {"do": "toggle" | "set" | "step" | "press" | "open_app", "target": uid, ...}   a Hotkey's action
+        a toggle, set or step on one Device may add "undo": {"after": 10} (put it back to how it was
+        after 10 min) or {"while": true} (put it back once the Only if stops holding), ADR 0017
     {"do": "run", "target": "automation:…"}   another Automation's Run (chaining): it skips that one's
                                               Only if, and this Run goes on without waiting for it
     {"do": "set_scene", "target": "scene:…"}  a Scene, every part at once; it sets off the Automations
@@ -69,6 +71,8 @@ PC_EVENTS = {
     "shuts_down": "The PC shuts down or you sign out",
 }
 CONTROL = ("toggle", "set", "step", "press", "open_app")
+UNDOABLE = ("toggle", "set", "step")  # the Actions that can be put back: they change a state
+MAX_UNDO = 24 * 60  # minutes an Action can ask to be put back after
 MAX_WAIT = 24 * 3600
 MAX_STAYS = 24 * 60  # minutes a state Trigger can ask it to stay so
 MAX_OFFSET = 180  # minutes before or after sunrise or sunset
@@ -218,6 +222,24 @@ def check_step(a: dict) -> dict:
         _target(a)
         return a
     raise ValueError(f"an Action is one of: {', '.join(CONTROL + ('run', 'set_scene', 'wait', 'notify'))}")
+
+
+def check_undo(undo, do: str) -> dict:
+    """An Action's "put it back" cleaned up. Whether its Device can be put back, and that "while" has
+    an Only if to follow, is for `api/automations.py` to say."""
+    if do not in UNDOABLE:
+        raise ValueError(f"only a {', '.join(UNDOABLE)} can be put back, not a {do}")
+    if not isinstance(undo, dict) or set(undo) not in ({"after"}, {"while"}):
+        raise ValueError('put it back "after" some minutes, or "while" the Only if holds')
+    if "while" in undo:
+        if undo["while"] is not True:
+            raise ValueError('"while" is true, or leave it out')
+        return {"while": True}
+    minutes = undo["after"]
+    if (not isinstance(minutes, int | float) or isinstance(minutes, bool) or minutes != int(minutes)
+            or not 1 <= minutes <= MAX_UNDO):
+        raise ValueError("put it back after whole minutes, 1 up to 24 hours")
+    return {"after": int(minutes)}
 
 
 def _target(part: dict) -> str:
@@ -382,6 +404,19 @@ def wait_label(seconds: int) -> str:
 def action_label(a: dict, name: str, buttons: dict[str, str], app_names: dict[str, str]) -> str:
     """"Turn on Bulb 1", "Set AC to 24°, cool", "Run Evening", "Set Movie night", "Wait 10 min",
     "Notify: The AC is off"."""
+    return _action_label(a, name, buttons, app_names) + undo_label(a.get("undo"))
+
+
+def undo_label(undo: dict | None) -> str:
+    """", then put it back after 10 min" or ", then put it back when the Only if stops holding"."""
+    if not undo:
+        return ""
+    if "while" in undo:
+        return ", then put it back when the Only if stops holding"
+    return f", then put it back after {duration_label(undo['after'] * 60)}"
+
+
+def _action_label(a: dict, name: str, buttons: dict[str, str], app_names: dict[str, str]) -> str:
     do = a["do"]
     if do == "wait":
         return wait_label(a["seconds"])

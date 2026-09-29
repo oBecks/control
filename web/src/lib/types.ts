@@ -277,7 +277,11 @@ export type Condition =
 /** The "Then", in order: a Hotkey's action on a Device or Group, running another Automation
  * (skipping its Only if, without waiting for it), a wait, or a notification. */
 export type AutomationAction =
-	(HotkeyAction & { target: string }) | { do: 'wait'; seconds: number } | { do: 'notify'; text: string };
+	(HotkeyAction & { target: string; undo?: Undo }) | { do: 'wait'; seconds: number } | { do: 'notify'; text: string };
+
+/** Put a Device back to how it was after `after` minutes, or once the Only if stops holding (ADR 0017),
+ * unless someone changed it meanwhile. Only for a toggle, set or step on one Device. */
+export type Undo = { after: number } | { while: true };
 
 /** A part as the Engine sends it back: with its plain-language label. */
 export type Labelled<T> = T & { label: string };
@@ -293,7 +297,14 @@ export interface Run {
 	started: number;
 	ended: number | null;
 	outcome: RunOutcome;
-	steps: { label: string; result: 'done' | 'failed' | 'not_run'; detail?: string; wait?: boolean }[];
+	steps: {
+		label: string;
+		result: 'done' | 'failed' | 'not_run';
+		detail?: string;
+		wait?: boolean;
+		/** What became of putting it back (ADR 0017), e.g. "Will be put back after 10 min", "Put back to how it was". */
+		undo?: string;
+	}[];
 	/** e.g. which Condition wasn't met. */
 	note: string;
 }

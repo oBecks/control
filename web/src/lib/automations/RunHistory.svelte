@@ -44,6 +44,7 @@
 									<li class={step.result}>
 										<span>{step.label}</span>
 										<small>{RESULTS[step.result]}{step.detail ? `: ${step.detail}` : ''}</small>
+										{#if step.undo}<small>{step.undo}</small>{/if}
 									</li>
 								{/each}
 							</ol>

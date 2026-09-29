@@ -5,7 +5,7 @@
 	import ActionFields from '$lib/hotkeys/ActionFields.svelte';
 	import { actionOf, choiceOf, DEFAULT_PARAMS, type Choice, type Params } from '$lib/hotkeys/keys';
 	import { home } from '$lib/home.svelte';
-	import type { AutomationAction } from '$lib/types';
+	import type { AutomationAction, Undo } from '$lib/types';
 	import Button from '$lib/ui/Button.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
 	import { automations } from './automations.svelte';
@@ -43,8 +43,15 @@
 	let fieldsReady = $state(false);
 	let wait = $state(splitSeconds(initial?.do === 'wait' ? initial.seconds : 600));
 	let text = $state(initial?.do === 'notify' ? initial.text : '');
+	let undoKind = $state<'none' | 'after' | 'while'>(
+		control?.undo ? ('while' in control.undo ? 'while' : 'after') : 'none'
+	);
+	let undoMinutes = $state(control?.undo && 'after' in control.undo ? control.undo.after : 10);
 	let problem = $state<string | null>(null);
 	let saving = $state(false);
+
+	/** A toggle, set or step changes a state that can be put back; a button press or an app opening can't. */
+	const undoable = $derived(kind === 'control' && !['press', 'open_app'].includes(actionOf(choice, params).do));
 
 	const built = $derived.by((): AutomationAction | null => {
 		if (kind === 'wait') {
@@ -55,7 +62,15 @@
 		if (kind === 'run') return runs ? { do: 'run', target: runs } : null;
 		if (kind === 'set_scene') return sets ? { do: 'set_scene', target: sets } : null;
 		// ActionFields offers no Automations or Scenes here, so a control Action never runs or sets one.
-		return fieldsReady ? { ...actionOf(choice, params), target } : null;
+		if (!fieldsReady) return null;
+		const undo: Undo | undefined = !undoable
+			? undefined
+			: undoKind === 'after'
+				? { after: Math.round(undoMinutes) }
+				: undoKind === 'while'
+					? { while: true }
+					: undefined;
+		return { ...actionOf(choice, params), target, ...(undo ? { undo } : {}) };
 	});
 
 	$effect(() => {
@@ -90,6 +105,31 @@
 
 	{#if kind === 'control'}
 		<ActionFields bind:target bind:choice bind:params onready={(r) => (fieldsReady = r)} />
+		{#if undoable}
+			<label class="field">
+				<span>Afterwards</span>
+				<select bind:value={undoKind}>
+					<option value="none">Leave it</option>
+					<option value="after">Put it back after a while</option>
+					<option value="while">Put it back when the Only if stops holding</option>
+				</select>
+			</label>
+			{#if undoKind === 'after'}
+				<div class="amounts">
+					<span>Put it back after</span>
+					<input type="number" min="1" max="1440" step="1" bind:value={undoMinutes} aria-label="Minutes" required />
+					<span>min</span>
+				</div>
+			{/if}
+			{#if undoKind !== 'none'}
+				<p class="hint">
+					Back to how the device was just before, and only if it's still as this left it: if someone changed it
+					meanwhile it's left alone.
+					{undoKind === 'while' ? 'Needs an Only if; Control looks at it about once a minute.' : ''}
+					One device at a time, not a group.
+				</p>
+			{/if}
+		{/if}
 	{:else if kind === 'set_scene'}
 		{#if home.scenes.length}
 			<label class="field">
