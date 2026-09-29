@@ -63,6 +63,10 @@
 	const hotkeyCount = $derived(saved ? hotkeys.forTarget(saved.uid).length : 0);
 
 	const changed = $derived(!!draft && JSON.stringify(plain(draft)) !== original);
+	/** Why Create / Save can't be pressed yet. */
+	const missing = $derived(
+		!draft?.name.trim() ? 'Give the automation a name.' : !draft.actions.length ? 'Add at least one Then.' : ''
+	);
 	const actions = $derived(dragged ?? draft?.actions ?? []);
 
 	$effect(() => automations.start());
@@ -388,10 +392,11 @@
 
 		{#if changed || isNew}
 			<div class="bar">
-				<Button variant="primary" disabled={saving || !draft.name.trim() || !draft.actions.length} onclick={save}>
+				<Button variant="primary" disabled={saving || !!missing} onclick={save}>
 					{isNew ? 'Create automation' : 'Save'}
 				</Button>
 				<Button variant="ghost" onclick={cancel}>Cancel</Button>
+				{#if missing}<p class="missing" role="status">{missing}</p>{/if}
 			</div>
 		{/if}
 
@@ -600,12 +605,19 @@
 		inset-block-end: calc(80px + env(safe-area-inset-bottom));
 		z-index: 5;
 		display: flex;
+		flex-wrap: wrap;
 		gap: var(--s-2);
 		padding: var(--s-3);
 		border-radius: var(--r-lg);
 		background: color-mix(in oklab, var(--surface) 92%, transparent);
 		backdrop-filter: blur(12px);
 		box-shadow: var(--shadow-2);
+	}
+	.missing {
+		flex-basis: 100%;
+		margin: 0;
+		color: var(--text-2);
+		font-size: var(--fs-sm);
 	}
 	@media (min-width: 960px) {
 		.bar {

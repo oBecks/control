@@ -1,12 +1,11 @@
 <script lang="ts">
 	// "Add item": a Heading, Clock or Who’s home at once, or ticked Tiles, Big Controls, Remote Pads, Single Buttons,
-	// Run Buttons or Scene Buttons. The Dashboard places them.
+	// Scene Buttons or Run Buttons. The Dashboard places them.
 	import { ArrowLeft, Check, Clock, Heading, Search, Users, X } from '@lucide/svelte';
 	import AirVent from '@lucide/svelte/icons/air-vent';
 	import Gamepad2 from '@lucide/svelte/icons/gamepad-2';
 	import Palette from '@lucide/svelte/icons/palette';
 	import Play from '@lucide/svelte/icons/play';
-	import Sparkles from '@lucide/svelte/icons/sparkles';
 	import Workflow from '@lucide/svelte/icons/workflow';
 	import SunDim from '@lucide/svelte/icons/sun-dim';
 	import type { Component } from 'svelte';
@@ -43,13 +42,14 @@
 
 	/** One thing to tick. `key` is its itemKey, whatever size it's added at. */
 	type Row = { key: string; name: string; icon: Component; make: () => NewDashboardItem };
-	type Kind = 'tiles' | 'controls' | 'remotes' | 'buttons';
+	type Kind = 'tiles' | 'controls' | 'remotes' | 'buttons' | 'scenes';
 
 	const KINDS: { value: Kind; label: string }[] = [
 		{ value: 'tiles', label: 'Tiles' },
 		{ value: 'controls', label: 'Big controls' },
 		{ value: 'remotes', label: 'Remote pads' },
-		{ value: 'buttons', label: 'Buttons' }
+		{ value: 'buttons', label: 'Buttons' },
+		{ value: 'scenes', label: 'Scenes' }
 	];
 	const SIZES: Record<Kind, { value: string; label: string }[]> = {
 		tiles: [
@@ -65,6 +65,10 @@
 		buttons: [
 			{ value: 'small', label: 'Small' },
 			{ value: 'wide', label: 'Wide' }
+		],
+		scenes: [
+			{ value: 'small', label: 'Small' },
+			{ value: 'wide', label: 'Wide' }
 		]
 	};
 	const TILE_CELLS: Record<string, [number, number]> = { small: [1, 2], wide: [2, 2], large: [2, 4] };
@@ -77,24 +81,31 @@
 		tiles: ['tile', 'tiles'],
 		controls: ['big control', 'big controls'],
 		remotes: ['remote pad', 'remote pads'],
-		buttons: ['button', 'buttons']
+		buttons: ['button', 'buttons'],
+		scenes: ['scene button', 'scene buttons']
 	};
 	const EMPTY: Record<Kind, string> = {
 		tiles: 'No devices yet: add some first.',
 		controls: 'No lights or ACs yet.',
 		remotes: 'No TVs, fans or streamers with buttons yet.',
-		buttons: 'No TVs, fans or streamers with buttons, and no automations or scenes, yet.'
+		buttons: 'No TVs, fans or streamers with buttons, and no automations, yet.',
+		scenes: 'No scenes yet: make one on the Scenes page.'
 	};
-	/** Buttons: the Automations' Run Buttons, or the Scenes' Scene Buttons, in place of a Device's buttons. */
+	/** Buttons: the Automations' Run Buttons, in place of a Device's buttons. */
 	const AUTOMATIONS = 'automations';
-	const SCENES = 'scenes';
 
 	let kind = $state<Kind>('tiles');
 	let query = $state('');
 	let picked = $state<string[]>([]);
 	/** Each kind's size for new items; each one's width and height can be changed afterwards. */
-	let sizes = $state<Record<Kind, string>>({ tiles: 'wide', controls: '', remotes: 'compact', buttons: 'small' });
-	/** Buttons: the Device whose buttons are listed, or AUTOMATIONS or SCENES. */
+	let sizes = $state<Record<Kind, string>>({
+		tiles: 'wide',
+		controls: '',
+		remotes: 'compact',
+		buttons: 'small',
+		scenes: 'small'
+	});
+	/** Buttons: the Device whose buttons are listed, or AUTOMATIONS. */
 	let buttonsOf = $state<string | null>(null);
 
 	const matches = (name: string) => name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
@@ -170,6 +181,20 @@
 				}
 			];
 		}
+		if (kind === 'scenes') {
+			const w = sizes.scenes === 'wide' ? 2 : 1;
+			return [
+				{
+					title: 'Set a scene',
+					rows: scenes.map((sc) => ({
+						key: `scene:${sc.uid}`,
+						name: sc.name,
+						icon: sceneIcon(sc.icon),
+						make: () => sceneItem(sc.uid, w)
+					}))
+				}
+			];
+		}
 		const w = sizes.buttons === 'wide' ? 2 : 1;
 		if (buttonsOf === AUTOMATIONS) {
 			return [
@@ -180,19 +205,6 @@
 						name: a.name,
 						icon: Play,
 						make: () => runItem(a.uid, w)
-					}))
-				}
-			];
-		}
-		if (buttonsOf === SCENES) {
-			return [
-				{
-					title: 'Set a scene',
-					rows: scenes.map((sc) => ({
-						key: `scene:${sc.uid}`,
-						name: sc.name,
-						icon: sceneIcon(sc.icon),
-						make: () => sceneItem(sc.uid, w)
 					}))
 				}
 			];
@@ -274,10 +286,10 @@
 
 	{#if kind === 'buttons' && !buttonsOf}
 		<p class="lead">
-			Pick a remote or streamer, then the buttons to put on the dashboard on their own. Or automations or scenes, for
-			buttons that run or set them.
+			Pick a remote or streamer, then the buttons to put on the dashboard on their own. Or automations, for buttons that
+			run them.
 		</p>
-		{#if remotes.length || automations.list.length || scenes.length}
+		{#if remotes.length || automations.list.length}
 			<ul>
 				{#each remotes as d (d.uid)}
 					<li>
@@ -292,14 +304,6 @@
 						<button type="button" class="pick" onclick={() => (buttonsOf = AUTOMATIONS)}>
 							<span class="badge" aria-hidden="true"><Workflow size={16} strokeWidth={2.2} /></span>
 							<span class="text"><span class="name">Automations</span></span>
-						</button>
-					</li>
-				{/if}
-				{#if scenes.length}
-					<li>
-						<button type="button" class="pick" onclick={() => (buttonsOf = SCENES)}>
-							<span class="badge" aria-hidden="true"><Sparkles size={16} strokeWidth={2.2} /></span>
-							<span class="text"><span class="name">Scenes</span></span>
 						</button>
 					</li>
 				{/if}
@@ -318,7 +322,7 @@
 				}}
 			>
 				<ArrowLeft size={16} strokeWidth={2.4} />
-				{buttonsOf === AUTOMATIONS ? 'Automations' : buttonsOf === SCENES ? 'Scenes' : home.nameOf(buttonsOf ?? '')}
+				{buttonsOf === AUTOMATIONS ? 'Automations' : home.nameOf(buttonsOf ?? '')}
 			</button>
 		{/if}
 
