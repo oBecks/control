@@ -17,8 +17,11 @@ A Trigger is one of:
                                                   Assistant or an Automation (ADR 0013)
     {"type": "person", "target": "person:…", "home": true}   a Person arrives home (false: leaves)
     {"type": "home", "occupied": true}           the first person arrives home (false: the last leaves)
+    {"type": "pc", "event": "wakes"}             something happens to this PC (PC_EVENTS, ADR 0015)
 State, app and offline are Device Triggers: the Engine listens to the Devices they name (ADR 0011,
-`api/listening.py`). Person and home are Presence Triggers (ADR 0014, `api/people.py`).
+`api/listening.py`). Person and home are Presence Triggers (ADR 0014, `api/people.py`). A PC Trigger
+fires when Control starts, or when the Desktop App hears Windows say the PC woke, went to sleep, was
+locked or unlocked, or is shutting down (`api/automations.py`, `desktop/events.py`).
 
 A Condition is one of:
     {"type": "state", "target": uid, "on": true}          a Device or Group is on (a Group: any member)
@@ -51,10 +54,18 @@ from . import hotkeys, sun
 
 DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 EVERY_DAY = list(range(7))
-TRIGGERS = ("time", "sun", "state", "app", "offline", "scene", "person", "home")
+TRIGGERS = ("time", "sun", "state", "app", "offline", "scene", "person", "home", "pc")
 DEVICE_TRIGGERS = ("state", "app", "offline")
 PRESENCE = ("person", "home")  # Presence Triggers and Conditions (ADR 0014)
 CONDITIONS = ("state", "app", "time", "days", "sun", "scene", "person", "home")
+PC_EVENTS = {
+    "starts": "Control starts",
+    "wakes": "The PC wakes from sleep",
+    "unlocks": "You unlock the PC or sign in",
+    "locks": "The PC is locked",
+    "sleeps": "The PC goes to sleep",
+    "shuts_down": "The PC shuts down or you sign out",
+}
 CONTROL = ("toggle", "set", "step", "press", "open_app")
 MAX_WAIT = 24 * 3600
 MAX_STAYS = 24 * 60  # minutes a state Trigger can ask it to stay so
@@ -123,6 +134,10 @@ def check_trigger(t: dict, location: sun.Location | None) -> dict:
         return {"type": "scene", "target": _target(t)}
     if kind in PRESENCE:
         return _presence(t, "Trigger")
+    if kind == "pc":
+        if t.get("event") not in PC_EVENTS:
+            raise ValueError(f"a PC Trigger is one of: {', '.join(PC_EVENTS)}")
+        return {"type": "pc", "event": t["event"]}
     raise ValueError(f"a Trigger is one of: {', '.join(TRIGGERS)}")
 
 
@@ -320,6 +335,8 @@ def trigger_label(t: dict, names: dict[str, str], app_names: dict[str, str] | No
         return f"{name} {'arrives home' if t['home'] else 'leaves home'}"
     if t["type"] == "home":
         return "The first person arrives home" if t["occupied"] else "The last person leaves home"
+    if t["type"] == "pc":
+        return PC_EVENTS[t["event"]]
     return t["type"]
 
 

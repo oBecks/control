@@ -1,8 +1,10 @@
 import datetime as dt
 import re
 import time
+from contextlib import closing
 
 import pytest
+from fastapi.testclient import TestClient
 
 from control.api import automations as automations_api
 from control.engine import automations, sun
@@ -664,3 +666,65 @@ def test_a_device_that_doesnt_answer_leaves_its_scene_not_active(home, runner):
         runner.run(Registry(), a["uid"], "test")
         runner.join(a["uid"])
         assert c.get(f"/api/automations/{a['uid']}/runs").json()[0]["outcome"] == outcome
+
+
+# --- The PC (ADR 0015) -----------------------------------------------------------------------
+
+
+def notify_only():
+    return [{"do": "notify", "text": "Hello"}]
+
+
+def test_a_pc_trigger_says_what_happens_and_only_known_events(home):
+    c = home["client"]
+    a = create(c, name="Wake", triggers=[{"type": "pc", "event": "wakes"}], actions=notify_only())
+    assert a["triggers"][0]["label"] == "The PC wakes from sleep"
+    assert a["summary"] == "When: the PC wakes from sleep. Then: Notify: Hello."
+    assert create(c, name="In", triggers=[{"type": "pc", "event": "unlocks"}],
+                  actions=notify_only())["summary"].startswith("When: you unlock the PC or sign in.")
+    body = {"name": "Bad", "triggers": [{"type": "pc", "event": "explodes"}], "actions": notify_only()}
+    resp = c.post("/api/automations", json=body)
+    assert resp.status_code == 422 and "starts, wakes, unlocks, locks, sleeps, shuts_down" in resp.json()["detail"]
+
+
+def test_the_pc_events_start_only_the_automations_they_trigger(home, runner):
+    c = home["client"]
+    wakes = create(c, name="Wake", triggers=[{"type": "pc", "event": "wakes"}], actions=notify_only())
+    locks = create(c, name="Lock", triggers=[{"type": "pc", "event": "locks"}], actions=notify_only())
+    off = create(c, name="Off", triggers=[{"type": "pc", "event": "wakes"}], actions=notify_only(), enabled=False)
+    with closing(Registry()) as r:
+        assert runner.pc_event(r, "wakes") == [wakes["uid"]]
+    runner.join(wakes["uid"])
+    run = c.get(f"/api/automations/{wakes['uid']}/runs").json()[0]
+    assert run["cause"] == "The PC wakes from sleep" and run["outcome"] == "succeeded"
+    assert c.get(f"/api/automations/{locks['uid']}/runs").json() == []
+    assert c.get(f"/api/automations/{off['uid']}/runs").json() == []
+
+
+def test_control_starting_starts_its_automations(home, runner):
+    c = home["client"]
+    a = create(c, name="Hello", triggers=[{"type": "pc", "event": "starts"}], actions=notify_only())
+    runner.start()
+    runner.join(a["uid"])
+    assert c.get(f"/api/automations/{a['uid']}/runs").json()[0]["cause"] == "Control starts"
+
+
+def test_a_pc_event_respects_the_conditions(home, runner):
+    c = home["client"]
+    a = create(c, name="Only Sundays", triggers=[{"type": "pc", "event": "unlocks"}],
+               conditions=[{"type": "days", "days": [(dt.date.today().weekday() + 1) % 7]}], actions=notify_only())
+    assert c.post("/api/pc-events", json={"event": "unlocks"}).status_code == 202
+    runner.join(a["uid"])
+    assert c.get(f"/api/automations/{a['uid']}/runs").json()[0]["outcome"] == "skipped"
+
+
+def test_the_desktop_app_tells_the_engine_only_from_this_pc(home, runner):
+    c = home["client"]
+    a = create(c, name="Bye", triggers=[{"type": "pc", "event": "sleeps"}], actions=notify_only())
+    resp = c.post("/api/pc-events", json={"event": "sleeps", "wait": 3})  # held for the Run, which is quick
+    assert resp.status_code == 202 and resp.json() == {"started": [a["uid"]]}
+    assert c.get(f"/api/automations/{a['uid']}/runs").json()[0]["outcome"] == "succeeded"
+    assert c.post("/api/pc-events", json={"event": "starts"}).status_code == 422  # Control's own
+    assert c.post("/api/pc-events", json={"event": "nope"}).status_code == 422
+    phone = TestClient(c.app, base_url="http://localhost", client=("192.168.1.20", 50000))
+    assert phone.post("/api/pc-events", json={"event": "sleeps"}).status_code in (401, 403)

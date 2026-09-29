@@ -625,3 +625,16 @@ def test_people_and_presence_in_automations(home, runner, monkeypatch):
     assert ok(srv, "edit_automation", automation="Welcome", **kept)["summary"] == made["summary"]
     assert "says `home`" in error(srv, "create_automation", name="x", triggers=[{"type": "home"}],
                                   actions=[{"action": "notify", "text": "Hi"}])
+
+
+def test_pc_events_in_automations(home, runner):
+    srv, *_ = home
+    made = ok(srv, "create_automation", name="Good night", triggers=[{"type": "pc", "pc": "sleeps"}],
+              actions=[{"action": "notify", "text": "Bye"}])
+    assert made["summary"] == "When: the PC goes to sleep. Then: Notify: Bye."
+    got = ok(srv, "get_automation", automation="Good night")
+    kept = [{f: v for f, v in x.items() if f != "label"} for x in got["triggers"]]
+    assert kept == [{"type": "pc", "pc": "sleeps"}]
+    assert ok(srv, "edit_automation", automation="Good night", triggers=kept)["summary"] == made["summary"]
+    assert "says what happens to the PC" in error(srv, "create_automation", name="x", triggers=[{"type": "pc"}],
+                                                  actions=[{"action": "notify", "text": "Hi"}])
