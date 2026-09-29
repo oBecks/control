@@ -20,6 +20,8 @@ set Automations up, phones included, like Groups. Device logic stays in `app.py`
 """
 
 import datetime as dt
+import hmac
+import secrets
 import sys
 import threading
 import time
@@ -27,13 +29,14 @@ from contextlib import closing
 from dataclasses import dataclass, field
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from ..engine import automations, streamer, sun
 from ..engine.errors import DeviceUnreachable
 from ..engine.registry import Automation, Registry, Run
 from . import hotkeys as hotkeys_api
+from . import lan
 from . import listening as listening_api
 from . import people as people_api
 from . import scenes as scenes_api
@@ -51,6 +54,9 @@ RETRY_SECONDS = 30  # after a check for due Triggers failed
 WAIT_CHUNK = 30  # a Wait looks at the clock at least this often (seconds)
 WATCH_SECONDS = 25
 BY_HAND = "Run by hand"
+HOOKS = "/api/hooks/"  # a web link is this and its secret (ADR 0016)
+LOCAL_URL = "http://127.0.0.1:8321"  # where a web link points while phone access is off
+GUESSES = (20, 60)  # a client gets this many wrong web links in this many seconds before it's held off
 
 
 def clock() -> float:
@@ -624,12 +630,30 @@ def check(r: Registry, triggers: list, conditions: list, actions: list, whole: b
     up starting itself."""
     where = location(r)
     triggers = _numbered("Trigger", triggers, lambda t: _check_trigger(r, t, where))
+    triggers = _with_link(r, triggers, uid)
     conditions = _numbered("Condition", conditions, lambda c: _check_condition(r, c, where))
     actions = _numbered("Action", actions, lambda a: _check_action(r, a))
     _check_loop(r, uid or NEW, triggers, actions)
     if whole:
         automations.check_counts(triggers, conditions, actions)
     return triggers, conditions, actions
+
+
+def _with_link(r: Registry, triggers: list[dict], uid: str | None) -> list[dict]:
+    """A web Trigger gets its secret: the Automation's own if it has one, else a new one (ADR 0016).
+    At most one per Automation, since the link is what opens it."""
+    webs = [i for i, t in enumerate(triggers) if t["type"] == "web"]
+    if not webs:
+        return triggers
+    if len(webs) > 1:
+        raise ValueError(f"Trigger {webs[1] + 1}: an Automation has one web link")
+    token = None
+    if uid:
+        try:
+            token = next((t["token"] for t in r.get_automation(uid).triggers if t["type"] == "web"), None)
+        except LookupError:
+            pass
+    return [t | {"token": token or secrets.token_urlsafe(32)} if t["type"] == "web" else t for t in triggers]
 
 
 def _check_loop(r: Registry, uid: str, triggers: list[dict], actions: list[dict]) -> None:
@@ -695,6 +719,8 @@ class AutomationOut(BaseModel):
     summary: str = Field(description="the whole Automation in plain language")
     attention: str | None = Field(description="why it switched itself off, e.g. a Device it used was forgotten")
     made_by: str
+    web_link: str | None = Field(description="the address that starts it, when it has a web Trigger; anyone on the "
+                                             "home network who has it can start the Automation")
     running: bool
     last_run: RunOut | None
     next_run: float | None = Field(description="when a Trigger fires next, if it's on and has a timed Trigger")
@@ -720,9 +746,16 @@ def _out(r: Registry, a: Automation, last: Run | None = None, now: float | None 
     return AutomationOut(
         uid=a.uid, name=a.name, enabled=a.enabled, match=a.match, triggers=triggers, conditions=conditions,
         actions=actions, summary=_summary(a.match, triggers, conditions, actions), attention=a.attention,
-        made_by=a.made_by, running=runner.running(a.uid), last_run=_run_out(last) if last else None,
+        made_by=a.made_by, web_link=_web_link(a), running=runner.running(a.uid), last_run=_run_out(last) if last else None,
         next_run=next_run,
     )
+
+
+def _web_link(a: Automation) -> str | None:
+    token = next((t["token"] for t in a.triggers if t["type"] == "web"), None)
+    if token is None:
+        return None
+    return f"{lan.listener.url or LOCAL_URL}{HOOKS}{token}"
 
 
 def _mid_sentence(label: str) -> str:
@@ -874,6 +907,67 @@ def pc_event(body: PcEventIn, request: Request, r: Registry = Depends(registry))
     for uid in started:
         runner.join(uid, max(deadline - time.monotonic(), 0))
     return {"started": started}
+
+
+# --- Web links ------------------------------------------------------------------------------
+
+_guesses: dict[str, list[float]] = {}
+
+
+def _held_off(ip: str) -> bool:
+    now = time.monotonic()
+    recent = [t for t in _guesses.get(ip, []) if now - t < GUESSES[1]]
+    _guesses[ip] = recent
+    return len(recent) >= GUESSES[0]
+
+
+def _guessed(ip: str) -> None:
+    _guesses.setdefault(ip, []).append(time.monotonic())
+    if len(_guesses) > 1000:  # a scan from many addresses mustn't grow this for ever
+        for k in [k for k, v in _guesses.items() if time.monotonic() - max(v, default=0) > GUESSES[1]]:
+            del _guesses[k]
+
+
+@router.api_route(HOOKS + "{token}", methods=["GET", "POST"], include_in_schema=False)
+def open_web_link(token: str, request: Request, r: Registry = Depends(registry)):
+    """A web link (ADR 0016): starts the Automation whose web Trigger has this secret, checking its
+    Conditions like any Trigger. Open to anyone on the home network who has the secret, no Approved
+    Browser needed, so a bookmark, an NFC tag or a Shortcut can use it. A browser (Accept: text/html)
+    gets a small page, anything else JSON."""
+    ip = request.client.host if request.client else ""
+    if _held_off(ip):
+        return _link_answer(request, 429, "Too many wrong links. Try again in a minute.")
+    found = next((a for a in r.automations()
+                  if any(t["type"] == "web" and hmac.compare_digest(t["token"], token) for t in a.triggers)), None)
+    if found is None:
+        _guessed(ip)
+        return _link_answer(request, 404, "There's no such link. It may have been renewed or deleted.")
+    if not found.enabled:
+        return _link_answer(request, 409, f"{found.name} is switched off.")
+    runner.run(r, found.uid, automations.trigger_label({"type": "web"}, {}))
+    return _link_answer(request, 202, f"Started {found.name}.", found.name)
+
+
+def _link_answer(request: Request, status: int, message: str, automation: str | None = None):
+    if "text/html" in request.headers.get("accept", ""):
+        from html import escape
+
+        page = (f'<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width">'
+                f'<title>Control</title><body style="font:20px system-ui;margin:3rem 1.5rem;text-align:center">'
+                f"<p>{escape(message)}</p>")
+        return HTMLResponse(page, status_code=status)
+    return JSONResponse(status_code=status, content={"detail" if status >= 400 else "started": automation or message})
+
+
+@router.post("/api/automations/{uid}/web-link/renew", response_model=AutomationOut)
+def renew_web_link(uid: str, r: Registry = Depends(registry)):
+    """A new secret: the old link stops working."""
+    a = r.get_automation(uid)
+    if not any(t["type"] == "web" for t in a.triggers):
+        raise ValueError("this Automation has no web link")
+    r.update_automation(uid, triggers=[t | {"token": secrets.token_urlsafe(32)} if t["type"] == "web" else t
+                                       for t in a.triggers])
+    return get_automation(uid, r)
 
 
 # --- Location ------------------------------------------------------------------------------

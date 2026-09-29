@@ -345,7 +345,7 @@ def scene_summary(sc: dict, active: dict | None = None) -> dict:
 class TriggerIn(BaseModel):
     """What starts an Automation."""
 
-    type: Literal["time", "sun", "state", "app", "offline", "scene", "person", "home", "pc"]
+    type: Literal["time", "sun", "state", "app", "offline", "scene", "person", "home", "pc", "web"]
     at: str | None = Field(None, description='time: "HH:MM", 24-hour, the PC\'s local time')
     event: Literal["sunrise", "sunset"] | None = Field(None, description="sun")
     offset_minutes: int = Field(0, description="sun: minutes before (negative) or after, at most 180")
@@ -362,6 +362,7 @@ class TriggerIn(BaseModel):
     person: str | None = Field(None, description="person: a Person's name or uid")
     home: bool | None = Field(None, description="person: true when they arrive home, false when they leave; "
                                                 "home: true when the first person arrives, false when the last leaves")
+    # web: no fields. Its secret link is made by the Engine and shown in the app (Automations), not here
     pc: Literal["starts", "wakes", "unlocks", "locks", "sleeps", "shuts_down"] | None = Field(
         None, description="pc: Control starts (with Windows, say), the PC wakes from sleep, you unlock it or sign "
                           "in, it's locked, it goes to sleep, or it shuts down or you sign out. Going to sleep and "
@@ -455,6 +456,8 @@ def trigger_in(t: dict) -> dict:
         return {"type": kind, "home": t["occupied"], "label": label}
     if kind == "pc":
         return {"type": kind, "pc": t["event"], "label": label}
+    if kind == "web":
+        return {"type": kind, "label": label}
     if t["type"] == "time":
         return _without_none({"type": "time", "at": t["at"], "days": _days_in(t["days"]), "label": t["label"]})
     return _without_none({"type": "sun", "event": t["event"], "offset_minutes": t["offset"],
@@ -877,6 +880,7 @@ def create_server(engine: Engine) -> MCPServer:
                                 else scene_part(t, "Trigger") if t.type == "scene"
                                 else presence_part(t, "Trigger") if t.type in ("person", "home")
                                 else pc_trigger(t) if t.type == "pc"
+                                else {"type": "web"} if t.type == "web"
                                 else automation_trigger(t) for t in triggers]
         if conditions is not None:
             body["conditions"] = [automation_condition(c) for c in conditions]
