@@ -110,6 +110,10 @@ _Avoid_: Filter, guard, constraint
 One step in the "Then" of an Automation, done in order: control a Device or Group, set a Scene, run another Automation (skipping its Only if, without waiting for it), wait, or notify.
 _Avoid_: Step, command, task
 
+**Put back**:
+An Action's option to return a Device to how it was just before, after some minutes or once the Automation's Only if stops holding. Only if the Device is still as the Action left it; if someone changed it meanwhile it's left alone (ADR 0017). One Device at a time, for a toggle, set or step.
+_Avoid_: Undo, revert, rollback
+
 **Run**:
 One time an Automation went: what triggered it, what each Action did, and how it ended (succeeded, partly failed, skipped by its Conditions, missed while the PC was off, interrupted, or started again). A Trigger firing during a Run restarts it: the old Run ends as started again.
 _Avoid_: Execution, job, history entry

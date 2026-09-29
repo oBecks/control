@@ -406,6 +406,11 @@ class ActionIn(BaseModel):
     fan: str | None = Field(None, description="set: an AC's fan speed")
     minutes: float | None = Field(None, description="wait: how long, e.g. 10 or 0.5")
     text: str | None = Field(None, description="notify: what the notification says")
+    undo_after_minutes: int | None = Field(None, description="on, off, toggle, set, *_up/*_down, for one device "
+                                                             "(not a Group): put it back to how it was after this "
+                                                             "many minutes (1-1440), unless someone changed it")
+    undo_while: bool = Field(False, description="the same, but put it back once the Automation's Conditions stop "
+                                                "holding (it needs Conditions; noticed within a minute)")
 
 
 def automation_trigger(t: TriggerIn) -> dict:
@@ -488,6 +493,16 @@ _SET_FIELDS = {"brightness": "brightness", "kelvin": "kelvin", "mode": "mode", "
 
 
 def action_in(a: dict) -> dict:
+    out = _action_in(a)
+    undo = a.get("undo") or {}
+    if "after" in undo:
+        out["undo_after_minutes"] = undo["after"]
+    elif undo:
+        out["undo_while"] = True
+    return out
+
+
+def _action_in(a: dict) -> dict:
     do, label = a["do"], a["label"]
     if do == "wait":
         return {"action": "wait", "minutes": a["seconds"] / 60, "label": label}
@@ -977,6 +992,12 @@ def create_server(engine: Engine) -> MCPServer:
         body = hotkey_action(d, a.action, a.step, a.button, a.app,
                              {"brightness": a.brightness, "kelvin": a.kelvin, "mode": a.mode,
                               "target_temp": a.temperature, "fan": a.fan, "color": a.color})
+        if a.undo_after_minutes is not None and a.undo_while:
+            raise ToolError("Put it back after some minutes, or while the Conditions hold, not both.")
+        if a.undo_after_minutes is not None:
+            body["undo"] = {"after": a.undo_after_minutes}
+        elif a.undo_while:
+            body["undo"] = {"while": True}
         return body | {"target": d["uid"]}
 
     @server.tool(title="List People", annotations=READ)
@@ -1027,8 +1048,10 @@ def create_server(engine: Engine) -> MCPServer:
         press a button, open an app), set a Scene (`set_scene`, `device` naming the Scene), run another
         Automation (`run_automation`: it skips that one's Conditions, and this one goes on without
         waiting for it). They can't start each other in a loop, by running each other or by setting a
-        Scene another one starts on. Or wait some minutes, or notify (a Windows notification on this PC and a notice in the app). Tell
-        the user the returned `summary`."""
+        Scene another one starts on. Or wait some minutes, or notify (a Windows notification on this PC and a notice in the app).
+        An Action on one device (not a Group) can be put back to how the device was: `undo_after_minutes`,
+        or `undo_while` once the Conditions stop holding; if someone changed it meanwhile it's left alone.
+        Tell the user the returned `summary`."""
         body = {"name": name, "match": match, "enabled": enabled, "by_assistant": True}
         body |= automation_body(triggers or [], conditions or [], actions)
         return automation_summary(engine.call("POST", "/automations", body))

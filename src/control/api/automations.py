@@ -32,9 +32,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-from ..engine import automations, streamer, sun
+from ..engine import automations, scenes, streamer, sun
 from ..engine.errors import DeviceUnreachable
-from ..engine.registry import Automation, Registry, Run
+from ..engine.registry import Automation, Registry, Run, Undo
 from . import hotkeys as hotkeys_api
 from . import lan
 from . import listening as listening_api
@@ -56,6 +56,8 @@ WATCH_SECONDS = 25
 BY_HAND = "Run by hand"
 HOOKS = "/api/hooks/"  # a web link is this and its secret (ADR 0016)
 LOCAL_URL = "http://127.0.0.1:8321"  # where a web link points while phone access is off
+WHILE_EVERY = 60  # seconds between looks at the Only if of Devices waiting to be put back
+UNDO_TRIES = 5  # a put-back that fails is tried again every RETRY_SECONDS, this many times
 GUESSES = (20, 60)  # a client gets this many wrong web links in this many seconds before it's held off
 
 
@@ -102,6 +104,9 @@ class Runner:
         self._thread: threading.Thread | None = None
         self._closing = False
         self._last_notice = 0
+        self._while_at = 0.0  # when the Undos waiting on an Only if were last looked at
+        self._undo_retry: dict[int, float] = {}  # Undo id -> not before, after a put-back failed
+        self._undo_tries: dict[int, int] = {}
 
     # The scheduler
 
@@ -149,6 +154,7 @@ class Runner:
                     self.check(r, last, now)
                     last = now
                     r.set_setting(LAST_CHECK, now)
+                    self.undo_check(r, now)
                     due = self.next_due(r, now)
                 except Exception as exc:  # e.g. the database was locked: one bad pass mustn't stop every Automation
                     print(f"Automations: checking for due Triggers failed, trying again soon: {exc!r}", file=sys.stderr)
@@ -194,7 +200,7 @@ class Runner:
             for t in a.triggers
             if (at := automations.next_occurrence(t, _local(max(now, a.armed)), where)) is not None
         ]
-        return min(times, default=None)
+        return min([*times, *self.undo_due(r)], default=None)
 
     def recover(self, r: Registry) -> None:
         """Runs left running when Control last stopped (it quit, or the PC turned off) were interrupted."""
@@ -285,17 +291,126 @@ class Runner:
                     step["detail"] = problem
                     failed.append(f"{step['label']} failed: {problem}")
             else:
+                undo = action.get("undo")
+                before = _remember(r, action["target"]) if undo else None
                 problem = _control(r, action, a.uid, active.hops)
                 step["result"] = "failed" if problem else "done"
                 if problem:
                     step["detail"] = problem
                     failed.append(f"{step['label']} failed: {problem}")
+                elif undo:
+                    step["undo"] = self._schedule_undo(r, active, i, action, undo, before)
             r.update_run(active.run_id, steps)
         if failed:
             r.update_run(active.run_id, steps, "partly_failed")
             self.notify(r, a.name, "; ".join(failed), a.uid)
         else:
             r.update_run(active.run_id, steps, "succeeded")
+
+    # Putting Devices back (ADR 0017)
+
+    def _schedule_undo(self, r: Registry, active: _Active, index: int, action: dict, undo: dict,
+                       before: tuple[dict | None, str]) -> str:
+        """Remember how the Device was and how the Action left it, to put it back when due; what the
+        Run's step says about it."""
+        state, why = before
+        if state is None:
+            return f"Can't be put back: couldn't tell how it was ({why})"
+        try:
+            t = hotkeys_api.target(r, action["target"])
+            reading = _reading(r, action["target"])
+            after = scenes.capture(reading, scenes.settable(t.control, t.settable), t.apps)
+        except Exception as exc:
+            return f"Can't be put back: couldn't tell how it ended up ({exc})"
+        if scenes.matches(state, reading):
+            return "Nothing to put back: it was already like that"
+        due = clock() + undo["after"] * 60 if "after" in undo else None
+        r.add_undo(active.automation.uid, active.run_id, index, action["target"], state, after, due)
+        with self._cond:
+            self._revision += 1  # the scheduler works out when to look again
+            self._cond.notify_all()
+        return f"Will be put back after {automations.duration_label(undo['after'] * 60)}" if due else (
+            "Will be put back when the Only if stops holding")
+
+    def undo_check(self, r: Registry, now: float) -> None:
+        """Put back what's due: an Action's Device after its minutes, or once its Automation's Only if
+        stops holding (looked at every WHILE_EVERY, since that reads Devices)."""
+        watch = now - self._while_at >= WHILE_EVERY - 1
+        for u in r.undos():
+            if self._closing:
+                return
+            if self._undo_retry.get(u.id, 0.0) > now:
+                continue
+            if u.due is not None:
+                if u.due <= now:
+                    self._put_back(r, u, now)
+            elif watch and self._conditions_stopped(r, u):
+                self._put_back(r, u, now)
+        if watch:
+            self._while_at = now
+
+    def _conditions_stopped(self, r: Registry, u: Undo) -> bool:
+        """Whether the Only if of an Undo's Automation is known not to hold any more (not while it can't
+        be told: a Device that doesn't answer, someone whose phone isn't found yet)."""
+        try:
+            a = r.get_automation(u.automation)
+        except LookupError:
+            r.delete_undo(u.id)
+            return False
+        counts: dict[str, int] = {}
+        if _unmet(r, a, counts) is None:
+            return False
+        return counts["no"] > 0 if a.match == "all" else counts["no"] == len(a.conditions)
+
+    def _put_back(self, r: Registry, u: Undo, now: float) -> None:
+        """Put a Device back to how it was, unless someone changed it since the Action did."""
+        try:
+            reading = _reading(r, u.target)
+            if not scenes.matches(u.expected, reading):
+                self._undone(r, u, "Left as it is: it had been changed since")
+                return
+            listening.acting([u.target], u.automation, 0)  # its own change never triggers it
+            problem = scenes_api._send(r, {"target": u.target, "state": u.restore})
+        except LookupError:
+            self._undone(r, u, "Can't be put back: it was forgotten")
+            return
+        except Exception as exc:
+            self._retry_undo(r, u, now, str(exc))
+            return
+        if problem.get("failed"):
+            self._retry_undo(r, u, now, "; ".join(f["reason"] for f in problem["failed"].values()))
+            return
+        self._undone(r, u, "Put back to how it was")
+
+    def _retry_undo(self, r: Registry, u: Undo, now: float, why: str) -> None:
+        tries = self._undo_tries[u.id] = self._undo_tries.get(u.id, 0) + 1
+        if tries < UNDO_TRIES:
+            self._undo_retry[u.id] = now + RETRY_SECONDS
+            return
+        try:
+            name = r.get_automation(u.automation).name
+            self.notify(r, name, f"Couldn't put {scenes_api.name_of(r, u.target)} back: {why}", u.automation)
+        except LookupError:
+            pass
+        self._undone(r, u, f"Couldn't be put back: {why}")
+
+    def _undone(self, r: Registry, u: Undo, text: str) -> None:
+        """Done with an Undo: forget it, and say what became of it on the step of the Run that made it."""
+        r.delete_undo(u.id)
+        self._undo_retry.pop(u.id, None)
+        self._undo_tries.pop(u.id, None)
+        run = next((x for x in r.runs(u.automation) if x.id == u.run), None)
+        if run and u.step < len(run.steps):
+            run.steps[u.step]["undo"] = text
+            r.set_run_steps(run.id, run.steps)
+
+    def undo_due(self, r: Registry) -> list[float]:
+        """When to look at the Undos next: their times, and (for those waiting on an Only if) soon."""
+        out = []
+        for u in r.undos():
+            retry = self._undo_retry.get(u.id, 0.0)
+            out.append(max(retry, u.due) if u.due is not None else max(retry, self._while_at + WHILE_EVERY))
+        return out
 
     def _chain(self, r: Registry, uid: str, active: _Active) -> str | None:
         """Start another Automation's Run, skipping its Conditions like a Run by hand, without waiting
@@ -434,8 +549,21 @@ def _reading(r: Registry, uid: str) -> dict:
     return api._read_state(r, api._device_out(r, uid), None)
 
 
-def _unmet(r: Registry, a: Automation) -> str | None:
-    """None when the Conditions hold (all of them, or any one); otherwise which didn't, for the Run."""
+def _remember(r: Registry, uid: str) -> tuple[dict | None, str]:
+    """How a Device is now, as a Scene part's state, before an Action changes it: (state, "") or
+    (None, why not)."""
+    try:
+        t = hotkeys_api.target(r, uid)
+        return scenes.capture(_reading(r, uid), scenes.settable(t.control, t.settable), t.apps), ""
+    except Exception as exc:
+        return None, str(exc)
+
+
+def _unmet(r: Registry, a: Automation, counts: dict[str, int] | None = None) -> str | None:
+    """None when the Conditions hold (all of them, or any one); otherwise which didn't, for the Run.
+    `counts` gets how many were "no" and how many couldn't be told, for what waits on them."""
+    counts = {} if counts is None else counts
+    counts.update(no=0, unsure=0)
     now = _local(clock())
     where = location(r)
     names = _names(r)
@@ -445,18 +573,21 @@ def _unmet(r: Registry, a: Automation) -> str | None:
         if c["type"] in automations.PRESENCE:
             holds = people_api.holds(c)
             if holds is None:
+                counts["unsure"] += 1
                 unmet.append(f"{label}: couldn't tell yet (Control is still looking for the phones)")
                 continue
         elif c["type"] == "scene":
             try:
                 holds = scenes_api.is_active(r, c["target"]) == c["active"]
             except Exception as exc:
+                counts["unsure"] += 1
                 unmet.append(f"{label}: couldn't tell ({exc})")
                 continue
         elif c["type"] in ("state", "app"):
             try:
                 state = _reading(r, c["target"])["state"]
             except Exception as exc:  # a Device that doesn't answer can't be said to be on
+                counts["unsure"] += 1
                 unmet.append(f"{label}: couldn't tell ({exc})")
                 continue
             holds = bool(state.get("on")) == c["on"] if c["type"] == "state" else (
@@ -466,6 +597,7 @@ def _unmet(r: Registry, a: Automation) -> str | None:
         if holds and a.match == "any":
             return None
         if not holds:
+            counts["no"] += 1
             unmet.append(f"{label}: no")
     if not unmet:
         return None
@@ -509,7 +641,8 @@ def _action_label(r: Registry, action: dict, names: dict[str, str]) -> str:
 
 
 def _without_target(action: dict) -> dict:
-    return {k: v for k, v in action.items() if k != "target"}
+    """What `hotkeys_api` takes: the Action without the Device it's for or what happens afterwards."""
+    return {k: v for k, v in action.items() if k not in ("target", "undo")}
 
 
 # --- Checking ---------------------------------------------------------------------------
@@ -593,6 +726,8 @@ def _check_condition(r: Registry, c: dict, where) -> dict:
 
 def _check_action(r: Registry, a: dict) -> dict:
     clean = automations.check_step(a)
+    if a.get("undo") is not None and clean["do"] not in automations.UNDOABLE:
+        automations.check_undo(a["undo"], clean["do"])  # says what can't be put back
     if clean["do"] == "run":
         uid = clean["target"]
         if not uid.startswith("automation:"):
@@ -607,7 +742,15 @@ def _check_action(r: Registry, a: dict) -> dict:
         return {"do": "set_scene", "target": clean["target"]}
     if clean["do"] in automations.CONTROL:
         t = _checked_target(r, a["target"])
-        return hotkeys_api.check_action(r, t, _without_target(a)) | {"target": t.uid}
+        out = hotkeys_api.check_action(r, t, _without_target(a)) | {"target": t.uid}
+        if a.get("undo") is not None:
+            undo = automations.check_undo(a["undo"], clean["do"])
+            if t.is_group:
+                raise ValueError(f"'{t.name}' is a Group: only one device at a time can be put back")
+            if "on" not in t.settable:
+                _check_on_off(t)  # says why: only a Power Toggle, so Control can't tell how it was
+            out["undo"] = undo
+        return out
     return clean
 
 
@@ -636,6 +779,8 @@ def check(r: Registry, triggers: list, conditions: list, actions: list, whole: b
     _check_loop(r, uid or NEW, triggers, actions)
     if whole:
         automations.check_counts(triggers, conditions, actions)
+        if not conditions and (i := next((i for i, x in enumerate(actions, 1) if "while" in x.get("undo", {})), None)):
+            raise ValueError(f"Action {i}: it can only be put back while the Only if holds if there is an Only if")
     return triggers, conditions, actions
 
 
@@ -855,6 +1000,10 @@ def patch_automation(uid: str, patch: AutomationPatch, r: Registry = Depends(reg
         a.actions if patch.actions is None else patch.actions,
         uid=uid,
     )
+    if patch.conditions is not None and not conditions:
+        for u in r.undos():  # nothing left to say when it stops holding
+            if u.automation == uid and u.due is None:
+                runner._undone(r, u, "Left as it is: the Only if it was waiting on was removed")
     r.update_automation(
         uid,
         name=_name(patch.name) if patch.name is not None else None,

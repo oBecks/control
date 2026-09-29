@@ -153,6 +153,19 @@ CREATE TABLE IF NOT EXISTS automation_runs (
     steps       TEXT NOT NULL DEFAULT '[]',    -- JSON: [{"label", "result": done|failed|not_run, "detail"?}]
     note        TEXT NOT NULL DEFAULT ''       -- e.g. which Condition wasn't met
 );
+-- What an Automation's Action put a Device back to, once due (ADR 0017): how it was, and how the
+-- Action left it, which says whether someone changed it meanwhile.
+CREATE TABLE IF NOT EXISTS undos (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    automation  TEXT NOT NULL,
+    run         INTEGER NOT NULL,              -- the Run whose Action it was
+    step        INTEGER NOT NULL,              -- and which of its Actions
+    target      TEXT NOT NULL,
+    restore     TEXT NOT NULL,                 -- JSON: a Scene part's state, how the Device was
+    expected    TEXT NOT NULL,                 -- JSON: how the Action left it
+    due         REAL,                          -- when to put it back; NULL: when the Only if stops holding
+    created     REAL NOT NULL
+);
 -- Notifications from Automations: a Windows notification from the tray, and a notice in the UI.
 CREATE TABLE IF NOT EXISTS notices (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -287,6 +300,18 @@ class Run:
     outcome: str
     steps: list[dict]
     note: str
+
+
+@dataclass
+class Undo:
+    id: int
+    automation: str
+    run: int
+    step: int
+    target: str
+    restore: dict
+    expected: dict
+    due: float | None
 
 
 @dataclass
@@ -804,6 +829,7 @@ class Registry:
             if self._db.execute("DELETE FROM automations WHERE uid = ?", (uid,)).rowcount == 0:
                 raise LookupError(f"no Automation '{uid}'")
             self._db.execute("DELETE FROM automation_runs WHERE automation = ?", (uid,))
+            self._db.execute("DELETE FROM undos WHERE automation = ?", (uid,))
             self._drop_hotkeys(uid)
             self._drop_dashboard_items()
             self._trim_automations()  # the Actions that ran it
@@ -857,6 +883,11 @@ class Registry:
             self._db.execute("UPDATE automation_runs SET steps = ?, outcome = ?, ended = ?, note = ? WHERE id = ?",
                              (json.dumps(steps), outcome, ended, note, run_id))
 
+    def set_run_steps(self, run_id: int, steps: list[dict]) -> None:
+        """Change a Run's steps after it ended (what became of an Action put back) without touching its outcome."""
+        with self._db:
+            self._db.execute("UPDATE automation_runs SET steps = ? WHERE id = ?", (json.dumps(steps), run_id))
+
     def runs(self, automation: str | None = None, limit: int = RUNS_KEPT, outcome: str | None = None) -> list[Run]:
         """Newest first."""
         where, args = [], []
@@ -876,6 +907,35 @@ class Registry:
             "SELECT * FROM automation_runs WHERE id IN (SELECT MAX(id) FROM automation_runs GROUP BY automation)"
         ).fetchall()
         return {r["automation"]: self._to_run(r) for r in rows}
+
+    # Undos (ADR 0017)
+
+    def add_undo(self, automation: str, run: int, step: int, target: str, restore: dict, expected: dict,
+                 due: float | None) -> int:
+        """Remember to put a Device back. One that's already waiting for this Automation on this Device
+        is replaced, but keeps how the Device really was: the new Run found it as the old one left it."""
+        with self._db:
+            old = self._db.execute("SELECT id, restore FROM undos WHERE automation = ? AND target = ?",
+                                   (automation, target)).fetchone()
+            if old:
+                restore = json.loads(old["restore"])
+                self._db.execute("DELETE FROM undos WHERE id = ?", (old["id"],))
+            cur = self._db.execute(
+                "INSERT INTO undos (automation, run, step, target, restore, expected, due, created) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (automation, run, step, target, json.dumps(restore), json.dumps(expected), due, time.time()),
+            )
+        return cur.lastrowid
+
+    def undos(self) -> list[Undo]:
+        rows = self._db.execute("SELECT * FROM undos ORDER BY id").fetchall()
+        return [Undo(id=r["id"], automation=r["automation"], run=r["run"], step=r["step"], target=r["target"],
+                     restore=json.loads(r["restore"]), expected=json.loads(r["expected"]), due=r["due"])
+                for r in rows]
+
+    def delete_undo(self, undo_id: int) -> None:
+        with self._db:
+            self._db.execute("DELETE FROM undos WHERE id = ?", (undo_id,))
 
     # Notices
 
