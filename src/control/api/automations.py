@@ -1000,6 +1000,10 @@ def patch_automation(uid: str, patch: AutomationPatch, r: Registry = Depends(reg
         a.actions if patch.actions is None else patch.actions,
         uid=uid,
     )
+    if patch.conditions is not None and not conditions:
+        for u in r.undos():  # nothing left to say when it stops holding
+            if u.automation == uid and u.due is None:
+                runner._undone(r, u, "Left as it is: the Only if it was waiting on was removed")
     r.update_automation(
         uid,
         name=_name(patch.name) if patch.name is not None else None,

@@ -108,3 +108,16 @@ def test_deleting_the_automation_forgets_what_it_would_put_back(home, runner):  
     assert c.delete(f"/api/automations/{a['uid']}").status_code == 204
     with closing(Registry()) as r:
         assert r.undos() == []
+
+
+def test_removing_the_only_if_ends_what_waited_on_it(home, runner):  # noqa: F811
+    c, light = home["client"], home["lights"][LIGHT]
+    a = on({"while": True}, c=c, conditions=[{"type": "days", "days": [dt.date.today().weekday()]}])
+    run(c, runner, a)
+    assert c.patch(f"/api/automations/{a['uid']}", json={"conditions": [], "actions": [
+        {"do": "set", "target": LIGHT, "state": {"on": True}}]}).status_code == 200
+    with closing(Registry()) as r:
+        assert r.undos() == []
+    assert step(c, a)["undo"].startswith("Left as it is: the Only if")
+    look(runner, 300)
+    assert light.state.on is True
