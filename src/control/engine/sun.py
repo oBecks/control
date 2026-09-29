@@ -7,9 +7,7 @@ Times are the PC's local time, like every other time in an Automation.
 import datetime as dt
 from dataclasses import dataclass
 
-from astral import Observer
-from astral import sun as astral_sun
-from astral.geocoder import all_locations, database
+# `astral` is imported by the functions that need it: a home with no sun Trigger never loads it.
 
 EVENTS = ("sunrise", "sunset")
 
@@ -36,6 +34,8 @@ def cities() -> list[Location]:
     """Every city astral knows (a few hundred: capitals and big cities), by name."""
     global _cities
     if _cities is None:
+        from astral.geocoder import all_locations, database
+
         found = [Location(f"{c.name}, {c.region}", c.latitude, c.longitude) for c in all_locations(database())]
         _cities = sorted(found, key=lambda c: c.name)
     return _cities
@@ -57,6 +57,9 @@ def _local_zone(day: dt.date) -> dt.tzinfo:
 
 def event_at(where: Location, day: dt.date, event: str) -> dt.datetime | None:
     """Local (naive) time of sunrise or sunset on that day; None when the sun doesn't rise or set."""
+    from astral import Observer
+    from astral import sun as astral_sun
+
     zone = _local_zone(day)
     fn = astral_sun.sunrise if event == "sunrise" else astral_sun.sunset
     try:
@@ -70,6 +73,9 @@ def is_dark(where: Location, at: dt.datetime) -> bool:
     rise, set_ = event_at(where, at.date(), "sunrise"), event_at(where, at.date(), "sunset")
     if rise is None or set_ is None:
         # No sunrise or sunset today: dark when the sun is below the horizon at noon.
+        from astral import Observer
+        from astral import sun as astral_sun
+
         noon = dt.datetime.combine(at.date(), dt.time(12)).replace(tzinfo=_local_zone(at.date()))
         return astral_sun.elevation(Observer(where.lat, where.lon), noon) < 0
     return not rise <= at < set_

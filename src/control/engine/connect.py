@@ -1,12 +1,8 @@
 """Turn a remembered device into a live, controllable object."""
 
 from contextlib import closing
-from typing import Callable, Protocol, TypeVar
+from typing import TYPE_CHECKING, Callable, Protocol, TypeVar
 
-from .adapters.androidtv_streamer import AndroidTVStreamer, AndroidTVWatch
-from .adapters.broadlink_transmitter import BroadlinkTransmitter
-from .adapters.tuya_plug import TuyaPlug, TuyaWatch
-from .adapters.yeelight_light import YeelightLight, YeelightWatch
 from .climate import ClimateState, RemoteClimate
 from .errors import DeviceUnreachable
 from .found_device import Category, Readiness
@@ -17,9 +13,21 @@ from .remote_buttons import RemoteButtons
 from .scan import scan_and_remember
 from .streamer import Streamer
 
+if TYPE_CHECKING:
+    from .adapters.broadlink_transmitter import BroadlinkTransmitter
+
 T = TypeVar("T")
 
-_LIGHT_ADAPTERS = {"Yeelight": YeelightLight}
+
+# A brand's library (tinytuya, androidtvremote2, ...) is imported when the first Device of that brand
+# is opened, so a home without that brand never pays for it in memory or start-up time.
+def _yeelight_light(ip: str) -> Light:
+    from .adapters.yeelight_light import YeelightLight
+
+    return YeelightLight(ip)
+
+
+_LIGHT_ADAPTERS = {"Yeelight": _yeelight_light}
 
 # Re-find only needs one announcement from the brand, so it can be short.
 _REFIND_TIMEOUT = 3.0
@@ -70,6 +78,8 @@ def connect_plug(registry: Registry, ref: str) -> tuple[KnownDevice, Plug]:
     link = registry.get_link(device.uid)
     if link is None:
         raise LookupError(f"'{device.name}' needs a Link first: control tuya-link")
+    from .adapters.tuya_plug import TuyaPlug
+
     return _with_refind(
         registry,
         device,
@@ -81,15 +91,19 @@ def connect_streamer(registry: Registry, ref: str) -> tuple[KnownDevice, Streame
     device = registry.resolve(ref)
     if control_kind(registry, device) != "streamer":
         raise LookupError(f"'{device.name}' is not a Streamer this app can control yet")
+    from .adapters.androidtv_streamer import AndroidTVStreamer
+
     return _with_refind(registry, device, lambda d: AndroidTVStreamer(d.uid, d.ip))
 
 
-def connect_transmitter(registry: Registry, ref: str) -> tuple[KnownDevice, BroadlinkTransmitter]:
+def connect_transmitter(registry: Registry, ref: str) -> "tuple[KnownDevice, BroadlinkTransmitter]":
     device = registry.resolve(ref)
     if device.category is not Category.TRANSMITTER or device.brand != "Broadlink":
         raise LookupError(f"'{device.name}' is not a transmitter")
     if device.readiness is Readiness.NEEDS_SETUP:
         raise LookupError(f"'{device.name}' needs setup: {device.note}")
+    from .adapters.broadlink_transmitter import BroadlinkTransmitter
+
     return _with_refind(
         registry, device, lambda d: BroadlinkTransmitter(d.ip, d.mac, d.raw["devtype"])
     )
@@ -134,12 +148,18 @@ def watch(registry: Registry, device: KnownDevice, report: Callable[[str, dict |
     uid = device.uid
     kind = control_kind(registry, device)
     if kind == "light" and device.brand == "Yeelight":
+        from .adapters.yeelight_light import YeelightWatch
+
         return YeelightWatch(uid, lambda: _ip(registry.path, uid), report)
     if kind == "plug":
+        from .adapters.tuya_plug import TuyaWatch
+
         link = registry.get_link(uid)
         return TuyaWatch(uid, link["secret"]["local_key"], device.raw.get("version", "3.3"),
                          lambda: _ip(registry.path, uid), report)
     if kind == "streamer":
+        from .adapters.androidtv_streamer import AndroidTVWatch
+
         return AndroidTVWatch(uid, lambda: _ip(registry.path, uid), report)
     return None
 
