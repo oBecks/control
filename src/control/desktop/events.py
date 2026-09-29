@@ -139,7 +139,6 @@ class PcEvents:
             u.DispatchMessageW(ctypes.byref(msg))
 
     def _wndproc(self, hwnd, msg, wparam, lparam):
-        u = _user32
         if msg == WM_QUERYENDSESSION:
             self._told.clear()
             self._ending.set()
@@ -156,13 +155,13 @@ class PcEvents:
             return 1 if msg == WM_POWERBROADCAST else 0
         if msg == WM_CLOSE:
             _wtsapi32.WTSUnRegisterSessionNotification(hwnd)
-            u.DestroyWindow(hwnd)
+            _user32.DestroyWindow(hwnd)
             return 0
         if msg == 0x0002:  # WM_DESTROY
             self._hwnd = None
-            u.PostQuitMessage(0)
+            _user32.PostQuitMessage(0)
             return 0
-        return u.DefWindowProcW(hwnd, msg, wparam, lparam)
+        return _user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
     def tell(self, event: str) -> None:
         """Tell the Engine, unless it was just told the same. Going to sleep and shutting down wait
