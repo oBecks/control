@@ -251,7 +251,9 @@ export type Trigger =
 	/** The first person arrives home, or (false) the last one leaves. */
 	| { type: 'home'; occupied: boolean }
 	/** Something happens to this PC (ADR 0015). */
-	| { type: 'pc'; event: PcEvent };
+	| { type: 'pc'; event: PcEvent }
+	/** Its web link is opened (ADR 0016); the Engine makes the secret `token`. */
+	| { type: 'web'; token?: string };
 
 /** What a PC Trigger waits for: Control starts, or Windows says the PC woke, is going to sleep, was
  * locked, was unlocked (or someone signed in), or is shutting down (or signing out). */
@@ -310,6 +312,8 @@ export interface Automation {
 	/** Why it switched itself off, e.g. a Device it used was forgotten. */
 	attention: string | null;
 	made_by: 'user' | 'assistant';
+	/** The address that starts it, when it has a web Trigger. */
+	web_link: string | null;
 	running: boolean;
 	last_run: Run | null;
 	/** When a Trigger fires next (seconds since 1970), if it's on and has one. */

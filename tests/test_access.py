@@ -183,3 +183,15 @@ def test_settings_warn_when_windows_firewall_blocks_control(pc, monkeypatch):
     listening(monkeypatch, "Private", blocked=True)
     warning = pc.get("/api/access/phone").json()["warning"]
     assert warning.startswith("Windows Firewall is blocking Control") and "Control (control.exe)" in warning
+
+
+def test_a_web_link_works_from_an_unapproved_phone_but_only_with_phone_access_on(pc):
+    made = pc.post("/api/automations", json={"name": "Hi", "triggers": [{"type": "web"}],
+                                             "actions": [{"do": "notify", "text": "Hi"}]}).json()
+    link = "/api/hooks/" + made["web_link"].rsplit("/", 1)[1]
+    p = phone()
+    assert p.get(link).json()["code"] == "phone_access_off"
+    turn_on(pc)
+    assert p.get("/api/automations").status_code == 401  # still no access to anything else
+    assert p.get(link).status_code == 202
+    assert p.get("/api/hooks/nope").status_code == 404

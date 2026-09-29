@@ -63,7 +63,8 @@
 		...(home.scenes.length || initial?.type === 'scene' ? [{ value: 'scene', label: 'A scene is set' }] : []),
 		{ value: 'person', label: 'Someone arrives or leaves' },
 		{ value: 'home', label: 'The first person arrives, or the last leaves' },
-		{ value: 'pc', label: 'Something happens to this PC' }
+		{ value: 'pc', label: 'Something happens to this PC' },
+		{ value: 'web', label: 'A web link is opened' }
 	]);
 
 	const PC_EVENTS: { value: PcEvent; label: string }[] = [
@@ -117,6 +118,8 @@
 				return people.tracked.length ? { type, occupied: arrives } : null;
 			case 'pc':
 				return { type, event: pcEvent };
+			case 'web':
+				return { type };
 		}
 	});
 
@@ -212,6 +215,12 @@
 		<p class="hint">0 starts it at once. Its screensaver coming on doesn't count as leaving the app.</p>
 	{:else if type === 'person' || type === 'home'}
 		<PresenceFields kind={type} part="trigger" bind:target bind:home={arrives} />
+	{:else if type === 'web'}
+		<p class="hint">
+			Control makes a secret link for it, shown on the automation's page once you save it. Open it from a bookmark, an
+			NFC tag or a Shortcut on a phone on the home Wi-Fi, and it starts (the Only if still applies). Anyone with the
+			link can start it, so share it like a key.
+		</p>
 	{:else if type === 'pc'}
 		<label class="field">
 			<span>Happens</span>

@@ -44,6 +44,8 @@ def _is_public(request: Request) -> bool:
     path = request.url.path
     if path == "/api/access/me" or path.startswith("/api/access/claims/"):
         return True
+    if path.startswith("/api/hooks/"):
+        return True  # a web link: its secret is the key (ADR 0016)
     if path == "/api/access/requests":
         return request.method == "POST"  # asking, not listing who else is asking
     return not (path.startswith("/api/") or path in ("/docs", "/redoc", "/openapi.json"))

@@ -225,6 +225,8 @@ export const api = {
 		call<Automation>('PATCH', `/automations/${enc(uid)}`, patch),
 	deleteAutomation: (uid: string) => call<void>('DELETE', `/automations/${enc(uid)}`),
 	/** Runs it now, skipping its Conditions; answers as it starts. */
+	/** A new secret for its web link: the old address stops working. */
+	renewWebLink: (uid: string) => call<Automation>('POST', `/automations/${enc(uid)}/web-link/renew`),
 	runAutomation: (uid: string) => call<Run>('POST', `/automations/${enc(uid)}/run`),
 	/** The builder's draft checked and labelled, without saving it. `uid`: the Automation it edits,
 	 * which mustn't end up running itself. */

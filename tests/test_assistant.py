@@ -638,3 +638,14 @@ def test_pc_events_in_automations(home, runner):
     assert ok(srv, "edit_automation", automation="Good night", triggers=kept)["summary"] == made["summary"]
     assert "says what happens to the PC" in error(srv, "create_automation", name="x", triggers=[{"type": "pc"}],
                                                   actions=[{"action": "notify", "text": "Hi"}])
+
+
+def test_a_web_link_trigger_from_the_assistant_keeps_its_secret(home, runner):
+    srv, *_ = home
+    made = ok(srv, "create_automation", name="Movie", triggers=[{"type": "web"}],
+              actions=[{"action": "notify", "text": "Hi"}])
+    assert made["summary"] == "When: the web link is opened. Then: Notify: Hi."
+    assert "token" not in str(made) and "hooks" not in str(made)  # the secret stays in the app
+    kept = [{f: v for f, v in x.items() if f != "label"} for x in ok(srv, "get_automation", automation="Movie")["triggers"]]
+    assert kept == [{"type": "web"}]
+    ok(srv, "edit_automation", automation="Movie", triggers=kept)

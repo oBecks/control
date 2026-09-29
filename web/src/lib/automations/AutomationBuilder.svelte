@@ -7,6 +7,7 @@
 	import { flip } from 'svelte/animate';
 	import { MediaQuery } from 'svelte/reactivity';
 	import { api } from '$lib/api';
+	import { home } from '$lib/home.svelte';
 	import { moveItem } from '$lib/dashboards/layout';
 	import { reorder } from '$lib/dashboards/reorder';
 	import HotkeyEditor from '$lib/hotkeys/HotkeyEditor.svelte';
@@ -97,6 +98,31 @@
 			() => {}
 		);
 	});
+
+	let copied = $state(false);
+
+	async function copyLink() {
+		if (!saved?.web_link) return;
+		try {
+			await navigator.clipboard.writeText(saved.web_link);
+			copied = true;
+			setTimeout(() => (copied = false), 2000);
+		} catch {
+			home.notify('Couldn’t copy. Select the link and copy it instead.');
+		}
+	}
+
+	let renewing = $state(false);
+
+	async function renewLink() {
+		renewing = false;
+		try {
+			await api.renewWebLink(uid);
+			await automations.load();
+		} catch (e) {
+			home.notify(e instanceof Error ? e.message : String(e));
+		}
+	}
 
 	function plain(d: Draft) {
 		const strip = <T,>(parts: Labelled<T>[]): T[] => parts.map(({ label: _, ...rest }) => rest as T);
@@ -386,6 +412,31 @@
 				<RunHistory {runs} />
 			</section>
 
+			{#if saved.web_link}
+				<section>
+					<h2>Web link</h2>
+					<p class="hint">
+						Opening this starts it, from any device on the home Wi-Fi. Anyone who has it can, so keep it private.
+					</p>
+					<input
+						class="link"
+						readonly
+						value={saved.web_link}
+						aria-label="Web link"
+						onfocus={(e) => e.currentTarget.select()}
+					/>
+					<div class="row">
+						<Button variant="secondary" size="sm" onclick={copyLink}>{copied ? 'Copied' : 'Copy link'}</Button>
+						{#if renewing}
+							<Button variant="secondary" size="sm" onclick={renewLink}>Yes, the old link stops working</Button>
+							<Button variant="ghost" size="sm" onclick={() => (renewing = false)}>Keep it</Button>
+						{:else}
+							<Button variant="ghost" size="sm" onclick={() => (renewing = true)}>Make a new link</Button>
+						{/if}
+					</div>
+				</section>
+			{/if}
+
 			<TargetHotkeys
 				uid={saved.uid}
 				onadd={() => (hotkeyEditor = { uid: null })}
@@ -504,7 +555,7 @@
 		padding: var(--s-3) var(--s-4);
 		border: 1px solid var(--border);
 		border-radius: var(--r-md);
-		background: var(--surface);
+		background: var(--surface-2);
 		color: var(--text-3);
 		text-align: start;
 		box-shadow: var(--shadow-1);
@@ -579,6 +630,17 @@
 		margin: 0;
 		color: var(--text-2);
 	}
+	.link {
+		inline-size: 100%;
+		padding: var(--s-2) var(--s-3);
+		border: 1px solid var(--border);
+		border-radius: var(--r-md);
+		background: var(--surface-2);
+		color: var(--text);
+		font: inherit;
+		font-size: var(--fs-sm);
+	}
+	section .row,
 	.danger .row {
 		display: flex;
 		gap: var(--s-2);

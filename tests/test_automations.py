@@ -728,3 +728,72 @@ def test_the_desktop_app_tells_the_engine_only_from_this_pc(home, runner):
     assert c.post("/api/pc-events", json={"event": "nope"}).status_code == 422
     phone = TestClient(c.app, base_url="http://localhost", client=("192.168.1.20", 50000))
     assert phone.post("/api/pc-events", json={"event": "sleeps"}).status_code in (401, 403)
+
+
+# --- Web links (ADR 0016) ---------------------------------------------------------------------
+
+
+def web_automation(c, **body):
+    return create(c, name="Movie", triggers=[{"type": "web"}], actions=notify_only(), **body)
+
+
+def hook(a):
+    return "/api/hooks/" + a["web_link"].rsplit("/", 1)[1]
+
+
+def test_a_web_trigger_gets_a_secret_link_that_edits_keep(home):
+    c = home["client"]
+    a = web_automation(c)
+    token = a["triggers"][0]["token"]
+    assert len(token) >= 40 and a["web_link"].endswith("/api/hooks/" + token)
+    assert a["triggers"][0]["label"] == "The web link is opened"
+    # An edit that sends the Trigger back, with or without the secret, keeps it.
+    for triggers in ([{"type": "web"}], [{"type": "web", "token": "chosen-by-someone-else"}]):
+        edited = c.patch(f"/api/automations/{a['uid']}", json={"triggers": triggers, "name": "Movie night"}).json()
+        assert edited["triggers"][0]["token"] == token
+    assert create(c, name="Other", triggers=[{"type": "web"}], actions=notify_only())["triggers"][0]["token"] != token
+    two = {"name": "x", "triggers": [{"type": "web"}, {"type": "web"}], "actions": notify_only()}
+    assert "one web link" in c.post("/api/automations", json=two).json()["detail"]
+    assert create(c, name="None", triggers=[], actions=notify_only())["web_link"] is None
+
+
+def test_opening_the_link_starts_the_automation_from_get_or_post(home, runner):
+    c = home["client"]
+    a = web_automation(c)
+    for method in (c.get, c.post):
+        resp = method(hook(a))
+        assert resp.status_code == 202 and resp.json() == {"started": "Movie"}
+        runner.join(a["uid"])
+    runs = c.get(f"/api/automations/{a['uid']}/runs").json()
+    assert len(runs) == 2 and runs[0]["cause"] == "The web link is opened" and runs[0]["outcome"] == "succeeded"
+    page = c.get(hook(a), headers={"accept": "text/html"})
+    assert page.status_code == 202 and "Started Movie." in page.text
+
+
+def test_a_link_checks_the_conditions_and_needs_the_automation_on(home, runner):
+    c = home["client"]
+    tomorrow = (dt.date.today().weekday() + 1) % 7
+    a = web_automation(c, conditions=[{"type": "days", "days": [tomorrow]}])
+    assert c.get(hook(a)).status_code == 202
+    runner.join(a["uid"])
+    assert c.get(f"/api/automations/{a['uid']}/runs").json()[0]["outcome"] == "skipped"
+    c.patch(f"/api/automations/{a['uid']}", json={"enabled": False})
+    resp = c.get(hook(a))
+    assert resp.status_code == 409 and "switched off" in resp.json()["detail"]
+
+
+def test_a_new_link_stops_the_old_one_and_wrong_links_are_held_off(home, runner, monkeypatch):
+    c = home["client"]
+    a = web_automation(c)
+    old = hook(a)
+    renewed = c.post(f"/api/automations/{a['uid']}/web-link/renew").json()
+    assert hook(renewed) != old
+    assert c.get(old).status_code == 404 and c.get(hook(renewed)).status_code == 202
+    plain = create(c, name="Plain", triggers=[], actions=notify_only())
+    assert c.post(f"/api/automations/{plain['uid']}/web-link/renew").status_code == 422
+    monkeypatch.setattr(automations_api, "GUESSES", (3, 60))
+    automations_api._guesses.clear()
+    codes = [c.get(f"/api/hooks/guess{i}").status_code for i in range(5)]
+    assert codes == [404, 404, 404, 429, 429]
+    assert c.get(hook(renewed)).status_code == 429  # held off, even for the right one, for a minute
+    automations_api._guesses.clear()
