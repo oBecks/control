@@ -94,6 +94,10 @@ _Avoid_: Routine, rule, script
 The "When" of an Automation: something that happens and starts a Run (a time, sunset, a Device turning on, a Scene being set…). An Automation can have several; any one of them starts it.
 _Avoid_: Event, when-clause
 
+**PC event**:
+Something that happens to the PC itself, which can be a Trigger: Control starts, the PC wakes from sleep, is unlocked (or someone signs in), is locked, goes to sleep, or shuts down (or someone signs out). Heard by the Desktop App from Windows, except Control starting; only live, never caught up (ADR 0015). Going to sleep and shutting down leave only a moment, so only quick Actions get done.
+_Avoid_: System event, power event
+
 **Condition**:
 The "Only if" of an Automation: something that must be true when a Trigger fires for the Run to go ahead (a Device's state, a Scene being active, a time window). It's checked, never waited for.
 _Avoid_: Filter, guard, constraint

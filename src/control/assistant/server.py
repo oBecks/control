@@ -345,7 +345,7 @@ def scene_summary(sc: dict, active: dict | None = None) -> dict:
 class TriggerIn(BaseModel):
     """What starts an Automation."""
 
-    type: Literal["time", "sun", "state", "app", "offline", "scene", "person", "home"]
+    type: Literal["time", "sun", "state", "app", "offline", "scene", "person", "home", "pc"]
     at: str | None = Field(None, description='time: "HH:MM", 24-hour, the PC\'s local time')
     event: Literal["sunrise", "sunset"] | None = Field(None, description="sun")
     offset_minutes: int = Field(0, description="sun: minutes before (negative) or after, at most 180")
@@ -362,6 +362,10 @@ class TriggerIn(BaseModel):
     person: str | None = Field(None, description="person: a Person's name or uid")
     home: bool | None = Field(None, description="person: true when they arrive home, false when they leave; "
                                                 "home: true when the first person arrives, false when the last leaves")
+    pc: Literal["starts", "wakes", "unlocks", "locks", "sleeps", "shuts_down"] | None = Field(
+        None, description="pc: Control starts (with Windows, say), the PC wakes from sleep, you unlock it or sign "
+                          "in, it's locked, it goes to sleep, or it shuts down or you sign out. Going to sleep and "
+                          "shutting down leave only a moment, so only quick Actions get done")
 
 
 class ConditionIn(BaseModel):
@@ -449,6 +453,8 @@ def trigger_in(t: dict) -> dict:
         return {"type": kind, "person": t["target"], "home": t["home"], "label": label}
     if kind == "home":
         return {"type": kind, "home": t["occupied"], "label": label}
+    if kind == "pc":
+        return {"type": kind, "pc": t["event"], "label": label}
     if t["type"] == "time":
         return _without_none({"type": "time", "at": t["at"], "days": _days_in(t["days"]), "label": t["label"]})
     return _without_none({"type": "sun", "event": t["event"], "offset_minutes": t["offset"],
@@ -870,6 +876,7 @@ def create_server(engine: Engine) -> MCPServer:
             body["triggers"] = [device_trigger(t) if t.type in DEVICE_TRIGGERS
                                 else scene_part(t, "Trigger") if t.type == "scene"
                                 else presence_part(t, "Trigger") if t.type in ("person", "home")
+                                else pc_trigger(t) if t.type == "pc"
                                 else automation_trigger(t) for t in triggers]
         if conditions is not None:
             body["conditions"] = [automation_condition(c) for c in conditions]
@@ -895,6 +902,12 @@ def create_server(engine: Engine) -> MCPServer:
             raise ToolError(f"'{d['name']}' isn't a Streamer, so it opens no apps.")
         apps = engine.call("GET", f"/devices/{d['uid']}/state")["features"]["apps"]
         return {"type": "app", "target": d["uid"], "app": app_package(apps, t.app), "minutes": t.stays_minutes}
+
+    def pc_trigger(t: TriggerIn) -> dict:
+        if not t.pc:
+            raise ToolError("A pc Trigger says what happens to the PC (`pc`): starts, wakes, unlocks, locks, "
+                            "sleeps or shuts_down.")
+        return {"type": "pc", "event": t.pc}
 
     def scene_part(part: TriggerIn | ConditionIn, what: str) -> dict:
         if not part.scene:

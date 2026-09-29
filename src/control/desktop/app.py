@@ -7,8 +7,9 @@ One instance per user: a second launch brings the running Window forward. If an 
 answers on the port (e.g. `control serve` while developing), the app is only a Window on it and
 leaves it running on quit.
 
-It also listens for Hotkeys (ADR 0007, `hotkeys.py`) and shows Automations' notifications from the
-tray, whichever Engine it runs on."""
+It also listens for Hotkeys (ADR 0007, `hotkeys.py`) and for the PC waking, sleeping, locking and
+shutting down (ADR 0015, `events.py`), and shows Automations' notifications from the tray, whichever
+Engine it runs on."""
 
 import argparse
 import ctypes
@@ -24,7 +25,7 @@ from pathlib import Path
 
 from .. import __version__
 from ..engine.registry import Registry, default_db_path
-from . import hotkeys, updates
+from . import events, hotkeys, updates
 
 PORT = 8321
 ICON = Path(__file__).with_name("control.ico")
@@ -342,6 +343,8 @@ class DesktopApp:
         threading.Thread(target=self._check_updates, name="update-check", daemon=True).start()
         threading.Thread(target=self._show_notices, name="notices", daemon=True).start()
         hotkeys.HotkeyListener(self.port).start()
+        pc_events = events.PcEvents(self.port)
+        pc_events.start()
         data = default_db_path().parent
         # Not private: the UI keeps its theme choice in localStorage.
         webview.start(private_mode=False, storage_path=str(data / "webview"), icon=str(ICON))
@@ -349,6 +352,7 @@ class DesktopApp:
         self.quitting = True
         if self._release_timer:
             self._release_timer.cancel()
+        pc_events.stop()
         self.tray.stop()
 
     def quit(self) -> None:

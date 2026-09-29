@@ -26,7 +26,7 @@ import time
 from contextlib import closing
 from dataclasses import dataclass, field
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -104,6 +104,7 @@ class Runner:
         with closing(Registry()) as r:
             self.recover(r)
             self._last_notice = max((n.id for n in r.notices()), default=0)
+            self.pc_event(r, "starts")
         self._thread = threading.Thread(target=self._loop, name="automations", daemon=True)
         self._thread.start()
         listening.start()  # Device Triggers (ADR 0011)
@@ -335,6 +336,19 @@ class Runner:
             label = automations.trigger_label(t, names)
             if not self.stopped_loop(r, a, label, hops):
                 self.run(r, a.uid, label, hops=hops)
+
+    def pc_event(self, r: Registry, event: str) -> list[str]:
+        """Something happened to this PC (`automations.PC_EVENTS`): start the Runs of the enabled
+        Automations whose Trigger it is; their uids."""
+        if self._closing:
+            return []
+        started = []
+        for a in r.automations():
+            t = next((t for t in a.triggers if t["type"] == "pc" and t["event"] == event), None)
+            if a.enabled and t is not None:
+                self.run(r, a.uid, automations.trigger_label(t, {}))
+                started.append(a.uid)
+        return started
 
     def stopped_loop(self, r: Registry, a: Automation, cause: str, hops: int) -> bool:
         """The loop guard (ADR 0012): a Run `hops` Automations down a chain, past MAX_HOPS, doesn't
@@ -714,7 +728,7 @@ def _out(r: Registry, a: Automation, last: Run | None = None, now: float | None 
 def _mid_sentence(label: str) -> str:
     """A part's label inside the summary: "At 07:00" becomes "at 07:00", but a Device's name keeps its case."""
     first, _, rest = label.partition(" ")
-    return f"{first.lower()} {rest}" if first in ("At", "Between", "It's", "The", "Someone", "Nobody") else label
+    return f"{first.lower()} {rest}" if first in ("At", "Between", "It's", "The", "Someone", "Nobody", "You") else label
 
 
 def _summary(match: str, triggers: list[dict], conditions: list[dict], actions: list[dict]) -> str:
@@ -832,6 +846,34 @@ def run_automation(uid: str, r: Registry = Depends(registry)):
     """Run it now, skipping its Conditions (the person asked). Answers at once: a Wait may take long."""
     run_id = runner.run(r, uid, BY_HAND, by_hand=True)
     return _run_out(next(run for run in r.runs(uid, limit=5) if run.id == run_id))
+
+
+# --- The PC ---------------------------------------------------------------------------------
+
+PC_WAIT_AT_MOST = 3  # seconds a PC going to sleep or shutting down waits for its Runs
+
+
+class PcEventIn(BaseModel):
+    event: str = Field(description="wakes, unlocks, locks, sleeps or shuts_down (`starts` is Control's own)")
+    wait: float = Field(0, description="seconds to hold the answer for the Runs it starts, at most "
+                                       f"{PC_WAIT_AT_MOST}: Windows gives a PC going to sleep or shutting down "
+                                       "only a moment")
+
+
+@router.post("/api/pc-events", status_code=202)
+def pc_event(body: PcEventIn, request: Request, r: Registry = Depends(registry)):
+    """The Desktop App says Windows did something to the PC: starts the Automations whose Trigger it
+    is. Only the computer running Control can say so."""
+    if not request.state.local:
+        raise HTTPException(status_code=403, detail="only the computer running Control")
+    if body.event not in automations.PC_EVENTS or body.event == "starts":
+        raise HTTPException(status_code=422, detail=f"a PC event is one of: "
+                            f"{', '.join(e for e in automations.PC_EVENTS if e != 'starts')}")
+    started = runner.pc_event(r, body.event)
+    deadline = time.monotonic() + min(max(body.wait, 0), PC_WAIT_AT_MOST)
+    for uid in started:
+        runner.join(uid, max(deadline - time.monotonic(), 0))
+    return {"started": started}
 
 
 # --- Location ------------------------------------------------------------------------------

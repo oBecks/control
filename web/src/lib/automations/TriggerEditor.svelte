@@ -2,11 +2,12 @@
 	// One "When" of an Automation: a time, sunrise or sunset on some days, or a Device changing: a
 	// Device or Group turning on or off (and staying so a while), a TV box opening an app, a Device
 	// going offline or coming back. The Engine listens to the Devices these name (ADR 0011). Or a Scene
-	// being set, by anyone. Or someone arriving or leaving (ADR 0014).
+	// being set, by anyone. Or someone arriving or leaving (ADR 0014). Or something happening to the PC
+	// itself (ADR 0015).
 	import { Trash2 } from '@lucide/svelte';
 	import { home } from '$lib/home.svelte';
 	import { people } from '$lib/people/people.svelte';
-	import type { HomeLocation, Trigger, Weekday } from '$lib/types';
+	import type { HomeLocation, PcEvent, Trigger, Weekday } from '$lib/types';
 	import Button from '$lib/ui/Button.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
 	import DaysPicker from './DaysPicker.svelte';
@@ -44,6 +45,7 @@
 	let app = $state(initial?.type === 'app' ? initial.app : '');
 	let offline = $state(initial?.type === 'offline' ? initial.offline : true);
 	let arrives = $state(initial?.type === 'person' ? initial.home : initial?.type === 'home' ? initial.occupied : true);
+	let pcEvent = $state<PcEvent>(initial?.type === 'pc' ? initial.event : 'wakes');
 	let problem = $state<string | null>(null);
 	let saving = $state(false);
 
@@ -60,8 +62,18 @@
 		{ value: 'offline', label: 'A device goes offline or comes back' },
 		...(home.scenes.length || initial?.type === 'scene' ? [{ value: 'scene', label: 'A scene is set' }] : []),
 		{ value: 'person', label: 'Someone arrives or leaves' },
-		{ value: 'home', label: 'The first person arrives, or the last leaves' }
+		{ value: 'home', label: 'The first person arrives, or the last leaves' },
+		{ value: 'pc', label: 'Something happens to this PC' }
 	]);
+
+	const PC_EVENTS: { value: PcEvent; label: string }[] = [
+		{ value: 'starts', label: 'Control starts' },
+		{ value: 'wakes', label: 'The PC wakes from sleep' },
+		{ value: 'unlocks', label: 'You unlock the PC or sign in' },
+		{ value: 'locks', label: 'The PC is locked' },
+		{ value: 'sleeps', label: 'The PC goes to sleep' },
+		{ value: 'shuts_down', label: 'The PC shuts down or you sign out' }
+	];
 
 	function pickKind(next: Trigger['type']) {
 		type = next;
@@ -103,6 +115,8 @@
 				return target ? { type, target, home: arrives } : null;
 			case 'home':
 				return people.tracked.length ? { type, occupied: arrives } : null;
+			case 'pc':
+				return { type, event: pcEvent };
 		}
 	});
 
@@ -198,6 +212,22 @@
 		<p class="hint">0 starts it at once. Its screensaver coming on doesn't count as leaving the app.</p>
 	{:else if type === 'person' || type === 'home'}
 		<PresenceFields kind={type} part="trigger" bind:target bind:home={arrives} />
+	{:else if type === 'pc'}
+		<label class="field">
+			<span>Happens</span>
+			<select bind:value={pcEvent}>
+				{#each PC_EVENTS as e (e.value)}<option value={e.value}>{e.label}</option>{/each}
+			</select>
+		</label>
+		<p class="hint">
+			{#if pcEvent === 'starts'}
+				With Windows, if Start with Windows is on. Devices may not answer yet just after the PC starts.
+			{:else if pcEvent === 'sleeps' || pcEvent === 'shuts_down'}
+				Windows gives this only a moment, so only quick actions get done, and not one that waits.
+			{:else}
+				Only while Control is running on this PC as the desktop app.
+			{/if}
+		</p>
 	{:else if type === 'scene'}
 		<label class="field">
 			<span>Scene</span>

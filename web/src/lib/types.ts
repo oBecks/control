@@ -249,7 +249,13 @@ export type Trigger =
 	/** A Person arrives home, or (false) leaves (ADR 0014). */
 	| { type: 'person'; target: string; home: boolean }
 	/** The first person arrives home, or (false) the last one leaves. */
-	| { type: 'home'; occupied: boolean };
+	| { type: 'home'; occupied: boolean }
+	/** Something happens to this PC (ADR 0015). */
+	| { type: 'pc'; event: PcEvent };
+
+/** What a PC Trigger waits for: Control starts, or Windows says the PC woke, is going to sleep, was
+ * locked, was unlocked (or someone signed in), or is shutting down (or signing out). */
+export type PcEvent = 'starts' | 'wakes' | 'unlocks' | 'locks' | 'sleeps' | 'shuts_down';
 
 /** The "Only if": checked once when a Trigger fires. */
 export type Condition =
