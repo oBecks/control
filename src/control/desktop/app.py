@@ -352,6 +352,7 @@ class DesktopApp:
         self.quitting = True
         if self._release_timer:
             self._release_timer.cancel()
+        pc_events.settle()  # Windows shutting down: the Engine stops only once it's been told
         pc_events.stop()
         self.tray.stop()
 

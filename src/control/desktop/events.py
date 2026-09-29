@@ -12,7 +12,9 @@ message says:
 
 Going to sleep and shutting down give Actions only a moment, so the Engine holds its answer for the
 Runs a few seconds and Windows waits for that: Actions that talk to a Device over the network may or
-may not finish.
+may not finish. Windows asks (`WM_QUERYENDSESSION`) before it ends the session, and the app's own
+window may close and start stopping the Engine before `WM_ENDSESSION` reaches this thread, so `settle`
+lets the app hold its exit until the shutdown has been told (or cancelled).
 """
 
 import ctypes
@@ -26,6 +28,7 @@ from ctypes import wintypes
 
 WM_POWERBROADCAST = 0x0218
 WM_WTSSESSION_CHANGE = 0x02B1
+WM_QUERYENDSESSION = 0x0011
 WM_ENDSESSION = 0x0016
 WM_CLOSE = 0x0010
 PBT_APMSUSPEND = 0x0004
@@ -91,6 +94,8 @@ class PcEvents:
         self._hwnd = None
         self._thread: threading.Thread | None = None
         self._proc = None
+        self._ending = threading.Event()  # Windows asked to end the session
+        self._told = threading.Event()  # and it has been told to the Engine, or someone said no
 
     def start(self) -> None:
         if sys.platform != "win32":
@@ -101,6 +106,11 @@ class PcEvents:
     def stop(self) -> None:
         if self._hwnd:
             _user32.PostMessageW(self._hwnd, WM_CLOSE, 0, 0)
+
+    def settle(self, timeout: float = 4) -> None:
+        """Wait, if Windows is ending the session, until the Engine has been told (for the app's exit)."""
+        if self._ending.is_set():
+            self._told.wait(timeout)
 
     def _run(self) -> None:
         try:
@@ -130,8 +140,19 @@ class PcEvents:
 
     def _wndproc(self, hwnd, msg, wparam, lparam):
         u = _user32
+        if msg == WM_QUERYENDSESSION:
+            self._told.clear()
+            self._ending.set()
+            return 1  # never stand in the way
+        if msg == WM_ENDSESSION and not wparam:  # another app said no
+            self._ending.clear()
+            return 0
         if event := event_of(msg, wparam, lparam):
-            self.tell(event)
+            try:
+                self.tell(event)
+            finally:
+                if event == "shuts_down":
+                    self._told.set()
             return 1 if msg == WM_POWERBROADCAST else 0
         if msg == WM_CLOSE:
             _wtsapi32.WTSUnRegisterSessionNotification(hwnd)

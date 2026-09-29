@@ -42,3 +42,19 @@ def test_going_to_sleep_and_shutting_down_wait_for_the_runs(monkeypatch):
     e.tell("sleeps")
     e.tell("shuts_down")
     assert told == [("sleeps", 2.5), ("shuts_down", 2.5)]
+
+
+def test_the_app_waits_to_exit_until_a_shutdown_has_been_told(monkeypatch):
+    e = events.PcEvents(8321)
+    monkeypatch.setattr(e, "_post", lambda event, wait: None)
+    e.settle(timeout=0.01)  # nothing ending: no wait at all
+    assert e._wndproc(1, events.WM_QUERYENDSESSION, 0, 0) == 1 and not e._told.is_set()
+    waited = []
+    monkeypatch.setattr(e._told, "wait", lambda timeout: waited.append(timeout) or False)
+    e.settle()
+    assert waited == [4]
+    e._wndproc(1, events.WM_ENDSESSION, 1, 0)
+    assert e._told.is_set()
+    e._wndproc(1, events.WM_QUERYENDSESSION, 0, 0)
+    e._wndproc(1, events.WM_ENDSESSION, 0, 0)  # another app said no
+    assert not e._ending.is_set()
